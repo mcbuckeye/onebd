@@ -6,6 +6,17 @@ import EmptyState from '../components/EmptyState';
 
 type WatchlistTab = 'watchlist' | 'saved' | 'history';
 
+// Safe array wrapper to prevent .map() errors
+const safeArray = (val: any): any[] => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  // Handle objects with items property
+  if (val.items && Array.isArray(val.items)) return val.items;
+  if (val.watchlist && Array.isArray(val.watchlist)) return val.watchlist;
+  if (val.data && Array.isArray(val.data)) return val.data;
+  return [];
+};
+
 export default function MyDealsPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<WatchlistTab>('watchlist');
@@ -22,18 +33,8 @@ export default function MyDealsPage() {
     const fetchWatchlist = () => {
       api.get('/watchlist')
         .then(r => {
-          console.log('Watchlist API response:', r);
-          let items: any[] = [];
-          try {
-            if (r.data && typeof r.data === 'object') {
-              items = Array.isArray(r.data.items) ? r.data.items
-                : Array.isArray(r.data.watchlist) ? r.data.watchlist
-                : Array.isArray(r.data) ? r.data
-                : [];
-            }
-          } catch (e) {
-            console.error('Error parsing watchlist data:', e);
-          }
+          console.log('Watchlist API response keys:', Object.keys(r?.data || {}));
+          const items = safeArray(r?.data);
           console.log('Watchlist items:', items, 'length:', items.length);
           setWatchlist(items);
         })
@@ -47,19 +48,7 @@ export default function MyDealsPage() {
     
     const fetchSavedSearches = () => {
       api.get('/saved-searches')
-        .then(r => {
-          let items: any[] = [];
-          try {
-            if (r.data && typeof r.data === 'object') {
-              items = Array.isArray(r.data.searches) ? r.data.searches
-                : Array.isArray(r.data) ? r.data
-                : [];
-            }
-          } catch (e) {
-            console.error('Error parsing saved searches:', e);
-          }
-          setSavedSearches(items);
-        })
+        .then(r => setSavedSearches(safeArray(r?.data)))
         .catch(err => {
           console.error('Saved searches fetch error:', err);
           setSavedSearches([]);
@@ -69,19 +58,7 @@ export default function MyDealsPage() {
     
     const fetchSearchHistory = () => {
       api.get('/search/history')
-        .then(r => {
-          let items: any[] = [];
-          try {
-            if (r.data && typeof r.data === 'object') {
-              items = Array.isArray(r.data.history) ? r.data.history
-                : Array.isArray(r.data) ? r.data
-                : [];
-            }
-          } catch (e) {
-            console.error('Error parsing search history:', e);
-          }
-          setSearchHistory(items);
-        })
+        .then(r => setSearchHistory(safeArray(r?.data)))
         .catch(err => {
           console.error('Search history fetch error:', err);
           setSearchHistory([]);
@@ -159,7 +136,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {watchlist.map((item: any, i: number) => (
+                    {(watchlist as any[]).map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.deal_title || item.title || `Deal #${item.deal_id}`}</td>
                         <td className="px-4 py-3">
@@ -209,7 +186,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {savedSearches.map((search: any, i: number) => (
+                    {(savedSearches as any[]).map((search: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{search.name}</td>
                         <td className="px-4 py-3 text-slate-400">{search.query}</td>
@@ -241,7 +218,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {searchHistory.map((item: any, i: number) => (
+                    {(searchHistory as any[]).map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.query}</td>
                         <td className="px-4 py-3 text-slate-400">
