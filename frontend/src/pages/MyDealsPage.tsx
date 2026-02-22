@@ -23,8 +23,18 @@ export default function MyDealsPage() {
       api.get('/watchlist')
         .then(r => {
           console.log('Watchlist API response:', r);
-          const items = r.data?.items || r.data?.watchlist || (Array.isArray(r.data) ? r.data : []);
-          console.log('Watchlist items:', items, 'type:', typeof items);
+          let items: any[] = [];
+          try {
+            if (r.data && typeof r.data === 'object') {
+              items = Array.isArray(r.data.items) ? r.data.items
+                : Array.isArray(r.data.watchlist) ? r.data.watchlist
+                : Array.isArray(r.data) ? r.data
+                : [];
+            }
+          } catch (e) {
+            console.error('Error parsing watchlist data:', e);
+          }
+          console.log('Watchlist items:', items, 'length:', items.length);
           setWatchlist(items);
         })
         .catch(err => {
@@ -37,7 +47,19 @@ export default function MyDealsPage() {
     
     const fetchSavedSearches = () => {
       api.get('/saved-searches')
-        .then(r => setSavedSearches(Array.isArray(r.data) ? r.data : (r.data?.searches || r.data || [])))
+        .then(r => {
+          let items: any[] = [];
+          try {
+            if (r.data && typeof r.data === 'object') {
+              items = Array.isArray(r.data.searches) ? r.data.searches
+                : Array.isArray(r.data) ? r.data
+                : [];
+            }
+          } catch (e) {
+            console.error('Error parsing saved searches:', e);
+          }
+          setSavedSearches(items);
+        })
         .catch(err => {
           console.error('Saved searches fetch error:', err);
           setSavedSearches([]);
@@ -47,7 +69,19 @@ export default function MyDealsPage() {
     
     const fetchSearchHistory = () => {
       api.get('/search/history')
-        .then(r => setSearchHistory(Array.isArray(r.data) ? r.data : (r.data?.history || [])))
+        .then(r => {
+          let items: any[] = [];
+          try {
+            if (r.data && typeof r.data === 'object') {
+              items = Array.isArray(r.data.history) ? r.data.history
+                : Array.isArray(r.data) ? r.data
+                : [];
+            }
+          } catch (e) {
+            console.error('Error parsing search history:', e);
+          }
+          setSearchHistory(items);
+        })
         .catch(err => {
           console.error('Search history fetch error:', err);
           setSearchHistory([]);
