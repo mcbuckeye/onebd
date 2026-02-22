@@ -180,6 +180,16 @@ async def data_health_check():
                 "total": counts.companies_total,
                 "cross_referenced": counts.companies_with_xref,
             }
+
+            # Get actual last sync time from sync_log
+            try:
+                last_sync = session.execute(text(
+                    "SELECT MAX(completed_at)::text FROM sync_log WHERE status = 'completed'"
+                )).scalar()
+                if last_sync:
+                    sources["last_sync_time"] = last_sync
+            except Exception:
+                pass
     except Exception as e:
         sources["cortellis_deals"] = {"error": str(e)}
         sources["companies"] = {"error": str(e)}
@@ -244,7 +254,7 @@ async def data_health_check():
         "graph_companies": graph_companies,
         "graph_deals": graph_deals,
         "graph_relationships": graph_rels,
-        "last_sync": sources.get("cortellis_deals", {}).get("latest_deal", None),
+        "last_sync": sources.get("last_sync_time", sources.get("cortellis_deals", {}).get("latest_deal", None)),
     }
 
     health = compute_health_score(metrics)
