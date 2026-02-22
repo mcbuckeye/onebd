@@ -20,7 +20,7 @@ services:
       - onebd_cortellis_data:/var/lib/postgresql/data
       - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5432')\""]
+      test: ["CMD-SHELL", "pg_isready -U ${CORTELLIS_USER:-cortellis} -d ${CORTELLIS_DB:-cortellis}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -40,7 +40,7 @@ services:
       - onebd_edgar_data:/var/lib/postgresql/data
     shm_size: '2gb'
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5432')\""]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d deals"]
       interval: 5s
       timeout: 5s
       retries: 10
