@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Star, Bookmark, Search as SearchIcon, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
@@ -6,25 +6,30 @@ import EmptyState from '../components/EmptyState';
 
 type WatchlistTab = 'watchlist' | 'saved' | 'history';
 
-// Safe array wrapper to prevent .map() errors
-const safeArray = (val: any): any[] => {
-  if (!val) return [];
-  if (Array.isArray(val)) return val;
-  // Handle objects with items property
-  if (val.items && Array.isArray(val.items)) return val.items;
-  if (val.watchlist && Array.isArray(val.watchlist)) return val.watchlist;
-  if (val.data && Array.isArray(val.data)) return val.data;
-  return [];
-};
-
 export default function MyDealsPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<WatchlistTab>('watchlist');
-  const [watchlist, setWatchlist] = useState<any[]>([]);
-  const [savedSearches, setSavedSearches] = useState<any[]>([]);
-  const [searchHistory, setSearchHistory] = useState<any[]>([]);
+  const [watchlistRaw, setWatchlistRaw] = useState<any>([]);
+  const [savedSearchesRaw, setSavedSearchesRaw] = useState<any>([]);
+  const [searchHistoryRaw, setSearchHistoryRaw] = useState<any>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Ensure watchlist is always an array
+  const watchlist = useMemo(() => {
+    if (!watchlistRaw) return [];
+    return Array.isArray(watchlistRaw) ? watchlistRaw : [watchlistRaw];
+  }, [watchlistRaw]);
+
+  const savedSearches = useMemo(() => {
+    if (!savedSearchesRaw) return [];
+    return Array.isArray(savedSearchesRaw) ? savedSearchesRaw : [savedSearchesRaw];
+  }, [savedSearchesRaw]);
+
+  const searchHistory = useMemo(() => {
+    if (!searchHistoryRaw) return [];
+    return Array.isArray(searchHistoryRaw) ? searchHistoryRaw : [searchHistoryRaw];
+  }, [searchHistoryRaw]);
 
   useEffect(() => {
     setLoading(true);
@@ -33,35 +38,34 @@ export default function MyDealsPage() {
     const fetchWatchlist = () => {
       api.get('/watchlist')
         .then(r => {
-          console.log('Watchlist API response keys:', Object.keys(r?.data || {}));
-          const items = safeArray(r?.data);
-          console.log('Watchlist items:', items, 'length:', items.length);
-          setWatchlist(items);
+          console.log('Watchlist API response keys:', r?.data ? Object.keys(r.data) : 'no data');
+          console.log('Watchlist raw value:', r?.data);
+          setWatchlistRaw(r?.data || []);
         })
         .catch(err => {
           console.error('Watchlist fetch error:', err);
           setError('Failed to load watchlist. Please try again.');
-          setWatchlist([]);
+          setWatchlistRaw([]);
         })
         .finally(() => setLoading(false));
     };
     
     const fetchSavedSearches = () => {
       api.get('/saved-searches')
-        .then(r => setSavedSearches(safeArray(r?.data)))
+        .then(r => setSavedSearchesRaw(r?.data || []))
         .catch(err => {
           console.error('Saved searches fetch error:', err);
-          setSavedSearches([]);
+          setSavedSearchesRaw([]);
         })
         .finally(() => setLoading(false));
     };
     
     const fetchSearchHistory = () => {
       api.get('/search/history')
-        .then(r => setSearchHistory(safeArray(r?.data)))
+        .then(r => setSearchHistoryRaw(r?.data || []))
         .catch(err => {
           console.error('Search history fetch error:', err);
-          setSearchHistory([]);
+          setSearchHistoryRaw([]);
         })
         .finally(() => setLoading(false));
     };
@@ -136,7 +140,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(watchlist as any[]).map((item: any, i: number) => (
+                    {watchlist.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.deal_title || item.title || `Deal #${item.deal_id}`}</td>
                         <td className="px-4 py-3">
@@ -186,7 +190,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(savedSearches as any[]).map((search: any, i: number) => (
+                    {savedSearches.map((search: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{search.name}</td>
                         <td className="px-4 py-3 text-slate-400">{search.query}</td>
@@ -218,7 +222,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(searchHistory as any[]).map((item: any, i: number) => (
+                    {searchHistory.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.query}</td>
                         <td className="px-4 py-3 text-slate-400">
