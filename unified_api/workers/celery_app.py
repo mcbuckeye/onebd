@@ -104,11 +104,64 @@ def fetch_new_filings():
 @celery_app.task(name="unified_api.workers.tasks.cortellis.sync_deals")
 def sync_cortellis_deals():
     """
-    Sync deals from Cortellis API.
+    Sync deals from Cortellis API using incremental sync.
+    Falls back to full sync if no previous sync exists.
     """
     logger.info("Starting Cortellis sync")
-    # TODO: Import and call actual sync service
-    return {"status": "completed", "deals_synced": 0}
+    try:
+        from unified_api.config import settings
+        from src.config import CortellisConfig, DatabaseConfig, OpenAIConfig, AppConfig
+        from src.sync import SyncService
+
+        if not settings.cortellis_api_username or not settings.cortellis_api_password:
+            logger.warning("Cortellis API credentials not configured, skipping sync")
+            return {"status": "skipped", "reason": "no credentials"}
+
+        # Build config from unified settings
+        cortellis_config = CortellisConfig(
+            username=settings.cortellis_api_username,
+            password=settings.cortellis_api_password,
+            base_url=settings.cortellis_base_url,
+        )
+        # Parse DB URL components from the connection string
+        db_url = settings.cortellis_db_url
+        database_config = DatabaseConfig(
+            host=db_url.split("@")[1].split(":")[0],
+            port=int(db_url.split("@")[1].split(":")[1].split("/")[0]),
+            database=db_url.split("/")[-1],
+            user=db_url.split("://")[1].split(":")[0],
+            password=db_url.split("://")[1].split(":")[1].split("@")[0],
+        )
+        openai_config = OpenAIConfig(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+        )
+        app_config = AppConfig(
+            cortellis=cortellis_config,
+            database=database_config,
+            openai=openai_config,
+            sync_schedule="",
+            data_dir="/app/data",
+            contracts_dir="/app/data/contracts",
+        )
+
+        sync_service = SyncService(app_config)
+        sync_log = sync_service.incremental_sync(batch_size=30)
+
+        result = {
+            "status": sync_log.status,
+            "sync_type": sync_log.sync_type,
+            "records_processed": sync_log.records_processed,
+            "records_created": getattr(sync_log, 'records_created', 0),
+            "records_updated": sync_log.records_updated,
+            "contracts_downloaded": sync_log.contracts_downloaded,
+        }
+        logger.info("Cortellis sync complete", **result)
+        return result
+
+    except Exception as e:
+        logger.error("Cortellis sync failed", error=str(e))
+        return {"status": "failed", "error": str(e)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.graph.sync_all")
