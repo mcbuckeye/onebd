@@ -1,45 +1,32 @@
-/* Light mode overrides - force all dark colors to light with !important */
-html.light-mode {
-  color-scheme: light !important;
-}
-
-/* All background utilities -> light */
-html.light-mode [class*="bg-slate-"],
-html.light-mode [class*="bg-black"],
-html.light-mode .bg-white,
-html.light-mode .bg-transparent {
+/* Light mode overrides - force all colors via !important */
+html.light-mode,
+html.light-mode * {
   background-color: #ffffff !important;
-}
-
-/* All border utilities -> light */
-html.light-mode [class*="border-slate-"],
-html.light-mode .border-black,
-html.light-mode .border-gray-200 {
-  border-color: #cbd5e1 !important;
-}
-
-/* All text utilities -> dark */
-html.light-mode [class*="text-slate-"],
-html.light-mode [class*="text-white"],
-html.light-mode .text-black {
   color: #0f172a !important;
 }
 
-/* Sidebar */
+/* Keep specific elements with appropriate contrast */
 html.light-mode aside {
   background-color: #f1f5f9 !important;
 }
 
-/* Header */
 html.light-mode header {
   background-color: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
 }
 
-/* Inputs */
-html.light-mode input,
-html.light-mode textarea {
-  background-color: #ffffff !important;
-  color: #0f172a !important;
+/* Keep button hover states working */
+html.light-mode .hover\\:bg-slate-800:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Keep active nav item visible */
+html.light-mode .bg-blue-600\\/20 {
+  background-color: rgba(37, 99, 235, 0.1) !important;
+}
+
+html.light-mode .text-blue-400 {
+  color: #2563eb !important;
 }
 
 /* Scrollbar */
