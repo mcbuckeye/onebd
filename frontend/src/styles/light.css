@@ -20,11 +20,6 @@ html.light-mode .hover\\:bg-slate-800:hover {
   background-color: #e2e8f0 !important;
 }
 
-/* Keep active nav item visible */
-html.light-mode .bg-blue-600\\/20 {
-  background-color: rgba(37, 99, 235, 0.1) !important;
-}
-
 html.light-mode .text-blue-400 {
   color: #2563eb !important;
 }
