@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cortellis-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cortellis}
+      POSTGRES_USER: ${POSTGRES_USER:-cortellis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    ports:
+      - "5433:5432"  # Using 5433 on host to avoid conflict with local PostgreSQL
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cortellis} -d ${POSTGRES_DB:-cortellis}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cortellis-net
+
+  # CLI app for running sync commands
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cortellis-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - CORTELLIS_USERNAME=${CORTELLIS_USERNAME}
+      - CORTELLIS_PASSWORD=${CORTELLIS_PASSWORD}
+      - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cortellis}
+      - POSTGRES_USER=${POSTGRES_USER:-cortellis}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SYNC_SCHEDULE=${SYNC_SCHEDULE:-0 2 * * *}
+    volumes:
+      - ./data:/app/data  # Mount entire data dir for cache + contracts
+      - ./src:/app/src:ro
+      - ./agent:/app/agent:ro
+    stdin_open: true
+    tty: true
+    networks:
+      - cortellis-net
+
+  # FastAPI backend for chat interface
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: cortellis-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - CORTELLIS_USERNAME=${CORTELLIS_USERNAME}
+      - CORTELLIS_PASSWORD=${CORTELLIS_PASSWORD}
+      - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-cortellis}
+      - POSTGRES_USER=${POSTGRES_USER:-cortellis}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+    volumes:
+      - ./data:/app/data:ro
+      - ./src:/app/src:ro
+      - ./agent:/app/agent:ro
+      - ./api:/app/api:ro
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    networks:
+      - cortellis-net
+
+  # React frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cortellis-frontend
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    networks:
+      - cortellis-net
+
+volumes:
+  postgres_data:
+
+networks:
+  cortellis-net:
+    driver: bridge
