@@ -13,22 +13,46 @@ export default function MyDealsPage() {
   const [savedSearches, setSavedSearches] = useState<any[]>([]);
   const [searchHistory, setSearchHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    if (tab === 'watchlist') {
-      api.get('/watchlist').then(r => setWatchlist(r.data.watchlist || r.data || []))
-        .catch(() => setWatchlist([]))
+    setError(null);
+    
+    const fetchWatchlist = () => {
+      api.get('/watchlist')
+        .then(r => setWatchlist(Array.isArray(r.data) ? r.data : (r.data?.watchlist || r.data || [])))
+        .catch(err => {
+          console.error('Watchlist fetch error:', err);
+          setWatchlist([]);
+        })
         .finally(() => setLoading(false));
-    } else if (tab === 'saved') {
-      api.get('/saved-searches').then(r => setSavedSearches(r.data.searches || r.data || []))
-        .catch(() => setSavedSearches([]))
+    };
+    
+    const fetchSavedSearches = () => {
+      api.get('/saved-searches')
+        .then(r => setSavedSearches(Array.isArray(r.data) ? r.data : (r.data?.searches || r.data || [])))
+        .catch(err => {
+          console.error('Saved searches fetch error:', err);
+          setSavedSearches([]);
+        })
         .finally(() => setLoading(false));
-    } else if (tab === 'history') {
-      api.get('/search/history').then(r => setSearchHistory(r.data.history || []))
-        .catch(() => setSearchHistory([]))
+    };
+    
+    const fetchSearchHistory = () => {
+      api.get('/search/history')
+        .then(r => setSearchHistory(Array.isArray(r.data) ? r.data : (r.data?.history || [])))
+        .catch(err => {
+          console.error('Search history fetch error:', err);
+          setSearchHistory([]);
+        })
         .finally(() => setLoading(false));
-    }
+    };
+    
+    if (tab === 'watchlist') fetchWatchlist();
+    else if (tab === 'saved') fetchSavedSearches();
+    else if (tab === 'history') fetchSearchHistory();
+    
   }, [tab]);
 
   const tabs: Array<{ id: WatchlistTab; label: string; icon: any }> = [
@@ -36,6 +60,17 @@ export default function MyDealsPage() {
     { id: 'saved', label: 'Saved Searches', icon: Bookmark },
     { id: 'history', label: 'Search History', icon: Clock },
   ];
+
+  if (error) {
+    return (
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <h3 className="text-red-700 font-medium">Something went wrong</h3>
+          <p className="text-red-600 text-sm mt-1">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -92,8 +127,22 @@ export default function MyDealsPage() {
                             {item.status || 'Reviewing'}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-slate-500 text-xs">{(item.tags || []).join(', ') || '—'}</td>
-                        <td className="px-4 py-3 text-slate-500 text-xs">{item.added_at || '—'}</td>
+                        <td className="px-4 py-3">
+                          {item.tags && item.tags.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {item.tags.map((tag: string, idx: number) => (
+                                <span key={idx} className="text-xs px-2 py-0.5 bg-slate-700 text-slate-300 rounded-full">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-slate-500 italic">None</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400">
+                          {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Unknown'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -107,22 +156,30 @@ export default function MyDealsPage() {
               <EmptyState
                 icon={Bookmark}
                 title="No saved searches"
-                description="Save your search filters to quickly access them later"
-                action={{ label: 'Create Search', onClick: () => navigate('/search') }}
+                description="Save your favorite searches to quickly access them later"
               />
             ) : (
-              <div className="space-y-2">
-                {savedSearches.map((s: any, i: number) => (
-                  <div key={i} className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-3 flex items-center justify-between">
-                    <div>
-                      <div className="text-sm text-slate-200">{s.name}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        {s.is_alert && <span className="text-yellow-400 mr-2">🔔 Alert active</span>}
-                        {s.created_at}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500 bg-slate-900/50">
+                      <th className="px-4 py-3">Search Name</th>
+                      <th className="px-4 py-3">Query</th>
+                      <th className="px-4 py-3">Created</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {savedSearches.map((search: any, i: number) => (
+                      <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
+                        <td className="px-4 py-3 text-slate-200">{search.name}</td>
+                        <td className="px-4 py-3 text-slate-400">{search.query}</td>
+                        <td className="px-4 py-3 text-slate-400">
+                          {search.created_at ? new Date(search.created_at).toLocaleDateString() : 'Unknown'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )
           )}
@@ -131,24 +188,29 @@ export default function MyDealsPage() {
             searchHistory.length === 0 ? (
               <EmptyState
                 icon={Clock}
-                title="No recent searches"
-                description="Your search history will appear here once you start exploring"
-                action={{ label: 'Start Searching', onClick: () => navigate('/search') }}
+                title="No search history"
+                description="Your recent searches will appear here"
               />
             ) : (
-              <div className="space-y-1">
-                {searchHistory.map((h: any, i: number) => (
-                  <div key={i} className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <SearchIcon className="w-3 h-3 text-slate-600" />
-                      <span className="text-sm text-slate-300">{h.query}</span>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-500">
-                      <span>{h.result_count} results</span>
-                      <span>{h.created_at}</span>
-                    </div>
-                  </div>
-                ))}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500 bg-slate-900/50">
+                      <th className="px-4 py-3">Query</th>
+                      <th className="px-4 py-3">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {searchHistory.map((item: any, i: number) => (
+                      <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
+                        <td className="px-4 py-3 text-slate-200">{item.query}</td>
+                        <td className="px-4 py-3 text-slate-400">
+                          {item.created_at ? new Date(item.created_at).toLocaleString() : 'Unknown'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )
           )}
