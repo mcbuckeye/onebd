@@ -21,11 +21,19 @@ export default function MyDealsPage() {
     const fetchWatchlist = async () => {
       try {
         const response = await api.get('/watchlist');
-        console.log('Watchlist API response:', response);
+        console.log('Watchlist API full response:', JSON.stringify(response, null, 2));
         
-        // Extract items - API returns {total: N, items: []}
-        const rawItems = response?.data?.items;
-        console.log('Raw items:', rawItems, 'Type:', typeof rawItems);
+        // Extract items - API returns {total: N, items: []} or just an array
+        const data = response?.data;
+        let rawItems: any[] = [];
+        
+        if (Array.isArray(data)) {
+          rawItems = data; // API returned array directly
+        } else if (data && typeof data === 'object') {
+          rawItems = Array.isArray(data.items) ? data.items : [];
+        }
+        
+        console.log('Raw items:', rawItems, 'Is array:', Array.isArray(rawItems));
         
         // Ensure we have an array
         const items = Array.isArray(rawItems) ? rawItems : [];
