@@ -189,9 +189,9 @@ async def data_health_check():
         with get_edgar_source_session() as session:
             edgar = session.execute(text("""
                 SELECT
-                    (SELECT COUNT(*) FROM filings) as filings_total,
+                    (SELECT COUNT(*) FROM documents) as filings_total,
                     (SELECT COUNT(*) FROM chunks) as chunks_total,
-                    (SELECT MAX(filing_date)::text FROM filings) as latest_filing
+                    (SELECT MAX(published_at)::text FROM documents) as latest_filing
             """)).fetchone()
 
             sources["edgar"] = {

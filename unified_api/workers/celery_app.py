@@ -182,12 +182,134 @@ def sync_graph():
 @celery_app.task(name="unified_api.workers.tasks.graph.link_deals_to_filings")
 def link_deals_to_filings():
     """
-    Auto-link Cortellis deals to SEC 8-K filings.
-    Matches deals to filings based on company + date proximity.
+    Auto-link Cortellis deals to SEC EDGAR filings.
+    Matches deals to filings based on cross-referenced companies + date proximity.
     """
     logger.info("Starting deal-filing linking")
-    # TODO: Implement matching logic
-    return {"status": "completed", "links_created": 0}
+    try:
+        from sqlalchemy import text
+        from unified_api.services.database import get_cortellis_session, get_edgar_source_session
+
+        links_created = 0
+        deals_checked = 0
+
+        # Get cross-referenced company mappings (cortellis_id -> edgar_company_id)
+        with get_cortellis_session() as csession:
+            xrefs = csession.execute(text("""
+                SELECT cortellis_id, edgar_company_id
+                FROM company_xref
+                WHERE edgar_company_id IS NOT NULL
+            """)).fetchall()
+            xref_map = {row.cortellis_id: row.edgar_company_id for row in xrefs}
+            logger.info(f"Loaded {len(xref_map)} company cross-references")
+
+            if not xref_map:
+                return {"status": "completed", "links_created": 0, "reason": "no cross-references"}
+
+            # Create linking table if not exists
+            csession.execute(text("""
+                CREATE TABLE IF NOT EXISTS deal_filing_links (
+                    id SERIAL PRIMARY KEY,
+                    deal_id INTEGER NOT NULL,
+                    edgar_document_id BIGINT NOT NULL,
+                    edgar_company_id BIGINT NOT NULL,
+                    match_type VARCHAR(50) NOT NULL,
+                    date_distance_days INTEGER,
+                    confidence FLOAT DEFAULT 0.5,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(deal_id, edgar_document_id)
+                )
+            """))
+            csession.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_dfl_deal_id ON deal_filing_links(deal_id);
+                CREATE INDEX IF NOT EXISTS idx_dfl_edgar_doc ON deal_filing_links(edgar_document_id);
+            """))
+            csession.commit()
+
+            # Get existing links to avoid duplicates
+            existing = csession.execute(text("SELECT deal_id, edgar_document_id FROM deal_filing_links")).fetchall()
+            existing_pairs = {(r.deal_id, r.edgar_document_id) for r in existing}
+            logger.info(f"Found {len(existing_pairs)} existing links")
+
+            # Get deals with cross-referenced companies and dates
+            cortellis_ids = list(xref_map.keys())
+            # Process in chunks
+            for chunk_start in range(0, len(cortellis_ids), 500):
+                chunk_ids = cortellis_ids[chunk_start:chunk_start + 500]
+                placeholders = ",".join(str(cid) for cid in chunk_ids)
+
+                deals = csession.execute(text(f"""
+                    SELECT d.id as deal_id, dc.company_id as cortellis_company_id,
+                           d.date_start, d.date_event_most_recent
+                    FROM deals d
+                    JOIN deal_companies dc ON dc.deal_id = d.id
+                    WHERE dc.company_id IN ({placeholders})
+                      AND d.date_start IS NOT NULL
+                    ORDER BY d.date_start DESC
+                """)).fetchall()
+
+                deals_checked += len(deals)
+
+                # For each deal, find matching filings by company + date window
+                for deal in deals:
+                    edgar_company_id = xref_map.get(deal.cortellis_company_id)
+                    if not edgar_company_id:
+                        continue
+
+                    deal_date = deal.date_start
+
+                    # Search Edgar for filings by this company within ±30 days
+                    with get_edgar_source_session() as esession:
+                        filings = esession.execute(text("""
+                            SELECT d.id as doc_id, d.doc_type, d.title, d.published_at,
+                                   rd.filing_date,
+                                   ABS(EXTRACT(EPOCH FROM (rd.filing_date - :deal_date)) / 86400)::int as days_diff
+                            FROM documents d
+                            JOIN raw_documents rd ON rd.id = d.raw_document_id
+                            WHERE rd.company_id = :edgar_company_id
+                              AND rd.filing_date BETWEEN :deal_date - INTERVAL '30 days'
+                                                     AND :deal_date + INTERVAL '30 days'
+                              AND d.parse_ok = true
+                            ORDER BY ABS(EXTRACT(EPOCH FROM (rd.filing_date - :deal_date)))
+                            LIMIT 10
+                        """), {
+                            "edgar_company_id": edgar_company_id,
+                            "deal_date": deal_date,
+                        }).fetchall()
+
+                        for filing in filings:
+                            if (deal.deal_id, filing.doc_id) in existing_pairs:
+                                continue
+
+                            # Compute confidence based on date distance
+                            days_diff = filing.days_diff or 30
+                            confidence = max(0.3, 1.0 - (days_diff / 30.0) * 0.5)
+
+                            csession.execute(text("""
+                                INSERT INTO deal_filing_links
+                                    (deal_id, edgar_document_id, edgar_company_id, match_type, date_distance_days, confidence)
+                                VALUES (:deal_id, :doc_id, :edgar_company_id, :match_type, :days_diff, :confidence)
+                                ON CONFLICT (deal_id, edgar_document_id) DO NOTHING
+                            """), {
+                                "deal_id": deal.deal_id,
+                                "doc_id": filing.doc_id,
+                                "edgar_company_id": edgar_company_id,
+                                "match_type": f"company_date_{filing.doc_type}",
+                                "days_diff": days_diff,
+                                "confidence": confidence,
+                            })
+                            links_created += 1
+                            existing_pairs.add((deal.deal_id, filing.doc_id))
+
+                csession.commit()
+                logger.info(f"Processed {deals_checked} deals, {links_created} links so far")
+
+        logger.info("Deal-filing linking complete", links_created=links_created, deals_checked=deals_checked)
+        return {"status": "completed", "links_created": links_created, "deals_checked": deals_checked}
+
+    except Exception as e:
+        logger.error("Deal-filing linking failed", error=str(e))
+        return {"status": "failed", "error": str(e)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.process.parse_document")
