@@ -6,79 +6,59 @@ import EmptyState from '../components/EmptyState';
 
 type WatchlistTab = 'watchlist' | 'saved' | 'history';
 
-// Helper to safely get items from various data structures
-function safeGetItems(data: any): any[] {
-  if (!data) return [];
-  if (Array.isArray(data)) return data;
-  if (typeof data !== 'object') return [];
-  
-  // Try common patterns
-  const candidates = [
-    data.items,
-    data.watchlist,
-    data.searches,
-    data.history,
-    data.data,
-    data.results
-  ];
-  
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) return candidate;
-  }
-  
-  return [];
-}
-
 export default function MyDealsPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<WatchlistTab>('watchlist');
-  const [watchlistRaw, setWatchlistRaw] = useState<any>(undefined);
-  const [savedSearchesRaw, setSavedSearchesRaw] = useState<any>(undefined);
-  const [searchHistoryRaw, setSearchHistoryRaw] = useState<any>(undefined);
+  const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [savedSearches, setSavedSearches] = useState<any[]>([]);
+  const [searchHistory, setSearchHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Convert raw data to arrays on every render
-  const watchlist = useMemo(() => safeGetItems(watchlistRaw), [watchlistRaw]);
-  const savedSearches = useMemo(() => safeGetItems(savedSearchesRaw), [savedSearchesRaw]);
-  const searchHistory = useMemo(() => safeGetItems(searchHistoryRaw), [searchHistoryRaw]);
-
   useEffect(() => {
     setLoading(true);
-    setError(null);
     
-    const fetchWatchlist = () => {
-      api.get('/watchlist')
-        .then(r => {
-          console.log('Watchlist API response:', r);
-          setWatchlistRaw(r?.data);
-        })
-        .catch(err => {
-          console.error('Watchlist fetch error:', err);
-          setError('Failed to load watchlist. Please try again.');
-          setWatchlistRaw([]);
-        })
-        .finally(() => setLoading(false));
+    const fetchWatchlist = async () => {
+      try {
+        const response = await api.get('/watchlist');
+        console.log('Watchlist API response:', response);
+        
+        // Extract items - API returns {total: N, items: []}
+        const rawItems = response?.data?.items;
+        console.log('Raw items:', rawItems, 'Type:', typeof rawItems);
+        
+        // Ensure we have an array
+        const items = Array.isArray(rawItems) ? rawItems : [];
+        console.log('Final items array:', items, 'Length:', items.length);
+        
+        setWatchlist(items);
+      } catch (err) {
+        console.error('Watchlist fetch error:', err);
+        setError('Failed to load watchlist');
+        setWatchlist([]);
+      } finally {
+        setLoading(false);
+      }
     };
     
-    const fetchSavedSearches = () => {
-      api.get('/saved-searches')
-        .then(r => setSavedSearchesRaw(r?.data))
-        .catch(err => {
-          console.error('Saved searches fetch error:', err);
-          setSavedSearchesRaw([]);
-        })
-        .finally(() => setLoading(false));
+    const fetchSavedSearches = async () => {
+      try {
+        const response = await api.get('/saved-searches');
+        setSavedSearches(Array.isArray(response?.data) ? response.data : []);
+      } catch (err) {
+        console.error('Saved searches fetch error:', err);
+        setSavedSearches([]);
+      }
     };
     
-    const fetchSearchHistory = () => {
-      api.get('/search/history')
-        .then(r => setSearchHistoryRaw(r?.data))
-        .catch(err => {
-          console.error('Search history fetch error:', err);
-          setSearchHistoryRaw([]);
-        })
-        .finally(() => setLoading(false));
+    const fetchSearchHistory = async () => {
+      try {
+        const response = await api.get('/search/history');
+        setSearchHistory(Array.isArray(response?.data) ? response.data : []);
+      } catch (err) {
+        console.error('Search history fetch error:', err);
+        setSearchHistory([]);
+      }
     };
     
     if (tab === 'watchlist') fetchWatchlist();
@@ -132,7 +112,7 @@ export default function MyDealsPage() {
       ) : (
         <>
           {tab === 'watchlist' && (
-            (watchlist.length === 0 || !Array.isArray(watchlist)) ? (
+            watchlist.length === 0 ? (
               <EmptyState
                 icon={Star}
                 title="No deals in your watchlist"
@@ -151,7 +131,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Array.isArray(watchlist) ? watchlist.map((item: any, i: number) => (
+                    {watchlist.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.deal_title || item.title || `Deal #${item.deal_id}`}</td>
                         <td className="px-4 py-3">
@@ -176,9 +156,7 @@ export default function MyDealsPage() {
                           {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Unknown'}
                         </td>
                       </tr>
-                    )) : (
-                      <tr><td colSpan={4} className="text-center py-8 text-slate-500">Invalid data structure</td></tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -186,7 +164,7 @@ export default function MyDealsPage() {
           )}
 
           {tab === 'saved' && (
-            (savedSearches.length === 0 || !Array.isArray(savedSearches)) ? (
+            savedSearches.length === 0 ? (
               <EmptyState
                 icon={Bookmark}
                 title="No saved searches"
@@ -203,7 +181,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Array.isArray(savedSearches) ? savedSearches.map((search: any, i: number) => (
+                    {savedSearches.map((search: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{search.name}</td>
                         <td className="px-4 py-3 text-slate-400">{search.query}</td>
@@ -211,9 +189,7 @@ export default function MyDealsPage() {
                           {search.created_at ? new Date(search.created_at).toLocaleDateString() : 'Unknown'}
                         </td>
                       </tr>
-                    )) : (
-                      <tr><td colSpan={3} className="text-center py-8 text-slate-500">Invalid data structure</td></tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -221,7 +197,7 @@ export default function MyDealsPage() {
           )}
 
           {tab === 'history' && (
-            (searchHistory.length === 0 || !Array.isArray(searchHistory)) ? (
+            searchHistory.length === 0 ? (
               <EmptyState
                 icon={Clock}
                 title="No search history"
@@ -237,16 +213,14 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Array.isArray(searchHistory) ? searchHistory.map((item: any, i: number) => (
+                    {searchHistory.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.query}</td>
                         <td className="px-4 py-3 text-slate-400">
                           {item.created_at ? new Date(item.created_at).toLocaleString() : 'Unknown'}
                         </td>
                       </tr>
-                    )) : (
-                      <tr><td colSpan={2} className="text-center py-8 text-slate-500">Invalid data structure</td></tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
