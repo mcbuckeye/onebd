@@ -3,17 +3,18 @@ import { useEffect, useState } from 'react';
 export default function ThemeToggle() {
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') !== 'light';
+      return localStorage.getItem('theme') === 'light' ? false : true;
     }
-    return true; // default to dark
+    return true;
   });
 
   useEffect(() => {
-    // Initialize on mount
     if (isDark) {
+      document.documentElement.classList.remove('light-mode');
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light-mode');
     }
   }, [isDark]);
 
@@ -28,7 +29,7 @@ export default function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="p-1 rounded hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors"
+      className="p-1 rounded hover:bg-slate-800 transition-colors"
       aria-label="Toggle theme"
     >
       {isDark ? '🌙' : '☀️'}

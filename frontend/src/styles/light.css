@@ -1,0 +1,49 @@
+/* Light mode overrides - applied when .light-mode is on <html> */
+.light-mode body {
+  color-scheme: light !important;
+}
+
+/* Override common dark background classes */
+.light-mode .bg-slate-950,
+.light-mode .bg-slate-900,
+.light-mode .bg-slate-800,
+.light-mode .bg-slate-700,
+.light-mode .bg-slate-600,
+.light-mode .bg-black {
+  background-color: #f8fafc !important;
+}
+
+/* Override text colors */
+.light-mode .text-slate-100,
+.light-mode .text-white {
+  color: #0f172a !important;
+}
+
+.light-mode .text-slate-400,
+.light-mode .text-slate-300 {
+  color: #64748b !important;
+}
+
+/* Border colors */
+.light-mode .border-slate-800,
+.light-mode .border-slate-700 {
+  border-color: #cbd5e1 !important;
+}
+
+/* Hover states */
+.light-mode .hover\\:bg-slate-800:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Input backgrounds */
+.light-mode input {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Link colors */
+.light-mode .text-blue-400,
+.light-mode a {
+  color: #2563eb !important;
+}
