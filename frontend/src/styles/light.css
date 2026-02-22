@@ -1,47 +1,56 @@
 /* Light mode overrides - applied when .light-mode is on <html> */
-
-/* Page background */
 .light-mode body {
-  color-scheme: light !important;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+.light-mode .bg-slate-950 {
   background-color: #f8fafc !important;
 }
 
-/* Sidebar and containers */
-.light-mode .bg-slate-950,
-.light-mode .bg-slate-900,
-.light-mode .bg-black {
+.light-mode .bg-slate-900 {
+  background-color: #f1f5f9 !important;
+}
+
+.light-mode .bg-slate-800 {
   background-color: #e2e8f0 !important;
 }
 
-/* Sidebar bg */
-.light-mode aside {
-  background-color: #e2e8f0 !important;
+.light-mode .bg-slate-700 {
+  background-color: #cbd5e1 !important;
 }
 
-/* Header bar */
-.light-mode header {
-  background-color: #ffffff !important;
+.light-mode .bg-slate-600 {
+  background-color: #94a3b8 !important;
 }
 
-/* Logo text and labels */
-.light-mode .text-slate-200,
-.light-mode .font-semibold {
-  color: #1e293b !important;
-}
-
-/* Nav links */
-.light-mode .text-slate-400,
-.light-mode .text-slate-500 {
-  color: #64748b !important;
-}
-
-.light-mode .hover\\:text-slate-200:hover,
-.light-mode .hover\\:text-slate-300:hover {
+.light-mode .text-slate-100 {
   color: #0f172a !important;
 }
 
-.light-mode .hover\\:bg-slate-800:hover {
-  background-color: #cbd5e1 !important;
+.light-mode .text-slate-200 {
+  color: #1e293b !important;
+}
+
+.light-mode .text-slate-300 {
+  color: #475569 !important;
+}
+
+.light-mode .text-slate-400 {
+  color: #64748b !important;
+}
+
+.light-mode .border-slate-800 {
+  border-color: #cbd5e1 !important;
+}
+
+.light-mode .border-slate-700 {
+  border-color: #94a3b8 !important;
+}
+
+.light-mode input {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
 }
 
 .light-mode .bg-blue-600\\/20 {
@@ -50,57 +59,4 @@
 
 .light-mode .text-blue-400 {
   color: #2563eb !important;
-}
-
-/* Sidebar border */
-.light-mode aside {
-  border-right: 1px solid #cbd5e1 !important;
-}
-
-/* Search input */
-.light-mode input {
-  background-color: #f1f5f9 !important;
-  color: #0f172a !important;
-  border-color: #cbd5e1 !important;
-}
-
-/* Search placeholder */
-.light-mode input::placeholder {
-  color: #94a3b8 !important;
-}
-
-/* Search icon */
-.light-mode .text-slate-500 {
-  color: #64748b !important;
-}
-
-/* Search kbd */
-.light-mode .kbd {
-  background-color: #e2e8f0 !important;
-  border-color: #cbd5e1 !important;
-  color: #64748b !important;
-}
-
-/* Notifications button hover */
-.light-mode .hover\\:bg-slate-800:hover {
-  background-color: #cbd5e1 !important;
-}
-
-/* Avatar */
-.light-mode .bg-blue-600 {
-  background-color: #2563eb !important;
-}
-
-/* Scrollbar in light mode */
-.light-mode ::-webkit-scrollbar-track {
-  background: #f1f5f9 !important;
-}
-
-.light-mode ::-webkit-scrollbar-thumb {
-  background: #cbd5e1 !important;
-  border-radius: 4px;
-}
-
-.light-mode ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8 !important;
 }
