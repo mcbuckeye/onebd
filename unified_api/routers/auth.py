@@ -69,8 +69,14 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> TokenData:
 
 def _ensure_users_table(session):
     """Create users table if it doesn't exist."""
+    # Check if table already exists to avoid pg_type conflicts
+    result = session.execute(text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='users')"
+    )).scalar()
+    if result:
+        return
     session.execute(text("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             id SERIAL PRIMARY KEY,
             email VARCHAR(255) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
@@ -86,8 +92,13 @@ def _ensure_users_table(session):
 
 def _ensure_password_reset_tokens_table(session):
     """Create password_reset_tokens table if it doesn't exist."""
+    result = session.execute(text(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='password_reset_tokens')"
+    )).scalar()
+    if result:
+        return
     session.execute(text("""
-        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        CREATE TABLE password_reset_tokens (
             id SERIAL PRIMARY KEY,
             user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
             token VARCHAR(255) UNIQUE NOT NULL,
