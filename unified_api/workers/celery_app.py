@@ -193,15 +193,30 @@ def link_deals_to_filings():
         links_created = 0
         deals_checked = 0
 
-        # Get cross-referenced company mappings (cortellis_id -> edgar_company_id)
+        # Get cross-referenced company mappings (cortellis_id -> edgar_company_id via CIK)
+        # First get CIK mappings from xref table
+        with get_edgar_source_session() as esession:
+            edgar_cik_map = {}
+            edgar_companies = esession.execute(text(
+                "SELECT id, cik FROM companies WHERE cik IS NOT NULL AND cik <> ''"
+            )).fetchall()
+            for ec in edgar_companies:
+                edgar_cik_map[ec.cik.lstrip('0')] = ec.id
+            logger.info(f"Loaded {len(edgar_cik_map)} Edgar companies with CIK")
+
         with get_cortellis_session() as csession:
             xrefs = csession.execute(text("""
-                SELECT cortellis_id, edgar_company_id
+                SELECT cortellis_id, cik
                 FROM company_xref
-                WHERE edgar_company_id IS NOT NULL
+                WHERE cik IS NOT NULL AND cik <> ''
             """)).fetchall()
-            xref_map = {row.cortellis_id: row.edgar_company_id for row in xrefs}
-            logger.info(f"Loaded {len(xref_map)} company cross-references")
+            # Map cortellis_id -> edgar_company_id via CIK
+            xref_map = {}
+            for row in xrefs:
+                cik_normalized = row.cik.lstrip('0') if row.cik else None
+                if cik_normalized and cik_normalized in edgar_cik_map:
+                    xref_map[row.cortellis_id] = edgar_cik_map[cik_normalized]
+            logger.info(f"Loaded {len(xref_map)} company cross-references with Edgar match")
 
             if not xref_map:
                 return {"status": "completed", "links_created": 0, "reason": "no cross-references"}
