@@ -1,31 +1,29 @@
 import { useEffect } from 'react';
 
 export default function ThemeToggle() {
-  const root = document.documentElement;
-  
-  // Initialize theme from localStorage
+  // Initialize theme from localStorage (Treat as "system" preference)
   useEffect(() => {
     const saved = localStorage.getItem('theme');
-    if (saved === 'dark') {
-      root.classList.add('dark-mode');
+    // If saved as 'light', remove dark class; if 'dark' or not set, keep dark class (current default)
+    if (saved === 'light') {
+      document.documentElement.classList.remove('dark');
     } else {
-      root.classList.remove('dark-mode');
+      document.documentElement.classList.add('dark');
     }
-  }, [root]);
+  }, []);
 
   const toggle = () => {
-    const isDark = root.classList.toggle('dark-mode');
+    const isDark = document.documentElement.classList.toggle('dark');
     localStorage.setItem('theme', isDark ? 'dark' : 'light');
   };
 
   return (
     <button
       onClick={toggle}
-      className="p-1 rounded hover:bg-slate-800"
-      aria-label="Toggle dark mode"
+      className="p-1 rounded hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors"
+      aria-label="Toggle theme"
     >
-      {/* Simple sun/moon icons using Unicode */}
-      {root.classList.contains('dark-mode') ? '🌙' : '☀️'}
+      {document.documentElement.classList.contains('dark') ? '🌙' : '☀️'}
     </button>
   );
 }
