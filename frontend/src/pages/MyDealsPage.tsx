@@ -6,30 +6,42 @@ import EmptyState from '../components/EmptyState';
 
 type WatchlistTab = 'watchlist' | 'saved' | 'history';
 
+// Helper to safely get items from various data structures
+function safeGetItems(data: any): any[] {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  if (typeof data !== 'object') return [];
+  
+  // Try common patterns
+  const candidates = [
+    data.items,
+    data.watchlist,
+    data.searches,
+    data.history,
+    data.data,
+    data.results
+  ];
+  
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  
+  return [];
+}
+
 export default function MyDealsPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<WatchlistTab>('watchlist');
-  const [watchlistRaw, setWatchlistRaw] = useState<any>([]);
-  const [savedSearchesRaw, setSavedSearchesRaw] = useState<any>([]);
-  const [searchHistoryRaw, setSearchHistoryRaw] = useState<any>([]);
+  const [watchlistRaw, setWatchlistRaw] = useState<any>(undefined);
+  const [savedSearchesRaw, setSavedSearchesRaw] = useState<any>(undefined);
+  const [searchHistoryRaw, setSearchHistoryRaw] = useState<any>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Ensure watchlist is always an array
-  const watchlist = useMemo(() => {
-    if (!watchlistRaw) return [];
-    return Array.isArray(watchlistRaw) ? watchlistRaw : [watchlistRaw];
-  }, [watchlistRaw]);
-
-  const savedSearches = useMemo(() => {
-    if (!savedSearchesRaw) return [];
-    return Array.isArray(savedSearchesRaw) ? savedSearchesRaw : [savedSearchesRaw];
-  }, [savedSearchesRaw]);
-
-  const searchHistory = useMemo(() => {
-    if (!searchHistoryRaw) return [];
-    return Array.isArray(searchHistoryRaw) ? searchHistoryRaw : [searchHistoryRaw];
-  }, [searchHistoryRaw]);
+  // Convert raw data to arrays on every render
+  const watchlist = useMemo(() => safeGetItems(watchlistRaw), [watchlistRaw]);
+  const savedSearches = useMemo(() => safeGetItems(savedSearchesRaw), [savedSearchesRaw]);
+  const searchHistory = useMemo(() => safeGetItems(searchHistoryRaw), [searchHistoryRaw]);
 
   useEffect(() => {
     setLoading(true);
@@ -38,9 +50,8 @@ export default function MyDealsPage() {
     const fetchWatchlist = () => {
       api.get('/watchlist')
         .then(r => {
-          console.log('Watchlist API response keys:', r?.data ? Object.keys(r.data) : 'no data');
-          console.log('Watchlist raw value:', r?.data);
-          setWatchlistRaw(r?.data || []);
+          console.log('Watchlist API response:', r);
+          setWatchlistRaw(r?.data);
         })
         .catch(err => {
           console.error('Watchlist fetch error:', err);
@@ -52,7 +63,7 @@ export default function MyDealsPage() {
     
     const fetchSavedSearches = () => {
       api.get('/saved-searches')
-        .then(r => setSavedSearchesRaw(r?.data || []))
+        .then(r => setSavedSearchesRaw(r?.data))
         .catch(err => {
           console.error('Saved searches fetch error:', err);
           setSavedSearchesRaw([]);
@@ -62,7 +73,7 @@ export default function MyDealsPage() {
     
     const fetchSearchHistory = () => {
       api.get('/search/history')
-        .then(r => setSearchHistoryRaw(r?.data || []))
+        .then(r => setSearchHistoryRaw(r?.data))
         .catch(err => {
           console.error('Search history fetch error:', err);
           setSearchHistoryRaw([]);
@@ -121,7 +132,7 @@ export default function MyDealsPage() {
       ) : (
         <>
           {tab === 'watchlist' && (
-            watchlist.length === 0 ? (
+            (watchlist.length === 0 || !Array.isArray(watchlist)) ? (
               <EmptyState
                 icon={Star}
                 title="No deals in your watchlist"
@@ -140,7 +151,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {watchlist.map((item: any, i: number) => (
+                    {Array.isArray(watchlist) ? watchlist.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.deal_title || item.title || `Deal #${item.deal_id}`}</td>
                         <td className="px-4 py-3">
@@ -165,7 +176,9 @@ export default function MyDealsPage() {
                           {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Unknown'}
                         </td>
                       </tr>
-                    ))}
+                    )) : (
+                      <tr><td colSpan={4} className="text-center py-8 text-slate-500">Invalid data structure</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -173,7 +186,7 @@ export default function MyDealsPage() {
           )}
 
           {tab === 'saved' && (
-            savedSearches.length === 0 ? (
+            (savedSearches.length === 0 || !Array.isArray(savedSearches)) ? (
               <EmptyState
                 icon={Bookmark}
                 title="No saved searches"
@@ -190,7 +203,7 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {savedSearches.map((search: any, i: number) => (
+                    {Array.isArray(savedSearches) ? savedSearches.map((search: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{search.name}</td>
                         <td className="px-4 py-3 text-slate-400">{search.query}</td>
@@ -198,7 +211,9 @@ export default function MyDealsPage() {
                           {search.created_at ? new Date(search.created_at).toLocaleDateString() : 'Unknown'}
                         </td>
                       </tr>
-                    ))}
+                    )) : (
+                      <tr><td colSpan={3} className="text-center py-8 text-slate-500">Invalid data structure</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -206,7 +221,7 @@ export default function MyDealsPage() {
           )}
 
           {tab === 'history' && (
-            searchHistory.length === 0 ? (
+            (searchHistory.length === 0 || !Array.isArray(searchHistory)) ? (
               <EmptyState
                 icon={Clock}
                 title="No search history"
@@ -222,14 +237,16 @@ export default function MyDealsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {searchHistory.map((item: any, i: number) => (
+                    {Array.isArray(searchHistory) ? searchHistory.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{item.query}</td>
                         <td className="px-4 py-3 text-slate-400">
                           {item.created_at ? new Date(item.created_at).toLocaleString() : 'Unknown'}
                         </td>
                       </tr>
-                    ))}
+                    )) : (
+                      <tr><td colSpan={2} className="text-center py-8 text-slate-500">Invalid data structure</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
