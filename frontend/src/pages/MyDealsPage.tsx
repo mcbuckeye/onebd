@@ -21,7 +21,7 @@ export default function MyDealsPage() {
     
     const fetchWatchlist = () => {
       api.get('/watchlist')
-        .then(r => setWatchlist(Array.isArray(r.data) ? r.data : (r.data?.watchlist || r.data || [])))
+        .then(r => setWatchlist(r.data?.items || r.data?.watchlist || (Array.isArray(r.data) ? r.data : [])))
         .catch(err => {
           console.error('Watchlist fetch error:', err);
           setWatchlist([]);
