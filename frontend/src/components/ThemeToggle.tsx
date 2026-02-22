@@ -1,20 +1,28 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function ThemeToggle() {
-  // Initialize theme from localStorage (Treat as "system" preference)
-  useEffect(() => {
-    const saved = localStorage.getItem('theme');
-    // If saved as 'light', remove dark class; if 'dark' or not set, keep dark class (current default)
-    if (saved === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      document.documentElement.classList.add('dark');
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('theme') !== 'light';
     }
-  }, []);
+    return true; // default to dark
+  });
+
+  useEffect(() => {
+    // Initialize on mount
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDark]);
 
   const toggle = () => {
-    const isDark = document.documentElement.classList.toggle('dark');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    setIsDark((prev) => {
+      const newValue = !prev;
+      localStorage.setItem('theme', newValue ? 'dark' : 'light');
+      return newValue;
+    });
   };
 
   return (
@@ -23,7 +31,7 @@ export default function ThemeToggle() {
       className="p-1 rounded hover:bg-slate-800 dark:hover:bg-slate-700 transition-colors"
       aria-label="Toggle theme"
     >
-      {document.documentElement.classList.contains('dark') ? '🌙' : '☀️'}
+      {isDark ? '🌙' : '☀️'}
     </button>
   );
 }
