@@ -1,0 +1,17 @@
+/* Theme variables on root for default light mode */
+:root {
+  --bg-color: #ffffff;
+  --text-color: #000000;
+}
+
+/* Dark mode overrides when .dark-mode class is on <html> */
+.dark-mode {
+  --bg-color: #121212;
+  --text-color: #e0e0e0;
+}
+
+/* Apply variables to body for global light/dark */
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import ThemeToggle from '../components/ThemeToggle';
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -168,6 +169,9 @@ export default function MainLayout() {
           <button className="relative p-2 rounded-lg hover:bg-slate-800">
             <Bell className="w-5 h-5 text-slate-400" />
           </button>
+
+          {/* Theme toggle */}
+          <ThemeToggle />
 
           {/* User avatar */}
           <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-medium">
