@@ -82,15 +82,15 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       api.get('/dashboard/executive'),
       api.get('/recommendations?limit=5'),
       api.get('/health/data')
     ])
       .then(([dashRes, recRes, healthRes]) => {
-        setData(dashRes.data);
-        setRecommendations(recRes.data.recommendations || []);
-        setDataHealth(healthRes.data);
+        if (dashRes.status === 'fulfilled') setData(dashRes.value.data);
+        if (recRes.status === 'fulfilled') setRecommendations(recRes.value.data.recommendations || []);
+        if (healthRes.status === 'fulfilled') setDataHealth(healthRes.value.data);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
