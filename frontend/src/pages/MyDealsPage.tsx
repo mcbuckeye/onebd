@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Star, Bookmark, Search as SearchIcon, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Star, Bookmark, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import EmptyState from '../components/EmptyState';
