@@ -15,7 +15,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/  # excluded — frontend/src/lib needs to be tracked
 lib64/
 parts/
 sdist/
