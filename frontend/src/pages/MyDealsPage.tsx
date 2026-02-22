@@ -21,9 +21,15 @@ export default function MyDealsPage() {
     
     const fetchWatchlist = () => {
       api.get('/watchlist')
-        .then(r => setWatchlist(r.data?.items || r.data?.watchlist || (Array.isArray(r.data) ? r.data : [])))
+        .then(r => {
+          console.log('Watchlist API response:', r);
+          const items = r.data?.items || r.data?.watchlist || (Array.isArray(r.data) ? r.data : []);
+          console.log('Watchlist items:', items, 'type:', typeof items);
+          setWatchlist(items);
+        })
         .catch(err => {
           console.error('Watchlist fetch error:', err);
+          setError('Failed to load watchlist. Please try again.');
           setWatchlist([]);
         })
         .finally(() => setLoading(false));
