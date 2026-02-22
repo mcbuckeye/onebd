@@ -275,13 +275,15 @@ services:
 # ============================================
 
 volumes:
-  # Cortellis data volume
+  # Cortellis data volume — reuse existing Cortellis project data
   onebd_cortellis_data:
-    name: onebd-cortellis-data
+    external: true
+    name: cortellis_postgres_data
 
-  # Edgar source data volume
+  # Edgar source data volume — reuse existing Edgar project data
   onebd_edgar_data:
-    name: onebd-edgar-data
+    external: true
+    name: edgar_pgdata
 
   # Neo4j data
   onebd_neo4j_data:
