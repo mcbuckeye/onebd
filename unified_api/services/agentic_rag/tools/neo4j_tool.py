@@ -16,21 +16,22 @@ class Neo4jTool(BaseTool):
     """Tool for querying Neo4j graph database."""
 
     SCHEMA_DESCRIPTION = """
-    Neo4j Graph Database contains business development data:
+    Neo4j Graph Database contains business development data (145K+ deals, 55K+ companies).
 
     Nodes:
-    - Deal: Represents a business deal with properties:
+    - Deal: Business deal with these EXACT properties:
       - id (integer)
-      - title (string): The deal headline
+      - title (string): The deal headline (searchable text)
       - status (string): e.g., "Active", "Terminated"
       - deal_type (string): Type of deal
-      - announced_at (string): Date like "2004-01-06 00:00:00"
+      - announced_at (string): Date like "2004-01-06 00:00:00" (use for sorting)
       - updated_at (datetime)
       - source (string): Usually "cortellis"
+      NOTE: There is NO "value" or "total_value" property in Neo4j Deal nodes!
 
     - Company: Organization with properties:
       - id (integer)
-      - name (string): Company name
+      - name (string): Company name (searchable)
       - cik (string): SEC CIK number
       - ticker (string): Stock ticker
       - company_type (string): Type classification
@@ -41,12 +42,21 @@ class Neo4jTool(BaseTool):
     - (Deal)-[:LICENSES_OUT]->(Company): Deal licenses out to company
     - (Deal)-[:LICENSES_IN]->(Company): Deal licenses in from company
 
+    CRITICAL Cypher Rules:
+    - Use `IS NOT NULL` instead of `EXISTS()` for property checks (deprecated syntax)
+    - NO "GROUP BY" in Cypher - aggregations work differently
+    - NO SQL-style joins - use pattern matching instead
+    - String contains: `d.title CONTAINS 'oncology'` (case-sensitive)
+    - Case-insensitive: `toLower(d.title) CONTAINS 'oncology'`
+
     Example queries:
-    - Find deals by title: "MATCH (d:Deal) WHERE d.title CONTAINS 'oncology' RETURN d LIMIT 10"
+    - Find deals: "MATCH (d:Deal) WHERE d.title CONTAINS 'oncology' RETURN d LIMIT 10"
+    - Oncology ADC deals: "MATCH (d:Deal) WHERE toLower(d.title) CONTAINS 'oncology' AND toLower(d.title) CONTAINS 'adc' RETURN d LIMIT 20"
     - Find companies: "MATCH (c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN c LIMIT 10"
     - Recent deals: "MATCH (d:Deal) RETURN d ORDER BY d.announced_at DESC LIMIT 10"
     - Company deals: "MATCH (d:Deal)-[:LICENSES_OUT|LICENSES_IN]->(c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN d, c LIMIT 10"
-    """
+    - Active deals only: "MATCH (d:Deal) WHERE d.status = 'Active' AND d.title CONTAINS 'oncology' RETURN d"
+    """"
 
     def __init__(
         self,
