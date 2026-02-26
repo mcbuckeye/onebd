@@ -116,6 +116,6 @@ class StreamingEvent(BaseModel):
 class ToolSelection(BaseModel):
     """LLM's selection of which tool to use."""
     thought: str = Field(..., description="Reasoning for tool selection")
-    tool: ToolType = Field(..., description="Selected tool")
-    query: str = Field(..., description="Query for the tool")
+    tool: Optional[ToolType] = Field(default=None, description="Selected tool (null if synthesizing)")
+    query: Optional[str] = Field(default=None, description="Query for the tool (null if synthesizing)")
     synthesize: bool = Field(default=False, description="Whether to synthesize final answer")
