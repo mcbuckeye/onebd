@@ -116,8 +116,6 @@ len(await result.fetch_all()) if hasattr(result, 'fetch_all') else 1000
 
     async def is_available(self) -> bool:
         """Check if Neo4j is reachable."""
-        if not self._is_connected:
-            return False
         try:
             driver = await self._get_driver()
             await driver.verify_connectivity()
