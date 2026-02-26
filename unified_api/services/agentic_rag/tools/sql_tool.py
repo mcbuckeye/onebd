@@ -2,7 +2,7 @@
 SQL database tool for querying Cortellis and Edgar databases.
 """
 from typing import Any, Callable, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import text
 import structlog
 
