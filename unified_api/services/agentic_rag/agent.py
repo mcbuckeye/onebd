@@ -229,6 +229,12 @@ CRITICAL RULES:
 - For graph relationships (licenses, partners, collaborations): MUST USE neo4j tool
 - For semantic/conceptual search (similar, related themes): MUST USE pgvector tool
 
+DO NOT HALLUCINATE:
+- Only report data that is actually returned from the database
+- If a query returns titles but no values, DO NOT claim values exist
+- If columns like 'value' or 'amount' don't exist in the schema, DO NOT reference them
+- Say "data not available" rather than making up information
+
 Available Tool Names: neo4j, sql, pgvector, synthesize
 
 Decide what to do next. Respond in JSON format:
@@ -245,7 +251,8 @@ Rules:
 - Be specific in your queries
 - For SQL: Write valid PostgreSQL with ILIKE for text search
 - For Neo4j: Write valid Cypher - NO EXISTS(), NO GROUP BY, use toLower() for case-insensitive
-- For pgvector: Provide natural language search query"""
+- For pgvector: Provide natural language search query
+- NEVER invent data that wasn't returned by a tool"""
 
         try:
             response = await self.llm.ainvoke(prompt)
@@ -579,9 +586,14 @@ Original Query: {cs.original_query}
 
 {context}
 
+IMPORTANT - DO NOT HALLUCINATE:
+- Only report facts that are present in the query results above
+- If a query returned titles/IDs but no financial values, DO NOT claim values exist
+- If data is missing, say "not found" rather than making it up
+- Cite which database each fact came from (Neo4j, SQL, pgvector)
+
 Provide a clear, concise answer that directly addresses the user's question.
-Include relevant facts and cite which data sources were used.
-If information was incomplete or errors occurred, note what additional data might be needed or what went wrong."""
+If information was incomplete or errors occurred, note what additional data might be needed."""
 
         try:
             response = await self.llm.ainvoke(prompt)

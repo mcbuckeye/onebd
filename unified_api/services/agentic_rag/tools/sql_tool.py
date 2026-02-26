@@ -39,6 +39,8 @@ class SQLTool(BaseTool):
       phase_highest_now: character varying
       category_raw: jsonb (JSON data)
       cross_references_raw: jsonb (JSON cross-references)
+      
+      IMPORTANT: deals table does NOT contain financial data (no value, amount, upfront, milestone, royalty columns)
 
     Table: companies
       id: integer (PRIMARY KEY)

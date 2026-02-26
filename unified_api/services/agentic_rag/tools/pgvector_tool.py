@@ -159,7 +159,9 @@ class PgVectorTool(BaseTool):
 
     def is_available(self) -> bool:
         """Check if pgvector tool is available."""
-        return self.session_factory is not None
+        # TODO: Implement actual table existence check
+        # For now, return False since document_chunks table doesn't exist yet
+        return False
 
     def get_schema_description(self) -> str:
         """Return schema description for LLM."""
