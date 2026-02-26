@@ -289,14 +289,35 @@ Return ONLY the Cypher query, no explanation."""
                 result = await tool.execute(cypher_query)
 
                 # Synthesize answer
-                if result.success:
-                    answer_prompt = f"""Based on this data, answer the user's question:
-Question: {request.message}
-Data: {json.dumps(result.data[:10], default=str)}
+                if result.success and result.row_count > 0:
+                    # Extract readable deal info from Neo4j node data
+                    deals = []
+                    for row in result.data[:10]:
+                        # Neo4j returns nodes as dicts with properties
+                        deal_info = {}
+                        if 'd' in row and isinstance(row['d'], dict):
+                            node = row['d']
+                            deal_info['title'] = node.get('title', 'N/A')
+                            deal_info['status'] = node.get('status', 'N/A')
+                            deal_info['deal_type'] = node.get('deal_type', 'N/A')
+                            deal_info['announced'] = node.get('announced_at', 'N/A')
+                        else:
+                            deal_info = row
+                        deals.append(deal_info)
 
-Provide a concise answer."""
+                    answer_prompt = f"""Based on this deal data, answer the user's question concisely:
+
+Question: {request.message}
+
+Deals Found ({result.row_count} total):
+{json.dumps(deals, indent=2, default=str)}
+
+Provide a brief summary listing the key deals. Mention deal titles and key details."""
+
                     answer_response = await llm.ainvoke(answer_prompt)
                     answer = answer_response.content.strip()
+                elif result.success:
+                    answer = f"No deals found matching your query. The Neo4j database contains 145,000+ deals, but none matched the specific criteria."
                 else:
                     answer = f"Query failed: {result.error}"
 
