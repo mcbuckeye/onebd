@@ -321,6 +321,67 @@ Query:"""
 
         return query
 
+    async def _fix_query_with_llm(
+        self,
+        tool_type: ToolType,
+        failed_query: str,
+        error_message: str,
+        original_user_query: str
+    ) -> str:
+        """Ask LLM to fix a query that failed."""
+        tool = self.tools.get(tool_type)
+        schema_desc = tool.get_schema_description() if tool else "No schema available"
+
+        # Extract the actual error, not the wrapped message
+        clean_error = error_message
+        if "Last Error:" in error_message:
+            parts = error_message.split("Last Error:")
+            if len(parts) > 1:
+                clean_error = parts[1].split("\n\nTip:")[0].strip()
+
+        prompt = f"""Fix this {tool_type.value.upper()} query that failed.
+
+Original User Question: {original_user_query}
+
+Failed Query:
+{failed_query}
+
+Error:
+{clean_error[:500]}
+
+Database Schema:
+{schema_desc}
+
+{tool_type.value.upper()}-SPECIFIC RULES:
+- SQL: Use ILIKE for text search, wrap raw SQL in text() function
+- Neo4j: Use IS NOT NULL not EXISTS(), no GROUP BY, use toLower() for case-insensitive
+- PostgreSQL: Use ::timestamp for type casts, single quotes for strings
+
+Provide ONLY the corrected query, no explanation.
+
+Corrected Query:"""
+
+        try:
+            response = await self.llm.ainvoke(prompt)
+            fixed_query = response.content.strip()
+
+            # Remove markdown code blocks if present
+            if fixed_query.startswith("```"):
+                lines = fixed_query.split("\n")
+                fixed_query = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+                fixed_query = fixed_query.strip()
+
+            # Validate fix is different from failed query
+            if fixed_query != failed_query:
+                self.logger.info("Query self-corrected", tool=tool_type.value, original=failed_query[:100], fixed=fixed_query[:100])
+                return fixed_query
+            else:
+                return failed_query  # No change made
+
+        except Exception as e:
+            self.logger.error("Self-correction failed", error=str(e))
+            return failed_query  # Return original if fixing fails
+
     async def _tool_execution_node(self, state: AgentState) -> AgentState:
         """Execute the selected tool."""
         if not state.current_step or not state.conversation_state:
@@ -353,7 +414,7 @@ Query:"""
             )
             step.result_summary = f"Query generated: {step.query[:100]}..."
 
-        # Retry loop
+        # Retry loop with self-correction
         for attempt in range(self.max_retries_per_tool + 1):
             try:
                 result = await tool.execute(step.query)
@@ -364,18 +425,44 @@ Query:"""
                     step.retry_count = attempt
                     break
                 else:
-                    # Log error, will retry
+                    # Tool returned error - try to self-correct
                     step.error = result.error
                     step.retry_count = attempt + 1
 
                     if attempt < self.max_retries_per_tool:
-                        # TODO: Could ask LLM to fix the query
-                        pass
+                        # Ask LLM to fix the query based on the error
+                        self.logger.info("Attempting self-correction", tool=step.tool_type.value, attempt=attempt + 1)
+                        fixed_query = await self._fix_query_with_llm(
+                            step.tool_type,
+                            step.query,
+                            result.error,
+                            cs.original_query
+                        )
+                        if fixed_query and fixed_query != step.query:
+                            step.query = fixed_query
+                            step.result_summary += f" (Corrected attempt {attempt + 1})"
+                        else:
+                            # No correction possible
+                            break
 
             except Exception as e:
                 step.error = str(e)
                 step.retry_count = attempt + 1
                 state.last_tool_result = ToolResult(success=False, error=str(e))
+
+                if attempt < self.max_retries_per_tool:
+                    # Try to fix even on exception
+                    try:
+                        fixed_query = await self._fix_query_with_llm(
+                            step.tool_type,
+                            step.query,
+                            str(e),
+                            cs.original_query
+                        )
+                        if fixed_query and fixed_query != step.query:
+                            step.query = fixed_query
+                    except Exception:
+                        pass  # If fixing fails, continue to next retry
 
         # Add step to conversation state
         state.conversation_state.add_step(step)
