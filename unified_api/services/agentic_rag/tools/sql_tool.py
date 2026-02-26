@@ -1,8 +1,7 @@
 """
 SQL database tool for querying Cortellis and Edgar databases.
 """
-from typing import Any, Callable, Optional
-from sqlalchemy.orm import Session
+from typing import Any, Callable, Optional, Generator
 from sqlalchemy import text
 import structlog
 
@@ -65,7 +64,7 @@ class SQLTool(BaseTool):
 
     def __init__(
         self,
-        session_factory: Optional[Callable[[], AsyncSession]] = None,
+        session_factory: Optional[Callable] = None,
         connection_string: Optional[str] = None,
         max_retries: int = 2
     ):
