@@ -78,10 +78,24 @@ class BaseTool(ABC):
                     error=str(e)
                 )
 
-        # All retries exhausted
+        # All retries exhausted - return detailed error for debugging
+        error_detail = f"""Query failed after {self.max_retries + 1} attempts.
+
+Tool: {self.name}
+Query: {query[:500]}{'...' if len(query) > 500 else ''}
+
+Last Error:
+{last_error}
+
+Tip: Check query syntax against the database schema. Common issues:
+- Using EXISTS() instead of IS NOT NULL in Cypher
+- Referencing non-existent columns
+- Wrong quote style (use single quotes for strings)
+- Missing LIMIT clause for large tables"""
+
         return ToolResult(
             success=False,
-            error=f"Failed after {self.max_retries + 1} attempts. Last error: {last_error}",
+            error=error_detail,
             row_count=0,
             query_executed=query
         )

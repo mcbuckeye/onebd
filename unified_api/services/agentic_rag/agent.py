@@ -397,8 +397,38 @@ Query:"""
             cs.mark_complete(state.final_answer)
             return state
 
+        # Check if there were errors in any steps
+        error_steps = [s for s in cs.reasoning_steps if s.error]
+        if error_steps and not any(s.result_summary and "Success" in s.result_summary for s in cs.reasoning_steps):
+            # All steps failed - return helpful error with details
+            error_details = "\n\n".join([
+                f"Tool: {s.tool_type.value}\nError: {s.error[:500]}"
+                for s in error_steps
+            ])
+
+            error_answer = f"""I encountered errors while querying the databases:
+
+{error_details}
+
+This usually means:
+1. The query syntax doesn't match the database schema
+2. You're asking for data that doesn't exist in the selected database
+3. There's a temporary connection issue
+
+Try rephrasing your question or ask about different data fields."""
+
+            cs.mark_complete(error_answer)
+            state.final_answer = error_answer
+            return state
+
         # Build synthesis prompt
         context = cs.get_context_for_llm()
+
+        # Include errors in context if any
+        if error_steps:
+            context += "\n\nNote: Some data sources encountered errors:\n"
+            for s in error_steps:
+                context += f"- {s.tool_type.value}: {s.error[:200]}...\n"
 
         prompt = f"""Synthesize a final answer based on the gathered information.
 
@@ -408,7 +438,7 @@ Original Query: {cs.original_query}
 
 Provide a clear, concise answer that directly addresses the user's question.
 Include relevant facts and cite which data sources were used.
-If information was incomplete, note what additional data might be needed."""
+If information was incomplete or errors occurred, note what additional data might be needed or what went wrong."""
 
         try:
             response = await self.llm.ainvoke(prompt)
