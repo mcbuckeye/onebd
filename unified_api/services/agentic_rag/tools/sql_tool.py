@@ -3,6 +3,7 @@ SQL database tool for querying Cortellis and Edgar databases.
 """
 from typing import Any, Callable, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 import structlog
 
 from .base import BaseTool
@@ -62,7 +63,7 @@ class SQLTool(BaseTool):
         session = None
         try:
             session = self.session_factory()
-            result = await session.execute(query)
+            result = await session.execute(text(query))
 
             # Get column names from result keys
             columns = result.keys() if hasattr(result, 'keys') else []

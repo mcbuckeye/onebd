@@ -3,6 +3,7 @@ pgvector tool for semantic search on contracts and Edgar filings.
 """
 from typing import Any, Callable, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 import structlog
 
 from .base import BaseTool
@@ -114,7 +115,7 @@ class PgVectorTool(BaseTool):
 
             # Execute
             result = await session.execute(
-                sql,
+                text(sql),
                 {
                     "embedding": embedding,
                     "threshold": threshold,
@@ -222,7 +223,7 @@ class PgVectorTool(BaseTool):
             sql += " ORDER BY combined_score DESC LIMIT :limit"
 
             result = await session.execute(
-                sql,
+                text(sql),
                 {
                     "embedding": embedding,
                     "keyword_query": keyword_query,
