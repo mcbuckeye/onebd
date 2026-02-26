@@ -19,22 +19,33 @@ class Neo4jTool(BaseTool):
     Neo4j Graph Database contains business development data:
 
     Nodes:
-    - Deal: Represents a business deal with properties: id, title, area, indication,
-            phase, deal_type, status, total_value, upfront_value, deal_date
-    - Company: Organization with properties: id, name, type (pharma, biotech)
-    - Contract: Agreement document with properties: id, title, type, effective_date
-    - Asset: Drug/compound with properties: id, name, mechanism, indication
+    - Deal: Represents a business deal with properties:
+      - id (integer)
+      - title (string): The deal headline
+      - status (string): e.g., "Active", "Terminated"
+      - deal_type (string): Type of deal
+      - announced_at (string): Date like "2004-01-06 00:00:00"
+      - updated_at (datetime)
+      - source (string): Usually "cortellis"
+
+    - Company: Organization with properties:
+      - id (integer)
+      - name (string): Company name
+      - cik (string): SEC CIK number
+      - ticker (string): Stock ticker
+      - company_type (string): Type classification
+      - xref_id (integer): Cross-reference ID
+      - source (string)
 
     Relationships:
-    - (Deal)-[:INVOLVES]->(Company): Which companies are parties to a deal
-    - (Deal)-[:HAS_CONTRACT]->(Contract): Contracts associated with a deal
-    - (Deal)-[:FOR_ASSET]->(Asset): What asset the deal covers
-    - (Asset)-[:TARGETS]->(Indication): Disease indications
-    - (Company)-[:ACQUIRED]->(Company): Acquisition relationships
+    - (Deal)-[:LICENSES_OUT]->(Company): Deal licenses out to company
+    - (Deal)-[:LICENSES_IN]->(Company): Deal licenses in from company
+    - (Deal)-[:INVOLVES]->(Company): Companies involved in deal
 
     Example queries:
-    - Find deals by area: "MATCH (d:Deal)-[:INVOLVES]->(c:Company) WHERE d.area CONTAINS 'Oncology' RETURN d, c"
-    - Find deal network: "MATCH path = (d:Deal {id: 'D123'})-[:INVOLVES]->(c)-[:ACQUIRED]->(c2) RETURN path"
+    - Find deals by title keyword: "MATCH (d:Deal) WHERE d.title CONTAINS 'oncology' RETURN d LIMIT 10"
+    - Find deals with company: "MATCH (d:Deal)-[:INVOLVES]->(c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN d, c LIMIT 10"
+    - Recent deals: "MATCH (d:Deal) RETURN d ORDER BY d.announced_at DESC LIMIT 10"
     """
 
     def __init__(
