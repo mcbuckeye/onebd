@@ -49,6 +49,12 @@ class BaseTool(ABC):
                 )
                 result = await self._execute_impl(query, **kwargs)
 
+                # Defensive: handle None result
+                if result is None:
+                    last_error = "Tool returned None instead of ToolResult"
+                    self.logger.error(f"{self.name} returned None")
+                    continue
+
                 if result.success:
                     self.logger.info(
                         f"{self.name} query succeeded",
