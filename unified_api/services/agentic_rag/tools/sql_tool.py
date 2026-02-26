@@ -16,16 +16,51 @@ class SQLTool(BaseTool):
     """Tool for querying SQL databases (PostgreSQL)."""
 
     SCHEMA_DESCRIPTION = """
-    SQL Database (if available) contains structured business development data.
-    Note: Most data is in Neo4j. Only use SQL if specifically querying relational data.
+    Cortellis PostgreSQL Database - ACTUAL SCHEMA (introspected from DB):
 
-    Main tables (if they exist):
-    - deals: structured deal data
-    - companies: company information
+    Table: deals
+      id: integer (PRIMARY KEY)
+      title: text (deal headline, searchable with ILIKE)
+      deal_type: character varying (License, Collaboration, etc.)
+      status: character varying (Active, Terminated, etc.)
+      is_optional: boolean
+      is_merger_acquisition: boolean
+      has_contract: boolean
+      therapy_area_id: integer
+      date_start: timestamp (deal start date)
+      date_end: timestamp (deal end date)
+      date_event_most_recent: timestamp
+      date_change_last: timestamp
+      date_added: timestamp
+      summary: text (detailed description)
+      agreement_type: character varying
+      asset_type: character varying
+      transaction_type: character varying
+      phase_highest_start: character varying (Phase 1, Phase 2, Phase 3, etc.)
+      phase_highest_now: character varying
+      category_raw: jsonb (JSON data)
+      cross_references_raw: jsonb (JSON cross-references)
+
+    Table: companies
+      id: integer (PRIMARY KEY)
+      name: character varying (company name, searchable)
+      company_type: character varying
+      hq_location: character varying
+      cik: character varying (SEC CIK number)
+      ticker: character varying (stock symbol)
+
+    PostgreSQL Syntax Rules:
+    - Use ILIKE for case-insensitive search: title ILIKE '%oncology%'
+    - Boolean checks: is_merger_acquisition = true
+    - JSONB access: cross_references_raw->>'key'
+    - Date comparison: date_start >= '2020-01-01'::timestamp
+    - LIMIT for large result sets
 
     Example queries:
-    - Find deals: "SELECT * FROM deals WHERE title ILIKE '%oncology%' LIMIT 10"
-    - Find companies: "SELECT * FROM companies WHERE name ILIKE '%pfizer%' LIMIT 10"
+    - Oncology deals: "SELECT id, title, status, phase_highest_start FROM deals WHERE title ILIKE '%oncology%' LIMIT 10"
+    - Phase 3 deals: "SELECT title, phase_highest_start FROM deals WHERE phase_highest_start = 'Phase 3' ORDER BY date_start DESC LIMIT 20"
+    - Find Pfizer: "SELECT name, ticker, company_type FROM companies WHERE name ILIKE '%pfizer%'"
+    - M&A deals: "SELECT title, deal_type FROM deals WHERE is_merger_acquisition = true LIMIT 10"
     """
 
     def __init__(
