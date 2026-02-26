@@ -56,7 +56,7 @@ class Neo4jTool(BaseTool):
     - Recent deals: "MATCH (d:Deal) RETURN d ORDER BY d.announced_at DESC LIMIT 10"
     - Company deals: "MATCH (d:Deal)-[:LICENSES_OUT|LICENSES_IN]->(c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN d, c LIMIT 10"
     - Active deals only: "MATCH (d:Deal) WHERE d.status = 'Active' AND d.title CONTAINS 'oncology' RETURN d"
-    """"
+    """
 
     def __init__(
         self,
