@@ -232,6 +232,11 @@ async def agentic_rag_chat(
 
             result = await agent.run(request.message, request.history)
 
+            # Log for debugging
+            if result.reasoning_steps:
+                for step in result.reasoning_steps:
+                    logger.info(f"Agent step {step.hop_number}: {step.tool_type.value} - {step.result_summary}")
+
             latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
             response = AgenticRagChatResponse(
