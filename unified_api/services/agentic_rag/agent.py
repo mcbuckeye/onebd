@@ -214,7 +214,12 @@ Rules:
         if not state.current_step or not state.conversation_state:
             return state
 
-        step = state.current_step
+        # Handle dict or ReasoningStep
+        step_data = state.current_step
+        if isinstance(step_data, dict):
+            step = ReasoningStep(**step_data)
+        else:
+            step = step_data
 
         # Get the tool
         tool = self.tools.get(step.tool_type)
@@ -250,6 +255,9 @@ Rules:
 
         # Add step to conversation state
         state.conversation_state.add_step(step)
+
+        # Update state with potentially modified step
+        state.current_step = step
 
         return state
 
