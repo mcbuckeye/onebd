@@ -93,28 +93,39 @@ class AgenticRagChatResponse(BaseModel):
 
 def _get_neo4j_tool() -> Optional[Neo4jTool]:
     """Create Neo4j tool from environment."""
-    uri = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
-    user = os.getenv("NEO4J_USER", "neo4j")
-    password = os.getenv("NEO4J_PASSWORD", "")
+    from unified_api.config import settings
 
-    if not password:
+    if not settings.neo4j_password:
         logger.warning("Neo4j password not set, tool unavailable")
         return None
 
-    return Neo4jTool(uri=uri, username=user, password=password)
+    return Neo4jTool(
+        uri=settings.neo4j_uri,
+        username=settings.neo4j_user,
+        password=settings.neo4j_password
+    )
 
 
 def _get_sql_tool() -> Optional[SQLTool]:
-    """Create SQL tool from database session."""
-    # This will be injected via dependency
-    # For now return None - real implementation uses Depends
-    return None
+    """Create SQL tool for Cortellis database."""
+    from unified_api.services.database import get_cortellis_session_factory
+
+    def session_factory():
+        factory = get_cortellis_session_factory()
+        return factory()
+
+    return SQLTool(session_factory=session_factory)
 
 
 def _get_pgvector_tool() -> Optional[PgVectorTool]:
-    """Create pgvector tool from database session."""
-    # Will be injected via dependency
-    return None
+    """Create pgvector tool for Edgar database."""
+    from unified_api.services.database import get_edgar_source_session_factory
+
+    def session_factory():
+        factory = get_edgar_source_session_factory()
+        return factory()
+
+    return PgVectorTool(session_factory=session_factory)
 
 
 @router.post("/chat", response_model=AgenticRagChatResponse)
@@ -154,6 +165,8 @@ async def agentic_rag_chat(
 
     tools = {}
     neo4j_tool = None
+    sql_tool = None
+    pgvector_tool = None
 
     try:
         # Initialize tools
@@ -161,10 +174,13 @@ async def agentic_rag_chat(
         if neo4j_tool:
             tools[ToolType.NEO4J] = neo4j_tool
 
-        # TODO: Get SQL and pgvector tools from session factory
-        # For now these are placeholders
-        # tools[ToolType.SQL] = ...
-        # tools[ToolType.PGVECTOR] = ...
+        sql_tool = _get_sql_tool()
+        if sql_tool:
+            tools[ToolType.SQL] = sql_tool
+
+        pgvector_tool = _get_pgvector_tool()
+        if pgvector_tool:
+            tools[ToolType.PGVECTOR] = pgvector_tool
 
         if not tools:
             raise HTTPException(
@@ -327,7 +343,7 @@ Provide a concise answer."""
             detail=f"Agentic RAG processing failed: {str(e)}"
         )
     finally:
-        # Cleanup
+        # Cleanup sessions
         if neo4j_tool:
             await neo4j_tool.close()
 
