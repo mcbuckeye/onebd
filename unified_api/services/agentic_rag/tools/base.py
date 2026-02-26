@@ -1,0 +1,95 @@
+"""
+Base class for Agentic RAG tools.
+All tools must implement the Tool interface.
+"""
+from abc import ABC, abstractmethod
+from typing import Any, Optional
+import structlog
+
+from ..models import ToolResult
+
+logger = structlog.get_logger(__name__)
+
+
+class BaseTool(ABC):
+    """Abstract base class for data source tools."""
+
+    def __init__(self, name: str, max_retries: int = 2):
+        self.name = name
+        self.max_retries = max_retries
+        self.logger = logger.bind(tool=name)
+
+    @abstractmethod
+    async def _execute_impl(self, query: str, **kwargs) -> ToolResult:
+        """
+        Actual implementation of tool execution.
+        Must be implemented by subclasses.
+        """
+        pass
+
+    async def execute(self, query: str, **kwargs) -> ToolResult:
+        """
+        Execute query with retry logic.
+
+        Args:
+            query: The query string to execute
+            **kwargs: Additional parameters
+
+        Returns:
+            ToolResult with success status and data/error
+        """
+        last_error = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                self.logger.info(
+                    f"Executing {self.name} query",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries + 1
+                )
+                result = await self._execute_impl(query, **kwargs)
+
+                if result.success:
+                    self.logger.info(
+                        f"{self.name} query succeeded",
+                        row_count=result.row_count
+                    )
+                    return result
+                else:
+                    # Tool returned error (e.g., syntax error)
+                    last_error = result.error
+                    self.logger.warning(
+                        f"{self.name} query returned error",
+                        attempt=attempt + 1,
+                        error=result.error
+                    )
+
+            except Exception as e:
+                last_error = str(e)
+                self.logger.error(
+                    f"{self.name} query failed",
+                    attempt=attempt + 1,
+                    error=str(e)
+                )
+
+        # All retries exhausted
+        return ToolResult(
+            success=False,
+            error=f"Failed after {self.max_retries + 1} attempts. Last error: {last_error}",
+            row_count=0,
+            query_executed=query
+        )
+
+    def is_available(self) -> bool:
+        """
+        Check if tool is available/connectable.
+        Override in subclass if needed.
+        """
+        return True
+
+    def get_schema_description(self) -> str:
+        """
+        Return schema description for LLM context.
+        Override in subclass.
+        """
+        return f"{self.name} tool - no schema description available"

@@ -21,25 +21,27 @@ export default function MyDealsPage() {
     const fetchWatchlist = async () => {
       try {
         const response = await api.get('/watchlist');
-        console.log('Watchlist API full response:', JSON.stringify(response, null, 2));
         
         // Extract items - API returns {total: N, items: []} or just an array
         const data = response?.data;
         let rawItems: any[] = [];
         
         if (Array.isArray(data)) {
-          rawItems = data; // API returned array directly
+          rawItems = data;
         } else if (data && typeof data === 'object') {
           rawItems = Array.isArray(data.items) ? data.items : [];
         }
-        
-        console.log('Raw items:', rawItems, 'Is array:', Array.isArray(rawItems));
         
         // Ensure we have an array
         const items = Array.isArray(rawItems) ? rawItems : [];
         console.log('Final items array:', items, 'Length:', items.length);
         
-        setWatchlist(items);
+        if (Array.isArray(rawItems)) {
+          setWatchlist(rawItems);
+        } else {
+          console.warn('Watchlist: rawItems is not an array', typeof rawItems);
+          setWatchlist([]);
+        }
       } catch (err) {
         console.error('Watchlist fetch error:', err);
         setError('Failed to load watchlist');

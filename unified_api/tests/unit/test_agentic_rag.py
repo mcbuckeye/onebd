@@ -1,0 +1,328 @@
+"""
+Unit tests for Agentic RAG service.
+Tests the agent logic, tool interfaces, and state management.
+"""
+import pytest
+from typing import List, Dict, Any
+from unittest.mock import Mock, AsyncMock, patch
+
+from unified_api.services.agentic_rag.models import (
+    AgenticRagRequest,
+    AgenticRagResponse,
+    ReasoningStep,
+    ToolResult,
+    ToolType,
+    ConversationState
+)
+
+
+class TestModels:
+    """Test Pydantic models."""
+
+    def test_agentic_rag_request_valid(self):
+        """Test valid request creation."""
+        request = AgenticRagRequest(
+            message="Find deals related to BTK inhibitors",
+            max_hops=5
+        )
+        assert request.message == "Find deals related to BTK inhibitors"
+        assert request.max_hops == 5
+        assert request.history == []
+
+    def test_agentic_rag_request_with_history(self):
+        """Test request with conversation history."""
+        history = [
+            {"role": "user", "content": "What deals do we have?"},
+            {"role": "assistant", "content": "Found 5 deals."}
+        ]
+        request = AgenticRagRequest(
+            message="Which ones are in Phase 3?",
+            history=history,
+            max_hops=3
+        )
+        assert len(request.history) == 2
+        assert request.max_hops == 3
+
+    def test_reasoning_step_creation(self):
+        """Test reasoning step model."""
+        step = ReasoningStep(
+            hop_number=1,
+            thought="Need to query Neo4j for deals",
+            tool_type=ToolType.NEO4J,
+            query="MATCH (d:Deal) WHERE d.area CONTAINS 'Oncology' RETURN d",
+            result_summary="Found 12 deals"
+        )
+        assert step.hop_number == 1
+        assert step.tool_type == ToolType.NEO4J
+        assert step.retry_count == 0
+
+    def test_tool_result_success(self):
+        """Test successful tool result."""
+        result = ToolResult(
+            success=True,
+            data=[{"deal_id": 1, "title": "Deal A"}],
+            row_count=1
+        )
+        assert result.success is True
+        assert result.error is None
+        assert result.row_count == 1
+
+    def test_tool_result_error(self):
+        """Test error tool result."""
+        result = ToolResult(
+            success=False,
+            error="Connection refused",
+            data=None
+        )
+        assert result.success is False
+        assert result.error == "Connection refused"
+        assert result.row_count == 0
+
+    def test_conversation_state_initial(self):
+        """Test initial conversation state."""
+        state = ConversationState(
+            original_query="Find BTK deals"
+        )
+        assert state.current_hop == 0
+        assert state.max_hops == 5
+        assert state.is_complete is False
+        assert len(state.reasoning_steps) == 0
+
+    def test_conversation_state_add_step(self):
+        """Test adding reasoning steps."""
+        state = ConversationState(original_query="Test")
+        step = ReasoningStep(
+            hop_number=1,
+            thought="Querying",
+            tool_type=ToolType.SQL,
+            query="SELECT * FROM deals",
+            result_summary="Found 5"
+        )
+        state.add_step(step)
+        assert state.current_hop == 1
+        assert len(state.reasoning_steps) == 1
+
+
+class TestToolInterfaces:
+    """Test tool base classes and implementations."""
+
+    @pytest.fixture
+    def mock_neo4j_driver(self):
+        """Mock Neo4j driver."""
+        return Mock()
+
+    @pytest.mark.asyncio
+    async def test_neo4j_tool_success(self, mock_neo4j_driver):
+        """Test Neo4j tool successful execution."""
+        from unified_api.services.agentic_rag.tools.neo4j_tool import Neo4jTool
+
+        mock_record = Mock()
+        mock_record.data.return_value = {"deal_id": 1, "title": "Test Deal"}
+        mock_neo4j_driver.execute_query.return_value = ([mock_record], None, None)
+
+        tool = Neo4jTool(driver=mock_neo4j_driver)
+        result = await tool.execute(
+            query="MATCH (d:Deal) RETURN d.id, d.title LIMIT 1"
+        )
+
+        assert result.success is True
+        assert result.row_count == 1
+        assert len(result.data) == 1
+
+    @pytest.mark.asyncio
+    async def test_neo4j_tool_error_retry(self, mock_neo4j_driver):
+        """Test Neo4j tool retries on error."""
+        from unified_api.services.agentic_rag.tools.neo4j_tool import Neo4jTool
+
+        mock_neo4j_driver.execute_query.side_effect = Exception("Connection lost")
+
+        tool = Neo4jTool(driver=mock_neo4j_driver, max_retries=2)
+        result = await tool.execute(query="MATCH (n) RETURN n")
+
+        assert result.success is False
+        assert result.error == "Connection lost"
+        assert mock_neo4j_driver.execute_query.call_count == 3  # initial + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_sql_tool_success(self):
+        """Test SQL tool successful execution."""
+        from unified_api.services.agentic_rag.tools.sql_tool import SQLTool
+
+        mock_session = AsyncMock()
+        mock_result = Mock()
+        mock_result.mappings.return_value.all.return_value = [
+            {"deal_id": 1, "deal_name": "Test Deal"}
+        ]
+        mock_session.execute.return_value = mock_result
+
+        tool = SQLTool(session_factory=lambda: mock_session)
+        result = await tool.execute(
+            query="SELECT id, name FROM deals LIMIT 1"
+        )
+
+        assert result.success is True
+        assert result.row_count == 1
+
+    @pytest.mark.asyncio
+    async def test_pgvector_tool_success(self):
+        """Test pgvector tool successful execution."""
+        from unified_api.services.agentic_rag.tools.pgvector_tool import PgVectorTool
+
+        mock_session = AsyncMock()
+        mock_result = Mock()
+        mock_result.mappings.return_value.all.return_value = [
+            {
+                "contract_id": 1,
+                "content": "This agreement covers...",
+                "similarity": 0.89
+            }
+        ]
+        mock_session.execute.return_value = mock_result
+
+        tool = PgVectorTool(session_factory=lambda: mock_session)
+        result = await tool.execute(
+            query="BTK inhibitor licensing terms"
+        )
+
+        assert result.success is True
+        assert result.row_count == 1
+        assert "similarity" in result.data[0]
+
+
+class TestAgentLogic:
+    """Test the LangGraph agent orchestration."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        """Mock LLM for testing."""
+        mock = AsyncMock()
+        return mock
+
+    @pytest.fixture
+    def mock_tools(self):
+        """Mock all tools."""
+        return {
+            ToolType.NEO4J: AsyncMock(),
+            ToolType.SQL: AsyncMock(),
+            ToolType.PGVECTOR: AsyncMock()
+        }
+
+    @pytest.mark.asyncio
+    async def test_agent_single_hop(self, mock_llm, mock_tools):
+        """Test agent completes in single hop."""
+        from unified_api.services.agentic_rag.agent import AgenticRagAgent
+
+        # Mock LLM to select SQL tool then synthesize
+        mock_llm.side_effect = [
+            {
+                "thought": "I need to query the deals table",
+                "tool": "sql",
+                "query": "SELECT * FROM deals"
+            },
+            {
+                "thought": "I have enough information to answer",
+                "tool": "synthesize",
+                "answer": "Found 5 deals related to your query."
+            }
+        ]
+
+        mock_tools[ToolType.SQL].execute.return_value = ToolResult(
+            success=True,
+            data=[{"id": 1}, {"id": 2}],
+            row_count=2
+        )
+
+        agent = AgenticRagAgent(llm=mock_llm, tools=mock_tools)
+        result = await agent.run("Find deals")
+
+        assert result.success is True
+        assert result.answer == "Found 5 deals related to your query."
+        assert len(result.reasoning_steps) == 1
+
+    @pytest.mark.asyncio
+    async def test_agent_max_hops_reached(self, mock_llm, mock_tools):
+        """Test agent stops at max hops."""
+        from unified_api.services.agentic_rag.agent import AgenticRagAgent
+
+        # Always want to query more
+        mock_llm.return_value = {
+            "thought": "Need more data",
+            "tool": "sql",
+            "query": "SELECT * FROM more_data"
+        }
+
+        mock_tools[ToolType.SQL].execute.return_value = ToolResult(
+            success=True, data=[], row_count=0
+        )
+
+        agent = AgenticRagAgent(
+            llm=mock_llm,
+            tools=mock_tools,
+            max_hops=2
+        )
+        result = await agent.run("Complex query")
+
+        assert result.success is True  # Returns partial
+        assert result.partial is True
+        assert len(result.reasoning_steps) == 2
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_retry_then_skip(self, mock_llm, mock_tools):
+        """Test agent retries failed tool then skips."""
+        from unified_api.services.agentic_rag.agent import AgenticRagAgent
+
+        mock_llm.side_effect = [
+            {"thought": "Query SQL", "tool": "sql", "query": "SELECT 1"},
+            {"thought": "Try Neo4j instead", "tool": "neo4j", "query": "MATCH (n) RETURN n"},
+            {"thought": "Synthesize from what we have", "tool": "synthesize", "answer": "Partial answer"}
+        ]
+
+        # SQL fails twice
+        mock_tools[ToolType.SQL].execute.return_value = ToolResult(
+            success=False, error="DB down", row_count=0
+        )
+        # Neo4j succeeds
+        mock_tools[ToolType.NEO4J].execute.return_value = ToolResult(
+            success=True, data=[{"n": 1}], row_count=1
+        )
+
+        agent = AgenticRagAgent(llm=mock_llm, tools=mock_tools, max_retries_per_tool=2)
+        result = await agent.run("Test query")
+
+        assert result.success is True
+        assert len(result.reasoning_steps) == 2  # SQL (failed) + Neo4j (success) + synthesize
+
+
+class TestStreamingResponse:
+    """Test streaming response generation."""
+
+    @pytest.mark.asyncio
+    async def test_streaming_events(self):
+        """Test that streaming yields correct events."""
+        from unified_api.services.agentic_rag.agent import AgenticRagAgent
+
+        mock_llm = AsyncMock()
+        mock_llm.side_effect = [
+            {"thought": "Step 1", "tool": "sql", "query": "SELECT 1"},
+            {"thought": "Step 2", "tool": "synthesize", "answer": "Done"}
+        ]
+
+        mock_tools = {ToolType.SQL: AsyncMock()}
+        mock_tools[ToolType.SQL].execute.return_value = ToolResult(
+            success=True, data=[{}], row_count=1
+        )
+
+        agent = AgenticRagAgent(llm=mock_llm, tools=mock_tools)
+
+        events = []
+        async for event in agent.run_streaming("Test"):
+            events.append(event)
+
+        # Should have: start, thought, tool_start, tool_result, reasoning_step, answer
+        assert len(events) >= 5
+        assert any(e["type"] == "thinking" for e in events)
+        assert any(e["type"] == "answer" for e in events)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

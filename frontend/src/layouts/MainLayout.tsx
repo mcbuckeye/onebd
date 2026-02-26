@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Search, BarChart3, Building2,
   Network, FileText, ScrollText, Star, MessageSquare,
   Menu, Bell, LogOut, ChevronLeft, Scale, Shield, HelpCircle,
-  Users
+  Users, Brain
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { to: '/my-deals', icon: Star, label: 'My Deals' },
   { to: '/comps', icon: Scale, label: 'Comps' },
   { to: '/dd', icon: Shield, label: 'Due Diligence' },
+  { to: '/agentic-rag', icon: Brain, label: 'Agentic RAG' },
   { to: '/chat', icon: MessageSquare, label: 'Ask' },
 ];
 
