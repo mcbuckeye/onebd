@@ -68,6 +68,18 @@ class AgenticRagChatRequest(BaseModel):
     stream: bool = Field(default=False, description="Stream response with reasoning trace")
 
 
+class AttemptResponse(BaseModel):
+    """A single attempt within a reasoning step."""
+    attempt_number: int
+    query: str
+    success: bool
+    error: Optional[str] = None
+    row_count: int = 0
+    was_corrected: bool = False
+    correction_explanation: Optional[str] = None
+    duration_ms: Optional[int] = None
+
+
 class ReasoningStepResponse(BaseModel):
     """A single reasoning step in the response."""
     hop_number: int
@@ -78,6 +90,7 @@ class ReasoningStepResponse(BaseModel):
     retry_count: int = 0
     error: Optional[str] = None
     duration_ms: Optional[int] = None
+    attempts: List[AttemptResponse] = Field(default_factory=list, description="All attempts including failures")
 
 
 class AgenticRagChatResponse(BaseModel):
@@ -252,7 +265,19 @@ async def agentic_rag_chat(
                         result_summary=s.result_summary,
                         retry_count=s.retry_count,
                         error=s.error,
-                        duration_ms=s.duration_ms
+                        duration_ms=s.duration_ms,
+                        attempts=[
+                            AttemptResponse(
+                                attempt_number=a.attempt_number,
+                                query=a.query,
+                                success=a.success,
+                                error=a.error,
+                                row_count=a.row_count,
+                                was_corrected=a.was_corrected,
+                                correction_explanation=a.correction_explanation,
+                                duration_ms=a.duration_ms
+                            ) for a in (s.attempts or [])
+                        ]
                     ) for s in result.reasoning_steps
                 ],
                 total_hops=result.total_hops,

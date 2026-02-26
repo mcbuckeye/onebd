@@ -383,9 +383,11 @@ Corrected Query:"""
             return failed_query  # Return original if fixing fails
 
     async def _tool_execution_node(self, state: AgentState) -> AgentState:
-        """Execute the selected tool."""
+        """Execute the selected tool with full attempt tracking."""
         if not state.current_step or not state.conversation_state:
             return state
+
+        from unified_api.services.agentic_rag.models import AttemptDetail
 
         # Handle dict or ReasoningStep
         step_data = state.current_step
@@ -402,9 +404,10 @@ Corrected Query:"""
             state.last_tool_result = ToolResult(success=False, error="Tool not found")
             return state
 
+        cs = state.conversation_state
+
         # If query is empty (e.g., from keyword routing), generate it now
         if not step.query or step.query.strip() == "":
-            cs = state.conversation_state
             context = self._build_llm_context(cs)
             self.logger.info("Generating query for forced tool", tool=step.tool_type.value)
             step.query = await self._generate_query_for_tool(
@@ -414,55 +417,108 @@ Corrected Query:"""
             )
             step.result_summary = f"Query generated: {step.query[:100]}..."
 
+        # Initialize attempts list
+        step.attempts = []
+        final_success = False
+        final_error = None
+
         # Retry loop with self-correction
-        for attempt in range(self.max_retries_per_tool + 1):
+        for attempt_num in range(self.max_retries_per_tool + 1):
+            attempt_start = time.time()
+            current_query = step.query
+            was_corrected = attempt_num > 0
+            correction_explanation = None
+
+            attempt_detail = AttemptDetail(
+                attempt_number=attempt_num + 1,
+                query=current_query[:500],  # Truncate long queries
+                success=False,
+                was_corrected=was_corrected
+            )
+
             try:
-                result = await tool.execute(step.query)
+                result = await tool.execute(current_query)
                 state.last_tool_result = result
 
                 if result.success:
-                    step.result_summary = f"Success: {result.row_count} rows"
-                    step.retry_count = attempt
+                    # Success!
+                    attempt_detail.success = True
+                    attempt_detail.row_count = result.row_count
+                    attempt_detail.duration_ms = int((time.time() - attempt_start) * 1000)
+                    step.attempts.append(attempt_detail)
+
+                    step.result_summary = f"Success on attempt {attempt_num + 1}: {result.row_count} rows"
+                    step.retry_count = attempt_num
+                    final_success = True
                     break
                 else:
-                    # Tool returned error - try to self-correct
-                    step.error = result.error
-                    step.retry_count = attempt + 1
+                    # Tool returned error - track it and try to self-correct
+                    attempt_detail.error = result.error[:500] if result.error else "Unknown error"
+                    attempt_detail.duration_ms = int((time.time() - attempt_start) * 1000)
 
-                    if attempt < self.max_retries_per_tool:
-                        # Ask LLM to fix the query based on the error
-                        self.logger.info("Attempting self-correction", tool=step.tool_type.value, attempt=attempt + 1)
+                    if attempt_num < self.max_retries_per_tool:
+                        # Try to self-correct
+                        self.logger.info("Attempting self-correction",
+                                       tool=step.tool_type.value,
+                                       attempt=attempt_num + 1,
+                                       error=result.error[:200])
+
                         fixed_query = await self._fix_query_with_llm(
                             step.tool_type,
-                            step.query,
+                            current_query,
                             result.error,
                             cs.original_query
                         )
-                        if fixed_query and fixed_query != step.query:
-                            step.query = fixed_query
-                            step.result_summary += f" (Corrected attempt {attempt + 1})"
+
+                        if fixed_query and fixed_query != current_query:
+                            step.query = fixed_query  # Update for next attempt
+                            correction_explanation = f"Self-corrected based on error: {result.error[:200]}"
+                            attempt_detail.correction_explanation = correction_explanation
+                            self.logger.info("Query self-corrected",
+                                           original=current_query[:100],
+                                           fixed=fixed_query[:100])
                         else:
-                            # No correction possible
+                            # No correction possible - mark and break
+                            attempt_detail.correction_explanation = "Self-correction failed to produce different query"
+                            step.attempts.append(attempt_detail)
+                            final_error = result.error
                             break
 
-            except Exception as e:
-                step.error = str(e)
-                step.retry_count = attempt + 1
-                state.last_tool_result = ToolResult(success=False, error=str(e))
+                    step.attempts.append(attempt_detail)
+                    final_error = result.error
 
-                if attempt < self.max_retries_per_tool:
+            except Exception as e:
+                # Exception during execution
+                error_str = str(e)
+                attempt_detail.error = error_str[:500]
+                attempt_detail.duration_ms = int((time.time() - attempt_start) * 1000)
+                step.attempts.append(attempt_detail)
+                final_error = error_str
+
+                if attempt_num < self.max_retries_per_tool:
                     # Try to fix even on exception
                     try:
                         fixed_query = await self._fix_query_with_llm(
                             step.tool_type,
-                            step.query,
-                            str(e),
+                            current_query,
+                            error_str,
                             cs.original_query
                         )
-                        if fixed_query and fixed_query != step.query:
+                        if fixed_query and fixed_query != current_query:
                             step.query = fixed_query
-                    except Exception:
-                        pass  # If fixing fails, continue to next retry
+                            correction_explanation = f"Self-corrected after exception: {error_str[:200]}"
+                            self.logger.info("Query self-corrected after exception",
+                                           tool=step.tool_type.value)
+                    except Exception as fix_error:
+                        self.logger.error("Self-correction failed", error=str(fix_error))
+
+        # Set final step status
+        if not final_success:
+            step.error = final_error
+            step.retry_count = len(step.attempts) - 1 if step.attempts else 0
+            step.result_summary = f"Failed after {len(step.attempts)} attempt(s)"
+
+        step.duration_ms = sum(a.duration_ms for a in step.attempts if a.duration_ms)
 
         # Add step to conversation state
         state.conversation_state.add_step(step)

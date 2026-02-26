@@ -30,6 +30,18 @@ class AgenticRagRequest(BaseModel):
     )
 
 
+class AttemptDetail(BaseModel):
+    """A single attempt within a reasoning step (including retries)."""
+    attempt_number: int = Field(..., ge=1, description="Attempt number (1 = first try)")
+    query: str = Field(..., description="Query that was tried")
+    success: bool = Field(..., description="Whether this attempt succeeded")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
+    row_count: int = Field(default=0, description="Rows returned (if success)")
+    was_corrected: bool = Field(default=False, description="Whether this was a self-corrected query")
+    correction_explanation: Optional[str] = Field(default=None, description="Why the query was corrected")
+    duration_ms: Optional[int] = Field(default=None, description="Time this attempt took")
+
+
 class ReasoningStep(BaseModel):
     """A single step in the agent's reasoning process."""
     hop_number: int = Field(..., ge=1, description="Which hop this is")
@@ -38,8 +50,9 @@ class ReasoningStep(BaseModel):
     query: str = Field(..., description="Query sent to tool")
     result_summary: str = Field(..., description="Brief summary of result")
     retry_count: int = Field(default=0, ge=0, description="Number of retries")
-    error: Optional[str] = Field(default=None, description="Error if tool failed")
+    error: Optional[str] = Field(default=None, description="Error if tool failed - shows final error after all retries")
     duration_ms: Optional[int] = Field(default=None, description="Execution time")
+    attempts: List[AttemptDetail] = Field(default_factory=list, description="All attempts including failures and retries")
 
 
 class ToolResult(BaseModel):
