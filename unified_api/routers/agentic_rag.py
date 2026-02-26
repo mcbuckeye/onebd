@@ -5,25 +5,35 @@ Routes to LangGraph agent with Neo4j, SQL, and pgvector tools.
 from typing import Optional, List
 import os
 import structlog
+import json
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from openai import AsyncOpenAI
 
 # Langfuse observability
-from langfuse import Langfuse
-from langfuse.decorators import observe
+try:
+    from langfuse import Langfuse
+    from langfuse.decorators import observe
+    LANGFUSE_AVAILABLE = True
+except ImportError:
+    LANGFUSE_AVAILABLE = False
+    Langfuse = None
+    def observe():
+        return lambda f: f
 
 # Agent imports
 from unified_api.services.agentic_rag import (
     AgenticRagRequest,
     AgenticRagResponse,
     ReasoningStep,
-    AgenticRagAgent,
     ToolType
 )
 from unified_api.services.agentic_rag.tools import Neo4jTool, SQLTool, PgVectorTool
+from unified_api.config import settings
 
 # Auth (reuse from existing auth)
 from unified_api.routers.auth import get_current_user
@@ -32,11 +42,22 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/agentic-rag", tags=["agentic-rag"])
 
 # Initialize Langfuse
-langfuse = Langfuse(
-    public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
-    host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
-) if os.getenv("LANGFUSE_PUBLIC_KEY") else None
+if LANGFUSE_AVAILABLE and os.getenv("LANGFUSE_PUBLIC_KEY"):
+    langfuse = Langfuse(
+        public_key=os.getenv("LANGFUSE_PUBLIC_KEY", ""),
+        secret_key=os.getenv("LANGFUSE_SECRET_KEY", ""),
+        host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    )
+else:
+    langfuse = None
+
+# Initialize OpenAI client
+openai_client = None
+if settings.openai_api_key:
+    openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+    logger.info("OpenAI client initialized", model=settings.openai_model)
+else:
+    logger.warning("OpenAI API key not set - agentic RAG will be unavailable")
 
 
 class AgenticRagChatRequest(BaseModel):
@@ -97,7 +118,6 @@ def _get_pgvector_tool() -> Optional[PgVectorTool]:
 
 
 @router.post("/chat", response_model=AgenticRagChatResponse)
-@observe()
 async def agentic_rag_chat(
     request: AgenticRagChatRequest,
     current_user: dict = Depends(get_current_user)
@@ -112,9 +132,16 @@ async def agentic_rag_chat(
     4. Synthesize final answer with citations
     """
     start_time = datetime.utcnow()
-    trace = None
+
+    # Check OpenAI available
+    if not openai_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Agentic RAG unavailable - OpenAI API key not configured"
+        )
 
     # Start Langfuse trace
+    trace = None
     if langfuse:
         trace = langfuse.trace(
             name="agentic_rag_chat",
@@ -125,10 +152,11 @@ async def agentic_rag_chat(
             }
         )
 
+    tools = {}
+    neo4j_tool = None
+
     try:
         # Initialize tools
-        tools = {}
-
         neo4j_tool = _get_neo4j_tool()
         if neo4j_tool:
             tools[ToolType.NEO4J] = neo4j_tool
@@ -144,29 +172,141 @@ async def agentic_rag_chat(
                 detail="No data sources available. Check service configuration."
             )
 
-        # TODO: Initialize LLM (Azure OpenAI)
-        # This depends on how you configure LLMs in your project
-        # llm = ...
+        # Create LLM wrapper for LangGraph
+        class OpenAIWrapper:
+            """Wrapper to make OpenAI client compatible with LangGraph expectations."""
+            def __init__(self, client, model):
+                self.client = client
+                self.model = model
 
-        # For now, return placeholder response
-        # Real implementation would create AgenticRagAgent and call run()
+            async def ainvoke(self, prompt):
+                """Invoke LLM with a prompt string."""
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=1000
+                )
+                return response.choices[0].message
 
-        latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            async def astream(self, prompt):
+                """Stream LLM response."""
+                stream = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    stream=True
+                )
+                async for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
 
-        response = AgenticRagChatResponse(
-            success=True,
-            answer=f"Query received: {request.message}. Agentic RAG implementation in progress.",
-            partial=False,
-            reasoning_steps=[],
-            total_hops=0,
-            latency_ms=latency_ms
-        )
+        llm = OpenAIWrapper(openai_client, settings.openai_model)
+
+        # Try to use LangGraph agent, fall back to simple implementation
+        try:
+            from unified_api.services.agentic_rag.agent import AgenticRagAgent
+
+            agent = AgenticRagAgent(
+                llm=llm,
+                tools=tools,
+                max_hops=request.max_hops
+            )
+
+            result = await agent.run(request.message, request.history)
+
+            latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            response = AgenticRagChatResponse(
+                success=result.success,
+                answer=result.answer,
+                partial=result.partial,
+                reasoning_steps=[
+                    ReasoningStepResponse(
+                        hop_number=s.hop_number,
+                        thought=s.thought,
+                        tool_type=s.tool_type.value,
+                        query=s.query,
+                        result_summary=s.result_summary,
+                        retry_count=s.retry_count,
+                        error=s.error,
+                        duration_ms=s.duration_ms
+                    ) for s in result.reasoning_steps
+                ],
+                total_hops=result.total_hops,
+                latency_ms=latency_ms
+            )
+
+        except ImportError:
+            # LangGraph not available - use simple direct approach
+            logger.warning("LangGraph not available, using simple implementation")
+
+            # Simple single-hop for now
+            tool = tools.get(ToolType.NEO4J)
+            if tool:
+                # Generate query using LLM
+                prompt = f"""Generate a Cypher query for Neo4j to answer:
+{request.message}
+
+Available schema:
+- Deal nodes with properties: id, title, area, indication, phase, deal_type
+- Company nodes with: id, name, type
+- Relationships: (Deal)-[:INVOLVES]->(Company)
+
+Return ONLY the Cypher query, no explanation."""
+
+                llm_response = await llm.ainvoke(prompt)
+                cypher_query = llm_response.content.strip()
+
+                # Remove markdown if present
+                if cypher_query.startswith("```"):
+                    lines = cypher_query.split("\n")
+                    cypher_query = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+                    cypher_query = cypher_query.strip()
+
+                result = await tool.execute(cypher_query)
+
+                # Synthesize answer
+                if result.success:
+                    answer_prompt = f"""Based on this data, answer the user's question:
+Question: {request.message}
+Data: {json.dumps(result.data[:10], default=str)}
+
+Provide a concise answer."""
+                    answer_response = await llm.ainvoke(answer_prompt)
+                    answer = answer_response.content.strip()
+                else:
+                    answer = f"Query failed: {result.error}"
+
+                latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+                response = AgenticRagChatResponse(
+                    success=result.success,
+                    answer=answer,
+                    partial=False,
+                    reasoning_steps=[
+                        ReasoningStepResponse(
+                            hop_number=1,
+                            thought="Querying Neo4j graph database",
+                            tool_type="neo4j",
+                            query=cypher_query[:200],
+                            result_summary=f"{'Success' if result.success else 'Failed'}: {result.row_count} rows",
+                            retry_count=0,
+                            error=result.error
+                        )
+                    ],
+                    total_hops=1,
+                    latency_ms=latency_ms
+                )
+            else:
+                raise HTTPException(status_code=503, detail="No tools available")
 
         # Update Langfuse trace
         if trace:
             trace.update(
-                output={"answer": response.answer},
-                metadata={"latency_ms": latency_ms}
+                output={"answer": response.answer, "hops": response.total_hops},
+                metadata={"latency_ms": response.latency_ms}
             )
 
         return response
@@ -188,7 +328,7 @@ async def agentic_rag_chat(
         )
     finally:
         # Cleanup
-        if neo4j_tool := tools.get(ToolType.NEO4J):
+        if neo4j_tool:
             await neo4j_tool.close()
 
 
