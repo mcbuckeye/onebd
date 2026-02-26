@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Send, Sparkles, Brain, ChevronRight, ChevronDown, Loader2, Database, Network, FileText, CheckCircle, AlertCircle } from 'lucide-react';
+import { Send, Brain, ChevronRight, ChevronDown, Loader2, Database, Network, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import api from '../lib/api';
@@ -114,7 +113,6 @@ export default function AgenticRagPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
-  const [searchParams] = useSearchParams();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
