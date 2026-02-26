@@ -83,49 +83,57 @@ class SQLTool(BaseTool):
                 query_executed=query
             )
 
-        session = None
-        try:
-            session = self.session_factory()
-            result = await session.execute(text(query))
+        import asyncio
 
-            # Get column names from result keys
-            columns = result.keys() if hasattr(result, 'keys') else []
+        # Use async wrapper since SQLAlchemy sessions in database.py are synchronous
+        def _sync_execute():
+            session = None
+            try:
+                session = self.session_factory()
+                result = session.execute(text(query))
 
-            # Fetch all rows
-            rows = result.mappings().all()
+                # Get column names from result keys
+                columns = result.keys() if hasattr(result, 'keys') else []
 
-            # Convert to list of dicts
-            data = []
-            for row in rows:
-                row_dict = dict(row)
-                # Convert non-serializable types
-                for key, value in row_dict.items():
-                    if hasattr(value, 'isoformat'):  # datetime
-                        row_dict[key] = value.isoformat()
-                    elif value is None:
-                        row_dict[key] = None
-                    else:
-                        row_dict[key] = value
-                data.append(row_dict)
+                # Fetch all rows
+                rows = result.mappings().all()
 
-            return ToolResult(
-                success=True,
-                data=data,
-                row_count=len(data),
-                query_executed=query
-            )
+                # Convert to list of dicts
+                data = []
+                for row in rows:
+                    row_dict = dict(row)
+                    # Convert non-serializable types
+                    for key, value in row_dict.items():
+                        if hasattr(value, 'isoformat'):  # datetime
+                            row_dict[key] = value.isoformat()
+                        elif value is None:
+                            row_dict[key] = None
+                        else:
+                            row_dict[key] = value
+                    data.append(row_dict)
 
-        except Exception as e:
-            logger.error("SQL query failed", query=query, error=str(e))
-            return ToolResult(
-                success=False,
-                error=str(e),
-                row_count=0,
-                query_executed=query
-            )
-        finally:
-            if session:
-                await session.close()
+                return ToolResult(
+                    success=True,
+                    data=data,
+                    row_count=len(data),
+                    query_executed=query
+                )
+
+            except Exception as e:
+                logger.error("SQL query failed", query=query, error=str(e))
+                return ToolResult(
+                    success=False,
+                    error=str(e),
+                    row_count=0,
+                    query_executed=query
+                )
+            finally:
+                if session:
+                    session.close()
+
+        # Run synchronous query in thread pool
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _sync_execute)
 
     def is_available(self) -> bool:
         """Check if SQL tool is available."""
