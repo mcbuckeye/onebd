@@ -379,9 +379,11 @@ async def agentic_rag_health():
     neo4j_tool = _get_neo4j_tool()
     if neo4j_tool:
         try:
+            # Neo4jTool has async is_available
             available = await neo4j_tool.is_available()
             tools_status["neo4j"] = "available" if available else "unavailable"
-        except Exception:
+        except Exception as e:
+            logger.warning("Neo4j health check failed", error=str(e))
             tools_status["neo4j"] = "error"
     else:
         tools_status["neo4j"] = "not_configured"

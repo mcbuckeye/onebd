@@ -171,6 +171,16 @@ Rules:
             response = await self.llm.ainvoke(prompt)
             content = response.content if hasattr(response, 'content') else str(response)
 
+            # Extract JSON from markdown code blocks if present
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+
             # Parse JSON
             selection = json.loads(content)
             tool_selection = ToolSelection(**selection)
@@ -344,17 +354,32 @@ If information was incomplete, note what additional data might be needed."""
         initial_state.messages.append({"role": "user", "content": query})
 
         try:
-            # Run graph
-            final_state = await self.graph.ainvoke(initial_state)
+            # Run graph - returns dict, not AgentState
+            final_state_dict = await self.graph.ainvoke(initial_state)
 
-            cs = final_state.conversation_state
+            # Convert dict back to AgentState
+            if isinstance(final_state_dict, dict):
+                cs = final_state_dict.get('conversation_state')
+                final_error = final_state_dict.get('error')
+            else:
+                cs = final_state_dict.conversation_state
+                final_error = final_state_dict.error
+
+            if not cs:
+                return AgenticRagResponse(
+                    success=False,
+                    answer="No conversation state returned",
+                    partial=True,
+                    total_hops=0,
+                    latency_ms=int((time.time() - start_time) * 1000)
+                )
 
             return AgenticRagResponse(
-                success=not bool(final_state.error),
-                answer=cs.final_answer if cs else "No answer generated",
-                partial=cs.current_hop >= cs.max_hops if cs else False,
-                reasoning_steps=cs.reasoning_steps if cs else [],
-                total_hops=cs.current_hop if cs else 0,
+                success=not bool(final_error),
+                answer=cs.final_answer if cs.final_answer else "No answer generated",
+                partial=cs.current_hop >= cs.max_hops,
+                reasoning_steps=cs.reasoning_steps,
+                total_hops=cs.current_hop,
                 latency_ms=int((time.time() - start_time) * 1000)
             )
 
