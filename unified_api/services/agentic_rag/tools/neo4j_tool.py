@@ -40,12 +40,12 @@ class Neo4jTool(BaseTool):
     Relationships:
     - (Deal)-[:LICENSES_OUT]->(Company): Deal licenses out to company
     - (Deal)-[:LICENSES_IN]->(Company): Deal licenses in from company
-    - (Deal)-[:INVOLVES]->(Company): Companies involved in deal
 
     Example queries:
-    - Find deals by title keyword: "MATCH (d:Deal) WHERE d.title CONTAINS 'oncology' RETURN d LIMIT 10"
-    - Find deals with company: "MATCH (d:Deal)-[:INVOLVES]->(c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN d, c LIMIT 10"
+    - Find deals by title: "MATCH (d:Deal) WHERE d.title CONTAINS 'oncology' RETURN d LIMIT 10"
+    - Find companies: "MATCH (c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN c LIMIT 10"
     - Recent deals: "MATCH (d:Deal) RETURN d ORDER BY d.announced_at DESC LIMIT 10"
+    - Company deals: "MATCH (d:Deal)-[:LICENSES_OUT|LICENSES_IN]->(c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN d, c LIMIT 10"
     """
 
     def __init__(

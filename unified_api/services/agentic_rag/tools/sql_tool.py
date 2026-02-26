@@ -16,28 +16,16 @@ class SQLTool(BaseTool):
     """Tool for querying SQL databases (PostgreSQL)."""
 
     SCHEMA_DESCRIPTION = """
-    SQL Database contains structured business development data:
+    SQL Database (if available) contains structured business development data.
+    Note: Most data is in Neo4j. Only use SQL if specifically querying relational data.
 
-    Main tables:
-    - deals(id, title, area, indication, phase, deal_type, status, total_value,
-            upfront_value, deal_date, acquirer_id, target_id, source)
-    - companies(id, name, type, country, employees, revenue)
-    - contracts(id, deal_id, title, content, effective_date, expiration_date)
-    - financial_terms(id, deal_id, upfront, milestones, royalties, total_value)
-
-    Key relationships:
-    - deals.acquirer_id -> companies.id
-    - deals.target_id -> companies.id
-    - contracts.deal_id -> deals.id
-    - financial_terms.deal_id -> deals.id
+    Main tables (if they exist):
+    - deals: structured deal data
+    - companies: company information
 
     Example queries:
-    - Find deals by area: "SELECT * FROM deals WHERE area ILIKE '%Oncology%'"
-    - Deal with parties: "SELECT d.*, c1.name as acquirer, c2.name as target
-                          FROM deals d
-                          JOIN companies c1 ON d.acquirer_id = c1.id
-                          JOIN companies c2 ON d.target_id = c2.id
-                          WHERE d.area ILIKE '%Oncology%'"
+    - Find deals: "SELECT * FROM deals WHERE title ILIKE '%oncology%' LIMIT 10"
+    - Find companies: "SELECT * FROM companies WHERE name ILIKE '%pfizer%' LIMIT 10"
     """
 
     def __init__(
