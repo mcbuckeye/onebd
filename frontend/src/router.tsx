@@ -17,6 +17,7 @@ const FilingsPage = lazy(() => import('./pages/FilingsPage'));
 const ContractsPage = lazy(() => import('./pages/ContractsPage'));
 const MyDealsPage = lazy(() => import('./pages/MyDealsPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
+const AgenticRagPage = lazy(() => import('./pages/AgenticRagPage'));
 const CompanyProfilePage = lazy(() => import('./pages/CompanyProfilePage'));
 const DrugProfilePage = lazy(() => import('./pages/DrugProfilePage'));
 const CompBuilderPage = lazy(() => import('./pages/CompBuilderPage'));
@@ -65,6 +66,7 @@ export const router = createBrowserRouter([
       { path: 'territory', element: withErrorBoundary(TerritoryPage) },
       { path: 'briefings', element: withErrorBoundary(BriefingPage) },
       { path: 'chat', element: withErrorBoundary(ChatPage) },
+      { path: 'agentic-rag', element: withErrorBoundary(AgenticRagPage) },
       { path: 'company/:companyId', element: withErrorBoundary(CompanyProfilePage) },
       { path: 'drug/:drugId', element: withErrorBoundary(DrugProfilePage) },
       { path: 'guide', element: withErrorBoundary(GuidePage) },
