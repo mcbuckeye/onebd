@@ -36,9 +36,9 @@ class Settings(BaseSettings):
     broker_url: str = "redis://onebd-redis:6379/0"
     result_backend: str = "redis://onebd-redis:6379/1"
 
-    # OpenAI
+    # OpenAI - Agentic RAG uses best reasoning model
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    openai_model: str = "gpt-5.3-codex"  # Best for reasoning and tool-driven agents
     embedding_model: str = "text-embedding-3-small"
     vector_dim: int = 1536
 
