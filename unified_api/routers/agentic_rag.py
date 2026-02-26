@@ -289,35 +289,38 @@ Return ONLY the Cypher query, no explanation."""
                 result = await tool.execute(cypher_query)
 
                 # Synthesize answer
-                if result.success and result.row_count > 0:
+                if result.success and result.row_count > 0 and result.data:
                     # Extract readable deal info from Neo4j node data
                     deals = []
                     for row in result.data[:10]:
                         # Neo4j returns nodes as dicts with properties
                         deal_info = {}
-                        if 'd' in row and isinstance(row['d'], dict):
-                            node = row['d']
-                            deal_info['title'] = node.get('title', 'N/A')
-                            deal_info['status'] = node.get('status', 'N/A')
-                            deal_info['deal_type'] = node.get('deal_type', 'N/A')
-                            deal_info['announced'] = node.get('announced_at', 'N/A')
-                        else:
-                            deal_info = row
-                        deals.append(deal_info)
+                        try:
+                            if 'd' in row and isinstance(row['d'], dict):
+                                node = row['d']
+                                deal_info['title'] = node.get('title', 'N/A')[:200]  # Truncate long titles
+                                deal_info['status'] = node.get('status', 'N/A')
+                                deal_info['deal_type'] = node.get('deal_type', 'N/A')
+                                deal_info['announced'] = node.get('announced_at', 'N/A')[:10]  # Just date
+                            else:
+                                deal_info = {k: str(v)[:200] for k, v in row.items()}
+                            deals.append(deal_info)
+                        except Exception:
+                            deals.append({"info": str(row)[:200]})
 
-                    answer_prompt = f"""Based on this deal data, answer the user's question concisely:
+                    answer_prompt = f"""Based on this deal data, answer concisely:
 
 Question: {request.message}
 
-Deals Found ({result.row_count} total):
-{json.dumps(deals, indent=2, default=str)}
+Found {result.row_count} deal(s):
+{chr(10).join([f"- {d.get('title', 'Unknown')} ({d.get('status', 'N/A')}, {d.get('announced', 'N/A')})" for d in deals])}
 
-Provide a brief summary listing the key deals. Mention deal titles and key details."""
+Summarize the key findings briefly."""
 
                     answer_response = await llm.ainvoke(answer_prompt)
                     answer = answer_response.content.strip()
                 elif result.success:
-                    answer = f"No deals found matching your query. The Neo4j database contains 145,000+ deals, but none matched the specific criteria."
+                    answer = f"No deals found matching '{request.message}'. The database has 145,000+ deals - try different keywords like 'cancer', 'tumor', or specific company names."
                 else:
                     answer = f"Query failed: {result.error}"
 
