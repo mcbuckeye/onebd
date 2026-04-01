@@ -98,6 +98,7 @@ bcrypt==4.0.1
 
 # ============================================
 # PageIndex (tree-based contract retrieval)
+# Install from GitHub — PyPI package is client-only, missing tree generation
 # ============================================
-pageindex>=0.2.8
+pageindex @ git+https://github.com/VectifyAI/PageIndex.git
 litellm>=1.80.0
