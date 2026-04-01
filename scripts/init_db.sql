@@ -29,3 +29,22 @@ BEGIN
         CREATE INDEX IF NOT EXISTS idx_indications_name_trgm ON indications USING gin (name gin_trgm_ops);
     END IF;
 END $$;
+
+-- ============================================================
+-- Contract Tree Index Cache (PageIndex integration)
+-- Stores generated tree structures to avoid re-indexing contracts
+-- each tree costs ~$0.50 and takes 30-150 seconds to generate
+-- ============================================================
+CREATE TABLE IF NOT EXISTS contract_tree_index (
+    id SERIAL PRIMARY KEY,
+    contract_id INTEGER NOT NULL,
+    deal_id INTEGER NOT NULL,
+    tree_json JSONB NOT NULL,
+    line_count INTEGER,
+    model VARCHAR(100) NOT NULL,
+    indexed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(contract_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contract_tree_deal_id ON contract_tree_index(deal_id);
+CREATE INDEX IF NOT EXISTS idx_contract_tree_contract_id ON contract_tree_index(contract_id);
