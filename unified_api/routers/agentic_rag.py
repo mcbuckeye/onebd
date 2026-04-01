@@ -161,6 +161,26 @@ def _get_pageindex_tool():
     )
 
 
+def _get_evidence_tool():
+    """Create Evidence tool for clinical efficacy queries."""
+    from unified_api.services.agentic_rag.tools import EvidenceTool
+    from unified_api.services.database import get_cortellis_session_factory
+
+    if not settings.openai_api_key:
+        logger.warning("OpenAI API key not set, Evidence tool unavailable")
+        return None
+
+    def session_factory():
+        factory = get_cortellis_session_factory()
+        return factory()
+
+    return EvidenceTool(
+        session_factory=session_factory,
+        openai_api_key=settings.openai_api_key,
+        model=settings.openai_model or "gpt-4o-2024-11-20",
+    )
+
+
 @router.post("/chat", response_model=AgenticRagChatResponse)
 async def agentic_rag_chat(
     request: AgenticRagChatRequest,
@@ -218,6 +238,10 @@ async def agentic_rag_chat(
         pageindex_tool = _get_pageindex_tool()
         if pageindex_tool:
             tools[ToolType.PAGEINDEX] = pageindex_tool
+
+        evidence_tool = _get_evidence_tool()
+        if evidence_tool:
+            tools[ToolType.EVIDENCE] = evidence_tool
 
         if not tools:
             raise HTTPException(

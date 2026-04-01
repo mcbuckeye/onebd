@@ -59,6 +59,17 @@ PGVECTOR_KEYWORDS = [
     'meaning', 'context', 'semantic'
 ]
 
+# Keywords for Evidence tool (clinical efficacy/safety queries)
+EVIDENCE_KEYWORDS = [
+    'pfs', 'progression-free survival', 'overall survival', 'os rate',
+    'complete response', 'cr rate', 'overall response rate', 'orr',
+    'partial response', 'clinical trial', 'phase 3', 'phase 2',
+    'efficacy', 'safety profile', 'adverse event', 'dosing regimen',
+    'fda label', 'prescribing information', 'kaplan-meier',
+    'hazard ratio', 'median follow-up', 'head-to-head',
+    'btk inhibitor', 'checkpoint inhibitor', 'monoclonal antibody',
+]
+
 # Keywords for PageIndex (deep contract reading)
 PAGEINDEX_KEYWORDS = [
     'contract says', 'contract text', 'clause', 'provision',
@@ -89,6 +100,13 @@ def detect_tool_from_query(query: str) -> Optional[ToolType]:
     neo4j_score = sum(1 for kw in NEO4J_KEYWORDS if kw in query_lower)
     if neo4j_score >= 2:
         return ToolType.NEO4J
+
+    # Check Evidence keywords (clinical queries — highest priority for clinical data)
+    evidence_score = sum(1 for kw in EVIDENCE_KEYWORDS if kw in query_lower)
+    if evidence_score >= 2:
+        return ToolType.EVIDENCE
+    if evidence_score >= 1 and any(x in query_lower for x in ['compare', 'versus', 'vs']):
+        return ToolType.EVIDENCE
 
     # Check PageIndex keywords (contract deep-read — check before pgvector)
     pageindex_score = sum(1 for kw in PAGEINDEX_KEYWORDS if kw in query_lower)

@@ -13,6 +13,7 @@ class ToolType(str, Enum):
     SQL = "sql"
     PGVECTOR = "pgvector"
     PAGEINDEX = "pageindex"  # Tree-based contract deep-read
+    EVIDENCE = "evidence"  # Clinical evidence library queries
     SYNTHESIZE = "synthesize"  # Final answer generation
 
 
