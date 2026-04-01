@@ -265,3 +265,48 @@ async def compare_deal_terms(
             comparison["common_indications"] = list(common)
 
     return comparison
+
+
+# ============================================
+# Deep Contract Comparison (PageIndex-powered)
+# ============================================
+
+class DeepCompareRequest(BaseModel):
+    """Request for deep contract comparison."""
+    deal_ids: List[int]
+    aspects: Optional[List[str]] = None
+
+
+@router.post("/contracts/deep-compare")
+async def deep_compare(request: DeepCompareRequest):
+    """
+    Deep-compare contracts using PageIndex full-text analysis.
+
+    Reads each contract with PageIndex, extracts deal terms for the
+    specified aspects, then synthesizes a side-by-side comparison.
+
+    Unlike /contracts/compare (metadata only), this reads the actual
+    contract text for precise term extraction.
+    """
+    from unified_api.services.contract_compare import deep_compare_contracts
+    from unified_api.services.database import get_cortellis_session_factory
+    from unified_api.config import settings
+
+    if len(request.deal_ids) < 2:
+        raise HTTPException(status_code=400, detail="Provide at least 2 deal IDs")
+    if len(request.deal_ids) > 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 deals for comparison")
+
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="OpenAI API key not configured")
+
+    factory = get_cortellis_session_factory()
+    result = await deep_compare_contracts(
+        deal_ids=request.deal_ids,
+        comparison_aspects=request.aspects,
+        session_factory=factory,
+        openai_api_key=settings.openai_api_key,
+        model=settings.openai_model or "gpt-4o-2024-11-20",
+    )
+
+    return result
