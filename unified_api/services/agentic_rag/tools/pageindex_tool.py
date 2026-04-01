@@ -317,7 +317,7 @@ Data from {len(per_deal_answers)} contracts:
 Create a structured comparison. Use tables where appropriate.
 Cite specific deals and section numbers. Note any data gaps.""",
                 }],
-                temperature=0,
+                # temperature=0 omitted for gpt-5.x compat
                 api_key=self.openai_api_key,
             ),
         )
@@ -397,7 +397,7 @@ Prefer lines from the main contract body (higher line numbers), not the table of
 Return ONLY a JSON array of line numbers, e.g.: [1509, 1624, 1790]""",
                     }
                 ],
-                temperature=0,
+                # temperature=0 omitted for gpt-5.x compat
                 api_key=self.openai_api_key,
             ),
         )
@@ -434,7 +434,7 @@ Contract text (deal {deal_id}):
 If amounts are redacted as [***], note that. Give a precise, BD analyst-grade answer.""",
                     }
                 ],
-                temperature=0,
+                # temperature=0 omitted for gpt-5.x compat
                 api_key=self.openai_api_key,
             ),
         )

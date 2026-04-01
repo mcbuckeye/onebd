@@ -245,7 +245,7 @@ Question: {question}
 Identify page numbers with clinical efficacy data (PFS, CR, ORR, response rates, Kaplan-Meier).
 Return ONLY a JSON array of page numbers.""",
                 }],
-                temperature=0,
+                # temperature=0 omitted for gpt-5.x compat
                 api_key=self.openai_api_key,
             ),
         )
@@ -289,7 +289,7 @@ Document text:
 
 Be precise. Cite page numbers. Note what data is available vs not reported.""",
                 }],
-                temperature=0,
+                # temperature=0 omitted for gpt-5.x compat
                 api_key=self.openai_api_key,
             ),
         )
@@ -325,7 +325,7 @@ Create a structured comparison with:
 
 Format for an executive audience.""",
                 }],
-                temperature=0,
+                # temperature=0 omitted for gpt-5.x compat
                 api_key=self.openai_api_key,
             ),
         )

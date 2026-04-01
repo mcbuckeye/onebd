@@ -36,11 +36,11 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
+            # GPT-5.x models don't support temperature=0
+            kwargs = {"model": model, "messages": messages}
+            if not any(x in (model or "") for x in ["gpt-5", "gpt5"]):
+                kwargs["temperature"] = 0
+            response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
             if return_finish_reason:
                 finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
@@ -66,11 +66,11 @@ async def llm_acompletion(model, prompt):
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
+            # GPT-5.x models don't support temperature=0
+            kwargs = {"model": model, "messages": messages}
+            if not any(x in (model or "") for x in ["gpt-5", "gpt5"]):
+                kwargs["temperature"] = 0
+            response = await litellm.acompletion(**kwargs)
             return response.choices[0].message.content
         except Exception as e:
             print('************* Retrying *************')
