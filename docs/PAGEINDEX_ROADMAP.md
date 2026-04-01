@@ -67,13 +67,39 @@ Dedicated mode for clinical study protocols. Upload PDF, auto-index, query.
 - Protocol-specific tree navigation (knows protocol structure)
 - Could be standalone feature or OneBD module for clinical ops team
 
-### 4B. Regulatory Document Search
+### 4B. Clinical Evidence Library (JVO FEATURE)
+Curated, pre-indexed library of clinical evidence documents for competitive intelligence.
+Enables queries like: "Compare PFS rates at 12/24/36 months across BTK inhibitors in B-cell malignancies."
+
+**Document types to index:**
+- FDA prescribing labels (Drugs@FDA PDFs) — approved indications, efficacy tables, safety
+- Pivotal trial publications (NEJM, Lancet, JCO) — landmark PFS/OS rates, Kaplan-Meier data
+- FDA briefing documents — ODAC advisory committee reviews (200-500 pages)
+- EMA assessment reports (EPARs) — European regulatory assessments
+- NCCN guidelines — treatment algorithms, comparative recommendations
+
+**Initial therapeutic areas (BeiGene priority):**
+- BTK inhibitors: zanubrutinib (Brukinsa), acalabrutinib (Calquence), ibrutinib (Imbruvica), pirtobrutinib (Jaypirca)
+- B-cell malignancies: CLL/SLL, MCL, WM, MZL, FL, DLBCL
+- PD-1/PD-L1: tislelizumab (Tevimbra) competitive landscape
+- ADCs in hematology and solid tumors
+
+**Architecture:**
+- New `evidence_documents` table: doc_id, drug_name, doc_type (label/publication/briefing), therapeutic_area, source_url, pdf_path, tree_cached
+- New `evidence_tree_index` table: mirrors `contract_tree_index` for evidence docs
+- Celery task to fetch and index FDA labels automatically from Drugs@FDA
+- New agentic RAG tool: `EvidenceTool` — searches across multiple drugs' evidence
+- Multi-document synthesis: agent reads relevant docs for each drug, then compares
+
+**PoC validated (2026-03-31):** Successfully indexed and queried FDA labels for Brukinsa, Calquence, and Imbruvica. Generated competitive comparison table with PFS, CR, and ORR data across B-cell malignancies. Limitation: FDA labels have median PFS/HRs but not always landmark rates — need published trial manuscripts for 12/24/36-month data.
+
+### 4C. Regulatory Document Search
 Index FDA briefing documents, EMA assessment reports, advisory committee transcripts.
 - 200-500 page PDFs with complex cross-references
 - Tree-based retrieval handles nested regulatory document structure
 - Pre-index key regulatory docs for top therapeutic areas
 
-### 4C. Deal Alerts with Contract Intelligence
+### 4D. Deal Alerts with Contract Intelligence
 When new contracts appear via `cortellis-sync`, auto-index and extract key terms.
 - Push summary to Telegram: "New Pfizer/BioNTech collaboration — $200M upfront, 8% royalty"
 - Celery task triggered on new `contract_content` rows
@@ -85,12 +111,13 @@ When new contracts appear via `cortellis-sync`, auto-index and extract key terms
 1. **2A** — Batch pre-index (instant UX for all major deals)
 2. **2C** — Multi-contract queries (real BD workflow)
 3. **2B** — Auto-extract clauses (queryable structured data)
-4. **3C** — Streaming answers (UX polish)
-5. **3B** — Contract comparison upgrade (JVO feature)
-6. **3A** — PDF support (better citations)
-7. **4C** — Deal alerts (automation)
-8. **4A** — Clinical protocol analyzer (new domain)
-9. **4B** — Regulatory document search (new domain)
+4. **4B** — Clinical Evidence Library (JVO feature — validated in PoC)
+5. **3C** — Streaming answers (UX polish)
+6. **3B** — Contract comparison upgrade (JVO feature)
+7. **3A** — PDF support (better citations)
+8. **4D** — Deal alerts (automation)
+9. **4A** — Clinical protocol analyzer (new domain)
+10. **4C** — Regulatory document search (new domain)
 
 ## Principles
 - TDD on everything — tests first, no exceptions
