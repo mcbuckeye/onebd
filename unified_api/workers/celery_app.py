@@ -72,6 +72,11 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.maintenance.refresh_materialized_views",
             "schedule": crontab(hour=8, minute=30),
         },
+        # Batch pre-index contracts with PageIndex nightly at 3 AM
+        "batch-pageindex-contracts": {
+            "task": "unified_api.workers.tasks.pageindex.batch_index_contracts",
+            "schedule": crontab(hour=3, minute=0),
+        },
     },
 
     # Worker settings
@@ -652,4 +657,58 @@ def refresh_materialized_views():
 
     except Exception as e:
         logger.error("Failed to refresh materialized views", error=str(e))
+        return {"status": "failed", "error": str(e)}
+
+
+# ============================================
+# PAGEINDEX TASKS
+# ============================================
+
+@celery_app.task(
+    name="unified_api.workers.tasks.pageindex.batch_index_contracts",
+    bind=True,
+    max_retries=0,
+    time_limit=7200,  # 2 hours max
+)
+def batch_index_contracts(self, limit: int = 500, min_words: int = 10000):
+    """
+    Batch pre-index contracts with PageIndex tree generation.
+
+    Runs nightly at 3 AM via Celery Beat. Indexes the largest un-indexed
+    contracts so user queries are instant (cache hit).
+
+    Args:
+        limit: Max contracts to index in this batch
+        min_words: Min word count to consider
+    """
+    import asyncio
+
+    logger.info(
+        "Starting batch PageIndex indexing",
+        limit=limit,
+        min_words=min_words,
+    )
+
+    try:
+        from unified_api.services.database import get_cortellis_session_factory
+        from unified_api.services.batch_index import run_batch_index
+        from unified_api.config import settings
+
+        factory = get_cortellis_session_factory()
+        model = settings.openai_model or "gpt-4o-2024-11-20"
+
+        result = asyncio.run(
+            run_batch_index(
+                session_factory=factory,
+                limit=limit,
+                min_words=min_words,
+                model=model,
+            )
+        )
+
+        logger.info("Batch PageIndex indexing complete", **result)
+        return result
+
+    except Exception as e:
+        logger.error("Batch PageIndex indexing failed", error=str(e))
         return {"status": "failed", "error": str(e)}
