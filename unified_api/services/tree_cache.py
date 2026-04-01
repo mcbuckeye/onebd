@@ -119,7 +119,7 @@ class TreeCache:
                 text(
                     "INSERT INTO contract_tree_index "
                     "(contract_id, deal_id, tree_json, model, line_count, indexed_at) "
-                    "VALUES (:contract_id, :deal_id, :tree_json::jsonb, :model, :line_count, NOW()) "
+                    "VALUES (:contract_id, :deal_id, CAST(:tree_json AS jsonb), :model, :line_count, NOW()) "
                     "ON CONFLICT (contract_id) DO UPDATE SET "
                     "deal_id = EXCLUDED.deal_id, "
                     "tree_json = EXCLUDED.tree_json, "
