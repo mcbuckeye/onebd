@@ -141,6 +141,26 @@ def _get_pgvector_tool() -> Optional[PgVectorTool]:
     return PgVectorTool(session_factory=session_factory)
 
 
+def _get_pageindex_tool():
+    """Create PageIndex tool for contract deep-reading."""
+    from unified_api.services.agentic_rag.tools import PageIndexTool
+    from unified_api.services.database import get_cortellis_session_factory
+
+    if not settings.openai_api_key:
+        logger.warning("OpenAI API key not set, PageIndex tool unavailable")
+        return None
+
+    def session_factory():
+        factory = get_cortellis_session_factory()
+        return factory()
+
+    return PageIndexTool(
+        session_factory=session_factory,
+        openai_api_key=settings.openai_api_key,
+        model=settings.openai_model or "gpt-4o-2024-11-20",
+    )
+
+
 @router.post("/chat", response_model=AgenticRagChatResponse)
 async def agentic_rag_chat(
     request: AgenticRagChatRequest,
@@ -194,6 +214,10 @@ async def agentic_rag_chat(
         pgvector_tool = _get_pgvector_tool()
         if pgvector_tool:
             tools[ToolType.PGVECTOR] = pgvector_tool
+
+        pageindex_tool = _get_pageindex_tool()
+        if pageindex_tool:
+            tools[ToolType.PAGEINDEX] = pageindex_tool
 
         if not tools:
             raise HTTPException(

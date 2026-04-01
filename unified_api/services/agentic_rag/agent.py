@@ -59,6 +59,17 @@ PGVECTOR_KEYWORDS = [
     'meaning', 'context', 'semantic'
 ]
 
+# Keywords for PageIndex (deep contract reading)
+PAGEINDEX_KEYWORDS = [
+    'contract says', 'contract text', 'clause', 'provision',
+    'upfront payment', 'royalty rate', 'milestone payment',
+    'termination provision', 'ip ownership', 'intellectual property',
+    'confidentiality', 'license scope', 'territory rights',
+    'indemnification', 'representations', 'warranties',
+    'specific terms', 'exact amount', 'what does the contract',
+    'section', 'article', 'exhibit',
+]
+
 
 def detect_tool_from_query(query: str) -> Optional[ToolType]:
     """
@@ -78,6 +89,13 @@ def detect_tool_from_query(query: str) -> Optional[ToolType]:
     neo4j_score = sum(1 for kw in NEO4J_KEYWORDS if kw in query_lower)
     if neo4j_score >= 2:
         return ToolType.NEO4J
+
+    # Check PageIndex keywords (contract deep-read — check before pgvector)
+    pageindex_score = sum(1 for kw in PAGEINDEX_KEYWORDS if kw in query_lower)
+    if pageindex_score >= 2:
+        return ToolType.PAGEINDEX
+    if pageindex_score >= 1 and 'contract' in query_lower:
+        return ToolType.PAGEINDEX
 
     # Check pgvector keywords
     pgvector_score = sum(1 for kw in PGVECTOR_KEYWORDS if kw in query_lower)
