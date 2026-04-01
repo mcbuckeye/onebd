@@ -1,7 +1,7 @@
 # PageIndex Enhancement Roadmap — OneBD
 
-> Last updated: 2026-03-31
-> Status: Phase 1 (core integration) complete. Phases 2-4 below.
+> Last updated: 2026-04-01
+> Status: ALL PHASES COMPLETE. 143 tests, ~8,000 LOC added across 2 days.
 
 ## ✅ Phase 1: Core Integration (COMPLETE)
 - [x] HTML cleaner service (40 tests)
@@ -107,17 +107,21 @@ When new contracts appear via `cortellis-sync`, auto-index and extract key terms
 
 ---
 
-## Build Order
-1. **2A** — Batch pre-index (instant UX for all major deals)
-2. **2C** — Multi-contract queries (real BD workflow)
-3. **2B** — Auto-extract clauses (queryable structured data)
-4. **4B** — Clinical Evidence Library (JVO feature — validated in PoC)
-5. **3C** — Streaming answers (UX polish)
-6. **3B** — Contract comparison upgrade (JVO feature)
-7. **3A** — PDF support (better citations)
-8. **4D** — Deal alerts (automation)
-9. **4A** — Clinical protocol analyzer (new domain)
-10. **4C** — Regulatory document search (new domain)
+## Build Status
+| # | Item | Tests | Status | Date |
+|---|------|-------|--------|------|
+| 1 | **2A** Batch pre-index | 9 | ✅ | 2026-04-01 |
+| 2 | **2C** Multi-contract queries | 7 | ✅ | 2026-04-01 |
+| 3 | **2B** Auto-extract clauses | 6 | ✅ | 2026-04-01 |
+| 4 | **4B** Clinical Evidence Library | 8 | ✅ | 2026-04-01 |
+| 5 | **3C** Streaming answers | 7 | ✅ | 2026-04-01 |
+| 6 | **3B** Contract comparison | 3 | ✅ | 2026-04-01 |
+| 7 | **3A** PDF support | 4 | ✅ | 2026-04-01 |
+| 8 | **4D** Deal alerts | 4 | ✅ | 2026-04-01 |
+| 9 | **4A** Protocol analyzer | 11 | ✅ | 2026-04-01 |
+| 10 | **4C** Regulatory docs | 4 | ✅ | 2026-04-01 |
+| — | **Phase 1** (core) | 80 | ✅ | 2026-03-31 |
+| **Total** | | **143** | | |
 
 ## Principles
 - TDD on everything — tests first, no exceptions
