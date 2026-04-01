@@ -12,6 +12,7 @@ class ToolType(str, Enum):
     NEO4J = "neo4j"
     SQL = "sql"
     PGVECTOR = "pgvector"
+    PAGEINDEX = "pageindex"  # Tree-based contract deep-read
     SYNTHESIZE = "synthesize"  # Final answer generation
 
 
