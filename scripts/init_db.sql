@@ -48,3 +48,9 @@ CREATE TABLE IF NOT EXISTS contract_tree_index (
 
 CREATE INDEX IF NOT EXISTS idx_contract_tree_deal_id ON contract_tree_index(deal_id);
 CREATE INDEX IF NOT EXISTS idx_contract_tree_contract_id ON contract_tree_index(contract_id);
+
+-- Extracted clause data for SQL-queryable deal terms
+ALTER TABLE contract_content ADD COLUMN IF NOT EXISTS extracted_clauses JSONB;
+CREATE INDEX IF NOT EXISTS idx_contract_content_extracted
+    ON contract_content USING gin (extracted_clauses)
+    WHERE extracted_clauses IS NOT NULL;

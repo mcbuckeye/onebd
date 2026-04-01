@@ -70,10 +70,12 @@ class TestIndexSingleContract:
 
         with patch("unified_api.services.html_cleaner.clean_contract_html") as mock_clean, \
              patch("unified_api.services.batch_index.generate_tree_from_markdown") as mock_gen, \
-             patch("unified_api.services.tree_cache.TreeCache.store_tree") as mock_store:
+             patch("unified_api.services.tree_cache.TreeCache.store_tree") as mock_store, \
+             patch("unified_api.services.auto_extract.auto_extract_clauses", new_callable=AsyncMock) as mock_extract:
 
             mock_clean.return_value = "## 7. FINANCIAL TERMS"
             mock_gen.return_value = {"structure": [{"title": "7. FINANCIAL TERMS", "line_num": 1}], "line_count": 10}
+            mock_extract.return_value = {"success": True}
 
             result = await index_single_contract(
                 contract_id=123,

@@ -168,12 +168,32 @@ async def index_single_contract(
             line_count=tree_data.get("line_count"),
         )
 
+        # Auto-extract clauses from the tree
+        try:
+            from unified_api.services.auto_extract import auto_extract_clauses
+
+            extract_result = await auto_extract_clauses(
+                contract_id=contract_id,
+                deal_id=deal_id,
+                tree_json=tree_data,
+                session_factory=session_factory,
+            )
+            clauses_extracted = extract_result.get("success", False)
+        except Exception as e:
+            logger.warning(
+                "Auto-extraction failed (non-fatal)",
+                contract_id=contract_id,
+                error=str(e),
+            )
+            clauses_extracted = False
+
         return {
             "success": True,
             "contract_id": contract_id,
             "deal_id": deal_id,
             "line_count": tree_data.get("line_count"),
             "nodes": len(tree_data.get("structure", [])),
+            "clauses_extracted": clauses_extracted,
         }
 
     except Exception as e:
