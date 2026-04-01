@@ -462,13 +462,79 @@ async def agentic_rag_chat_stream(
     - thinking: Agent initialization
     - reasoning_step: Each hop with thought, tool, result
     - answer: Final synthesized answer
+    - error: If something goes wrong
     """
-    # TODO: Implement streaming using agent.run_streaming()
-    # For now, return error indicating not implemented
+    from unified_api.services.streaming import streaming_chat_generator
 
-    raise HTTPException(
-        status_code=501,
-        detail="Streaming not yet implemented. Use /chat endpoint."
+    if not openai_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Agentic RAG unavailable - OpenAI API key not configured"
+        )
+
+    # Build tools (same as non-streaming endpoint)
+    tools = {}
+    neo4j_tool = _get_neo4j_tool()
+    if neo4j_tool:
+        tools[ToolType.NEO4J] = neo4j_tool
+    sql_tool = _get_sql_tool()
+    if sql_tool:
+        tools[ToolType.SQL] = sql_tool
+    pgvector_tool = _get_pgvector_tool()
+    if pgvector_tool:
+        tools[ToolType.PGVECTOR] = pgvector_tool
+    pageindex_tool = _get_pageindex_tool()
+    if pageindex_tool:
+        tools[ToolType.PAGEINDEX] = pageindex_tool
+    evidence_tool = _get_evidence_tool()
+    if evidence_tool:
+        tools[ToolType.EVIDENCE] = evidence_tool
+
+    # Create LLM wrapper
+    class OpenAIWrapper:
+        def __init__(self, client, model):
+            self.client = client
+            self.model = model
+        async def ainvoke(self, prompt):
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0, max_tokens=1000
+            )
+            return response.choices[0].message
+
+    llm = OpenAIWrapper(openai_client, settings.openai_model)
+
+    # Streaming chat function that wraps the agent
+    async def run_agent_chat(message, history, max_hops, tools, llm):
+        try:
+            from unified_api.services.agentic_rag.agent import AgenticRagAgent
+            agent = AgenticRagAgent(llm=llm, tools=tools, max_hops=max_hops)
+            return await agent.run(message, history)
+        except ImportError:
+            # LangGraph not available — return simple error
+            from unified_api.services.agentic_rag.models import AgenticRagResponse
+            return AgenticRagResponse(
+                success=False,
+                answer="Streaming requires LangGraph agent. Use /chat endpoint.",
+                total_hops=0,
+            )
+
+    return StreamingResponse(
+        streaming_chat_generator(
+            message=request.message,
+            history=request.history,
+            max_hops=request.max_hops,
+            chat_fn=run_agent_chat,
+            tools=tools,
+            llm=llm,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
