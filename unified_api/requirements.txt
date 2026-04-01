@@ -98,7 +98,9 @@ bcrypt==4.0.1
 
 # ============================================
 # PageIndex (tree-based contract retrieval)
-# Install from GitHub — PyPI package is client-only, missing tree generation
+# Tree generation vendored in unified_api/vendor/pageindex/
+# litellm used by PageIndex for multi-LLM support
 # ============================================
-pageindex @ git+https://github.com/VectifyAI/PageIndex.git
 litellm>=1.80.0
+pymupdf>=1.26.0
+PyPDF2>=3.0.0

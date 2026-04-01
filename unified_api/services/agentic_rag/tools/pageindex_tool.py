@@ -230,7 +230,7 @@ class PageIndexTool(BaseTool):
                 tmp_path = f.name
 
             try:
-                from pageindex.page_index_md import md_to_tree
+                from unified_api.vendor.pageindex.page_index_md import md_to_tree
 
                 tree = await md_to_tree(
                     md_path=tmp_path,
