@@ -38,8 +38,12 @@ class PageIndexTool(BaseTool):
     - Indemnification, representations, warranties
     - How long obligations survive after termination
 
-    Query format: "deal_id:<ID> <your question about the contract>"
-    Example: "deal_id:150059 What royalty rates does GSK pay on enzyme products?"
+    Query format (single): "deal_id:<ID> <your question>"
+    Query format (multi):  "deal_ids:<ID1>,<ID2>,<ID3> <comparison question>"
+    
+    Examples:
+    - "deal_id:150059 What royalty rates does GSK pay on enzyme products?"
+    - "deal_ids:150059,107441,112856 Compare the milestone payment structures"
 
     This tool reads the full contract text and uses hierarchical reasoning
     to find the exact sections containing the answer, with section citations.
@@ -66,13 +70,35 @@ class PageIndexTool(BaseTool):
         return self.SCHEMA_DESCRIPTION
 
     def _parse_deal_id(self, query: str) -> Optional[int]:
-        """Extract deal_id from query string like 'deal_id:12345 question'."""
+        """Extract single deal_id from query string like 'deal_id:12345 question'."""
         match = re.search(r"deal_id:(\d+)", query)
         return int(match.group(1)) if match else None
 
+    def _parse_deal_ids(self, query: str, deal_ids: list = None) -> list[int]:
+        """Extract one or more deal_ids from query string or kwargs.
+
+        Supports:
+        - deal_ids:150059,107441,112856 (comma-separated)
+        - deal_id:150059 (single)
+        - deal_ids kwarg (list)
+
+        Returns list of ints, max 5.
+        """
+        if deal_ids:
+            return list(deal_ids)[:5]
+
+        # Try plural form first: deal_ids:1,2,3
+        match = re.search(r"deal_ids?:([\d,]+)", query)
+        if match:
+            ids = [int(x) for x in match.group(1).split(",") if x.strip().isdigit()]
+            return ids[:5]
+
+        return []
+
     def _get_question(self, query: str) -> str:
-        """Extract the question part (everything after deal_id:NNN)."""
-        return re.sub(r"deal_id:\d+\s*", "", query).strip()
+        """Extract the question part (everything after deal_id(s):NNN)."""
+        cleaned = re.sub(r"deal_ids?:[\d,]+\s*", "", query).strip()
+        return cleaned
 
     def _build_compact_tree(self, tree_data: dict, max_depth: int = 2) -> str:
         """Build a compact text representation of the tree index for LLM context."""
@@ -92,11 +118,21 @@ class PageIndexTool(BaseTool):
         return "\n".join(_recurse(structure))
 
     async def _execute_impl(self, query: str, **kwargs) -> ToolResult:
-        """Execute PageIndex deep-read on a contract."""
+        """Execute PageIndex deep-read on one or more contracts."""
+        # Check for multi-contract query first
+        deal_ids = kwargs.get("deal_ids") or None
+        multi_ids = self._parse_deal_ids(query, deal_ids=deal_ids)
+
+        if len(multi_ids) > 1:
+            return await self._execute_multi(query, multi_ids, **kwargs)
+
+        # Single contract path
         from unified_api.services.html_cleaner import clean_contract_html
         from unified_api.services.tree_cache import TreeCache
 
         deal_id = kwargs.get("deal_id") or self._parse_deal_id(query)
+        if not deal_id and multi_ids:
+            deal_id = multi_ids[0]
         question = self._get_question(query)
 
         if not deal_id:
@@ -219,6 +255,90 @@ class PageIndexTool(BaseTool):
             )
         finally:
             session.close()
+
+    async def _execute_multi(self, query: str, deal_ids: list[int], **kwargs) -> ToolResult:
+        """Execute PageIndex across multiple contracts and synthesize comparison."""
+        import litellm
+
+        question = self._get_question(query)
+        per_deal_answers = []
+
+        for deal_id in deal_ids:
+            logger.info("Multi-contract: reading deal", deal_id=deal_id)
+            result = await self._execute_impl(
+                f"deal_id:{deal_id} {question}",
+                **{k: v for k, v in kwargs.items() if k != "deal_ids"},
+            )
+
+            if result.success and result.data:
+                # Get deal title for context
+                session = self.session_factory()
+                try:
+                    row = session.execute(
+                        text("SELECT title FROM deals WHERE id = :did"),
+                        {"did": deal_id},
+                    ).fetchone()
+                    title = row.title if row else f"Deal {deal_id}"
+                finally:
+                    session.close()
+
+                per_deal_answers.append({
+                    "deal_id": deal_id,
+                    "title": title[:200],
+                    "answer": result.data[0].get("answer", ""),
+                })
+            else:
+                per_deal_answers.append({
+                    "deal_id": deal_id,
+                    "title": f"Deal {deal_id}",
+                    "answer": f"[Failed to read: {result.error[:200] if result.error else 'unknown'}]",
+                })
+
+        # Synthesize comparison across all deals
+        deals_context = "\n\n---\n\n".join([
+            f"**{d['title']}** (Deal {d['deal_id']}):\n{d['answer'][:2000]}"
+            for d in per_deal_answers
+        ])
+
+        response = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: litellm.completion(
+                model=self.model,
+                messages=[{
+                    "role": "user",
+                    "content": f"""You are a pharma BD analyst comparing multiple deals.
+
+Question: {question}
+
+Data from {len(per_deal_answers)} contracts:
+
+{deals_context[:15000]}
+
+Create a structured comparison. Use tables where appropriate.
+Cite specific deals and section numbers. Note any data gaps.""",
+                }],
+                temperature=0,
+                api_key=self.openai_api_key,
+            ),
+        )
+
+        synthesis = response.choices[0].message.content.strip()
+
+        return ToolResult(
+            success=True,
+            data=[{
+                "answer": synthesis,
+                "deals_compared": len(per_deal_answers),
+                "deal_ids": deal_ids,
+                "per_deal_results": [
+                    {"deal_id": d["deal_id"], "title": d["title"]}
+                    for d in per_deal_answers
+                ],
+                "source": "pageindex_multi_contract_comparison",
+            }],
+            row_count=1,
+            query_executed=f"PageIndex multi-read: deals {deal_ids} — {question[:80]}",
+        )
 
     async def _generate_tree(self, clean_md: str) -> Optional[dict]:
         """Generate PageIndex tree from clean markdown text."""
