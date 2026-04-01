@@ -54,3 +54,31 @@ ALTER TABLE contract_content ADD COLUMN IF NOT EXISTS extracted_clauses JSONB;
 CREATE INDEX IF NOT EXISTS idx_contract_content_extracted
     ON contract_content USING gin (extracted_clauses)
     WHERE extracted_clauses IS NOT NULL;
+
+-- Clinical Evidence Library
+CREATE TABLE IF NOT EXISTS evidence_documents (
+    id SERIAL PRIMARY KEY,
+    drug_name VARCHAR(200) NOT NULL,
+    brand_name VARCHAR(200) NOT NULL,
+    doc_type VARCHAR(50) NOT NULL,
+    therapeutic_area VARCHAR(200),
+    indications JSONB,
+    source_url TEXT,
+    pdf_path TEXT,
+    tree_cached BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(drug_name, doc_type)
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_drug ON evidence_documents(drug_name);
+CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence_documents(doc_type);
+CREATE INDEX IF NOT EXISTS idx_evidence_indications ON evidence_documents USING gin(indications);
+
+CREATE TABLE IF NOT EXISTS evidence_tree_index (
+    id SERIAL PRIMARY KEY,
+    evidence_id INTEGER NOT NULL UNIQUE REFERENCES evidence_documents(id),
+    tree_json JSONB NOT NULL,
+    model VARCHAR(100) NOT NULL,
+    indexed_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_tree_eid ON evidence_tree_index(evidence_id);
