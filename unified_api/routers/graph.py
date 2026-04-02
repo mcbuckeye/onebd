@@ -545,7 +545,7 @@ async def get_partnership_network_d3(
             WHERE c.id <> partner.id
             WITH partner,
                  count(DISTINCT d) as deal_count,
-                 sum(d.total_value) as total_value
+                 sum(CASE WHEN d.total_value IS NOT NULL THEN toFloat(d.total_value) ELSE 0 END) as total_value
             WHERE deal_count >= $min_deals
             ORDER BY deal_count DESC
             LIMIT $limit
@@ -710,7 +710,7 @@ async def get_partners_summary(
             WITH partner,
                  collect(DISTINCT d) as deals,
                  count(DISTINCT d) as deal_count,
-                 sum(d.total_value) as total_value
+                 sum(CASE WHEN d.total_value IS NOT NULL THEN toFloat(d.total_value) ELSE 0 END) as total_value
             WHERE deal_count >= $min_deals
             ORDER BY deal_count DESC
             LIMIT $limit
@@ -808,7 +808,8 @@ async def get_industry_network(
         result = session.run(f"""
             MATCH (c1:Company {{source: $source}})-[]->(d:Deal)<-[]-(c2:Company)
             WHERE c1.id < c2.id AND {where_clause}
-            WITH c1, c2, count(DISTINCT d) as deal_count, sum(d.total_value) as total_value
+            WITH c1, c2, count(DISTINCT d) as deal_count,
+                 sum(CASE WHEN d.total_value IS NOT NULL THEN toFloat(d.total_value) ELSE 0 END) as total_value
             WHERE deal_count >= $min_deals
             ORDER BY deal_count DESC
             LIMIT $limit
