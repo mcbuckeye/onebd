@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Search, BarChart3, Building2,
   Network, FileText, ScrollText, Star, MessageSquare,
   Menu, LogOut, ChevronLeft, Scale, Shield, HelpCircle,
-  Users, Brain
+  Users, Brain, Settings
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -123,16 +123,33 @@ export default function MainLayout() {
           )}
         </nav>
 
-        {/* User */}
-        <div className="p-3 border-t border-slate-800">
-          {!sidebarCollapsed && user && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-500 truncate">{user.name || user.email}</span>
-              <button onClick={logout} className="p-1 rounded hover:bg-slate-800">
-                <LogOut className="w-4 h-4 text-slate-500" />
-              </button>
-            </div>
-          )}
+        {/* User section */}
+        <div className="border-t border-slate-800">
+          <NavLink
+            to="/settings"
+            onClick={() => setMobileOpen(false)}
+            className={({ isActive }) => `
+              flex items-center gap-3 px-4 py-2.5 mx-2 mt-2 rounded-lg text-sm
+              transition-colors
+              ${isActive
+                ? 'bg-blue-600/20 text-blue-400'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}
+            `}
+          >
+            <Settings className="w-5 h-5 flex-shrink-0" />
+            {!sidebarCollapsed && <span>Settings</span>}
+          </NavLink>
+          
+          <div className="p-3">
+            {!sidebarCollapsed && user && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 truncate">{user.name || user.email}</span>
+                <button onClick={logout} className="p-1 rounded hover:bg-slate-800">
+                  <LogOut className="w-4 h-4 text-slate-500" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </aside>
 

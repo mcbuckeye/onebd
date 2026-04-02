@@ -26,6 +26,7 @@ const TerritoryPage = lazy(() => import('./pages/TerritoryPage'));
 const BriefingPage = lazy(() => import('./pages/BriefingPage'));
 const GuidePage = lazy(() => import('./pages/GuidePage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 // Wrapper component to add ErrorBoundary + Suspense to each route
 const withErrorBoundary = (Component: React.LazyExoticComponent<React.ComponentType>) => (
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
       { path: 'drug/:drugId', element: withErrorBoundary(DrugProfilePage) },
       { path: 'guide', element: withErrorBoundary(GuidePage) },
       { path: 'admin', element: withErrorBoundary(AdminPage) },
+      { path: 'settings', element: withErrorBoundary(SettingsPage) },
     ],
   },
 ]);
