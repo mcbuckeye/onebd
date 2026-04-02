@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Filter, ChevronDown, X, Search as SearchIcon } from 'lucide-react';
+import { Filter, ChevronDown, X, Search as SearchIcon, Download } from 'lucide-react';
 import api, { SearchFilters, SearchResponse, FilterOptions } from '../lib/api';
 import EmptyState from '../components/EmptyState';
 
@@ -105,6 +105,29 @@ export default function SearchPage() {
     Array.isArray(v) ? v.length > 0 : v !== undefined && v !== '' && v !== null
   ) || disclosedOnly;
 
+  const exportResults = async (format: 'csv' | 'excel') => {
+    try {
+      const endpoint = format === 'csv' ? '/export/deals/csv' : '/export/deals/excel';
+      const res = await api.post(endpoint, {
+        ...filters,
+        disclosed_only: disclosedOnly,
+      }, { responseType: 'blob' });
+      
+      const ext = format === 'csv' ? 'csv' : 'xlsx';
+      const blob = new Blob([res.data]);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `deals-export.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export failed:', e);
+    }
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-4">
@@ -114,12 +137,30 @@ export default function SearchPage() {
             {results ? `${results.total.toLocaleString()} deals` : 'Search across 145K+ pharmaceutical deals'}
           </p>
         </div>
-        <button
-          onClick={() => search(1)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
-        >
-          Search
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => exportResults('csv')}
+            disabled={!results || results.total === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 rounded-lg text-sm text-slate-300 transition-colors disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </button>
+          <button
+            onClick={() => exportResults('excel')}
+            disabled={!results || results.total === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 rounded-lg text-sm text-slate-300 transition-colors disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" />
+            Export Excel
+          </button>
+          <button
+            onClick={() => search(1)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors"
+          >
+            Search
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}
