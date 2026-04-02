@@ -547,6 +547,7 @@ async def get_partnership_network_d3(
                  count(DISTINCT d) as deal_count,
                  sum(CASE WHEN d.total_value IS NOT NULL THEN toFloat(d.total_value) ELSE 0 END) as total_value
             WHERE deal_count >= $min_deals
+            WITH partner, deal_count, total_value
             ORDER BY deal_count DESC
             LIMIT $limit
             RETURN partner.id as id, partner.name as name,
@@ -600,6 +601,7 @@ async def get_partnership_network_d3(
                   AND NOT p2.id IN $partner_ids
                 WITH p1, p2, count(DISTINCT d) as deal_count
                 WHERE deal_count >= $min_deals
+                WITH p1, p2, deal_count
                 ORDER BY deal_count DESC
                 LIMIT 50
                 RETURN p1.id as source_id, p2.id as target_id,
@@ -712,6 +714,7 @@ async def get_partners_summary(
                  count(DISTINCT d) as deal_count,
                  sum(CASE WHEN d.total_value IS NOT NULL THEN toFloat(d.total_value) ELSE 0 END) as total_value
             WHERE deal_count >= $min_deals
+            WITH partner, deals, deal_count, total_value
             ORDER BY deal_count DESC
             LIMIT $limit
             WITH partner, deals, deal_count, total_value,
@@ -811,6 +814,7 @@ async def get_industry_network(
             WITH c1, c2, count(DISTINCT d) as deal_count,
                  sum(CASE WHEN d.total_value IS NOT NULL THEN toFloat(d.total_value) ELSE 0 END) as total_value
             WHERE deal_count >= $min_deals
+            WITH c1, c2, deal_count, total_value
             ORDER BY deal_count DESC
             LIMIT $limit
             RETURN c1.id as c1_id, c1.name as c1_name, c1.company_type as c1_type,
