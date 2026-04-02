@@ -81,6 +81,7 @@ export default function DashboardPage() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
 
   useEffect(() => {
     Promise.allSettled([
@@ -188,7 +189,11 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {notable_deals.map(deal => (
-                  <tr key={deal.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
+                  <tr 
+                    key={deal.id} 
+                    onClick={() => setSelectedDealId(deal.id)}
+                    className="border-b border-slate-800/50 hover:bg-slate-800/30 cursor-pointer"
+                  >
                     <td className="py-2.5 pr-4">
                       <div className="text-slate-200 font-medium truncate max-w-xs">{deal.title}</div>
                       <div className="text-xs text-slate-500">
@@ -314,6 +319,12 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Deal Detail Slide Panel */}
+      <DealDetailSlidePanel 
+        dealId={selectedDealId} 
+        onClose={() => setSelectedDealId(null)} 
+      />
     </div>
   );
 }
