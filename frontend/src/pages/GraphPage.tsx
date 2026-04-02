@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Network, Search } from 'lucide-react';
+import ForceGraph2D from 'react-force-graph-2d';
 import api from '../lib/api';
 
 interface GraphNode {
@@ -29,6 +30,7 @@ export default function GraphPage() {
   const [companySearch, setCompanySearch] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [selectedNode, setSelectedNode] = useState<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   // Company autocomplete
@@ -159,36 +161,44 @@ export default function GraphPage() {
               <p className="text-sm">Search for a company or click "Industry Overview"</p>
             </div>
           ) : (
-            <div className="relative h-[500px]">
-              {/* Simple node list visualization (force-graph loaded dynamically) */}
-              <div className="p-4 overflow-y-auto h-full">
-                <div className="text-xs text-slate-500 mb-3">
-                  {graphData.nodes.length} companies, {graphData.links.length} connections
-                </div>
-                <div className="space-y-1">
-                  {graphData.nodes
-                    .sort((a, b) => b.val - a.val)
-                    .map(node => (
-                      <button
-                        key={node.id}
-                        onClick={() => {
-                          setSelectedNode(node);
-                          navigate(`/company/${node.id}`);
-                        }}
-                        className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg text-sm hover:bg-slate-800 ${
-                          selectedNode?.id === node.id ? 'bg-slate-800' : ''
-                        }`}
-                      >
-                        <div
-                          className="rounded-full flex-shrink-0"
-                          style={{ width: node.val * 2, height: node.val * 2, backgroundColor: node.color, minWidth: 8, minHeight: 8 }}
-                        />
-                        <span className="text-slate-300 truncate">{node.name}</span>
-                        <span className="text-xs text-slate-500 ml-auto">{node.company_type}</span>
-                      </button>
-                    ))}
-                </div>
-              </div>
+            <div ref={containerRef} className="relative h-[500px]">
+              <ForceGraph2D
+                graphData={graphData}
+                width={containerRef.current?.clientWidth || 800}
+                height={500}
+                backgroundColor="#0f172a"
+                nodeLabel={(node: any) => node.name}
+                nodeVal="val"
+                nodeColor="color"
+                linkWidth={(link: any) => Math.sqrt(link.deal_count)}
+                linkColor={() => '#334155'}
+                onNodeClick={(node: any) => navigate(`/company/${node.id}`)}
+                nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                  const label = node.name;
+                  const fontSize = 12 / globalScale;
+                  ctx.font = `${fontSize}px Sans-Serif`;
+                  const textWidth = ctx.measureText(label).width;
+                  const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
+
+                  // Draw node circle
+                  ctx.fillStyle = node.color;
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, node.val, 0, 2 * Math.PI);
+                  ctx.fill();
+
+                  // Draw label for larger nodes (val > 5)
+                  if (node.val > 5) {
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = '#e2e8f0';
+                    
+                    // Truncate label if too long
+                    const maxChars = 20;
+                    const truncated = label.length > maxChars ? label.substring(0, maxChars) + '...' : label;
+                    ctx.fillText(truncated, node.x, node.y + node.val + fontSize);
+                  }
+                }}
+              />
             </div>
           )}
         </div>
