@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Minus, ArrowRight, DollarSign, Activity, Layers, CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import api, { DealSummary } from '../lib/api';
+import DealDetailSlidePanel from '../components/DealDetailSlidePanel';
 
 interface DashboardData {
   market_pulse: {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Filter, ChevronDown, X, Search as SearchIcon, Download } from 'lucide-react';
 import api, { SearchFilters, SearchResponse, FilterOptions } from '../lib/api';
 import EmptyState from '../components/EmptyState';
+import DealDetailSlidePanel from '../components/DealDetailSlidePanel';
 
 function FilterSelect({ label, options, value, onChange, multi = false }: {
   label: string;
@@ -71,6 +72,7 @@ export default function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [disclosedOnly, setDisclosedOnly] = useState(false);
+  const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
 
   useEffect(() => {
     api.get('/search/filters').then(res => setFilterOptions(res.data)).catch(console.error);
@@ -263,7 +265,11 @@ export default function SearchPage() {
                   </td>
                 </tr>
               ) : results?.results.map(deal => (
-                <tr key={deal.id} className="border-t border-slate-800/50 hover:bg-slate-800/30 cursor-pointer">
+                <tr 
+                  key={deal.id} 
+                  onClick={() => setSelectedDealId(deal.id)}
+                  className="border-t border-slate-800/50 hover:bg-slate-800/30 cursor-pointer"
+                >
                   <td className="px-4 py-3">
                     <span className="text-slate-200 hover:text-blue-400 font-medium">
                       {deal.title}
@@ -320,6 +326,12 @@ export default function SearchPage() {
           </div>
         )}
       </div>
+
+      {/* Deal Detail Slide Panel */}
+      <DealDetailSlidePanel 
+        dealId={selectedDealId} 
+        onClose={() => setSelectedDealId(null)} 
+      />
     </div>
   );
 }

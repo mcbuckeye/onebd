@@ -5,17 +5,49 @@ import api from '../lib/api';
 
 interface TrackedCompetitor {
   id: number;
-  name: string;
+  company_id: number;
+  company_name: string;
   company_type: string | null;
-  recent_deals: number;
   total_deals: number;
+  created_at: string | null;
 }
 
 export default function CompetitorsPage() {
   const [competitors, setCompetitors] = useState<TrackedCompetitor[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [companyDeals, setCompanyDeals] = useState<Record<number, any[]>>({});
+
+  // Load tracked competitors on mount
+  useEffect(() => {
+    loadCompetitors();
+  }, []);
+
+  const loadCompetitors = async () => {
+    try {
+      setLoading(true);
+      const resp = await api.get('/competitors');
+      const trackedCompanies = resp.data;
+      setCompetitors(trackedCompanies);
+
+      // Load recent deals for each competitor
+      for (const comp of trackedCompanies) {
+        try {
+          const dealsResp = await api.post('/search/deals?page=1&page_size=5', {
+            company: comp.company_name,
+          });
+          setCompanyDeals(prev => ({ ...prev, [comp.company_id]: dealsResp.data.results || [] }));
+        } catch (e) {
+          console.error(`Failed to load deals for ${comp.company_name}`, e);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load competitors', e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Company autocomplete for adding
   useEffect(() => {
@@ -30,48 +62,61 @@ export default function CompetitorsPage() {
 
   // Add competitor
   const addCompetitor = async (company: any) => {
-    if (competitors.some(c => c.id === company.id)) return;
+    if (competitors.some(c => c.company_id === company.id)) return;
 
     setSearchQuery('');
     setSuggestions([]);
 
     try {
-      // Fetch company profile to get deal counts
-      const resp = await api.get(`/company/${company.id}/profile`);
-      const profile = resp.data;
-
-      const newComp: TrackedCompetitor = {
-        id: company.id,
-        name: company.name,
-        company_type: company.company_type,
-        recent_deals: profile.deal_summary?.recent_deals_12m || 0,
-        total_deals: profile.deal_summary?.total_deals || 0,
-      };
-
-      setCompetitors(prev => [...prev, newComp]);
-
-      // Load recent deals
-      const dealsResp = await api.post('/search/deals?page=1&page_size=5', {
-        company: company.name,
-      });
-      setCompanyDeals(prev => ({ ...prev, [company.id]: dealsResp.data.results || [] }));
-    } catch (e) {
-      console.error(e);
-      // Still add with basic info
-      setCompetitors(prev => [...prev, {
-        id: company.id,
-        name: company.name,
-        company_type: company.company_type,
-        recent_deals: 0,
-        total_deals: 0,
-      }]);
+      // Call backend to persist the tracked competitor
+      await api.post('/competitors', { company_id: company.id });
+      
+      // Reload the list from backend
+      await loadCompetitors();
+    } catch (e: any) {
+      console.error('Failed to add competitor', e);
+      if (e.response?.status === 409) {
+        alert('Already tracking this company');
+      } else if (e.response?.status === 404) {
+        alert('Company not found');
+      } else {
+        alert('Failed to add competitor');
+      }
     }
   };
 
-  const removeCompetitor = (id: number) => {
-    setCompetitors(prev => prev.filter(c => c.id !== id));
-    setCompanyDeals(prev => { const next = { ...prev }; delete next[id]; return next; });
+  const removeCompetitor = async (companyId: number) => {
+    try {
+      await api.delete(`/competitors/${companyId}`);
+      
+      // Update local state
+      setCompetitors(prev => prev.filter(c => c.company_id !== companyId));
+      setCompanyDeals(prev => { const next = { ...prev }; delete next[companyId]; return next; });
+    } catch (e: any) {
+      console.error('Failed to remove competitor', e);
+      if (e.response?.status === 404) {
+        // Already removed, update UI anyway
+        setCompetitors(prev => prev.filter(c => c.company_id !== companyId));
+        setCompanyDeals(prev => { const next = { ...prev }; delete next[companyId]; return next; });
+      } else {
+        alert('Failed to remove competitor');
+      }
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-slate-100">Competitor Intelligence</h1>
+          <p className="text-sm text-slate-500 mt-1">Track competitor deal activity and strategy</p>
+        </div>
+        <div className="text-center py-20">
+          <div className="text-slate-500">Loading competitors...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -123,8 +168,8 @@ export default function CompetitorsPage() {
                     <Building2 className="w-5 h-5 text-purple-400" />
                   </div>
                   <div>
-                    <Link to={`/company/${comp.id}`} className="text-lg font-semibold text-slate-200 hover:text-blue-400">
-                      {comp.name}
+                    <Link to={`/company/${comp.company_id}`} className="text-lg font-semibold text-slate-200 hover:text-blue-400">
+                      {comp.company_name}
                     </Link>
                     <div className="text-xs text-slate-500">{comp.company_type || 'Company'}</div>
                   </div>
@@ -132,20 +177,24 @@ export default function CompetitorsPage() {
                 <div className="flex items-center gap-4">
                   <div className="text-right">
                     <div className="text-sm font-medium text-slate-300">{comp.total_deals} deals</div>
-                    <div className="text-xs text-slate-500">{comp.recent_deals} in last 12m</div>
+                    {comp.created_at && (
+                      <div className="text-xs text-slate-500">
+                        Added {new Date(comp.created_at).toLocaleDateString()}
+                      </div>
+                    )}
                   </div>
-                  <button onClick={() => removeCompetitor(comp.id)} className="p-1 hover:bg-slate-800 rounded">
+                  <button onClick={() => removeCompetitor(comp.company_id)} className="p-1 hover:bg-slate-800 rounded">
                     <X className="w-4 h-4 text-slate-500" />
                   </button>
                 </div>
               </div>
 
               {/* Recent deals for this competitor */}
-              {companyDeals[comp.id] && companyDeals[comp.id].length > 0 && (
+              {companyDeals[comp.company_id] && companyDeals[comp.company_id].length > 0 && (
                 <div className="border-t border-slate-800 pt-3">
                   <h3 className="text-xs text-slate-500 mb-2">Recent Deals</h3>
                   <div className="space-y-1">
-                    {companyDeals[comp.id].map((deal: any) => (
+                    {companyDeals[comp.company_id].map((deal: any) => (
                       <div key={deal.id} className="flex items-center justify-between text-sm py-1">
                         <span className="text-slate-400 truncate max-w-md">{deal.title}</span>
                         <div className="flex items-center gap-3 flex-shrink-0">
