@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy import text
 from unified_api.services.database import get_cortellis_session
-from unified_api.services.auth import get_current_user, TokenData
+from unified_api.services.auth import TokenData
+from unified_api.routers.auth import get_current_user
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/settings", tags=["Settings"])

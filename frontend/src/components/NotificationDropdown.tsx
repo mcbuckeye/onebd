@@ -14,7 +14,7 @@ interface Notification {
 export default function NotificationDropdown() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 

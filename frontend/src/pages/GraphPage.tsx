@@ -29,7 +29,7 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(false);
   const [companySearch, setCompanySearch] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [selectedNode, setSelectedNode] = useState<any>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -177,9 +177,6 @@ export default function GraphPage() {
                   const label = node.name;
                   const fontSize = 12 / globalScale;
                   ctx.font = `${fontSize}px Sans-Serif`;
-                  const textWidth = ctx.measureText(label).width;
-                  const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
-
                   // Draw node circle
                   ctx.fillStyle = node.color;
                   ctx.beginPath();
