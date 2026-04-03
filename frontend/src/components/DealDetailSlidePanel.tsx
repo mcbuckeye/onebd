@@ -9,6 +9,18 @@ interface DealDetailSlidePanelProps {
   onClose: () => void;
 }
 
+function stripXml(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/<para>\s*/g, '')
+    .replace(/<\/para>/g, '\n')
+    .replace(/<ulink[^>]*>/g, '')
+    .replace(/<\/ulink>/g, '')
+    .replace(/\[\s*\d+\s*\]/g, '') // remove [4343749] reference numbers
+    .replace(/\n{3,}/g, '\n\n')    // collapse multiple newlines
+    .trim();
+}
+
 function formatValue(v: number | null | undefined): string {
   if (v === null || v === undefined) return '—';
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}B`;
@@ -371,7 +383,7 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                           )}
                         </div>
                         {event.summary && (
-                          <div className="text-xs text-slate-400 mt-1">{event.summary}</div>
+                          <div className="text-xs text-slate-400 mt-1">{stripXml(event.summary || '')}</div>
                         )}
                         {event.stage && (
                           <span className="inline-block mt-2 px-2 py-0.5 bg-slate-700 text-slate-300 rounded text-xs">
@@ -431,8 +443,8 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
               {deal.summary && (
                 <section>
                   <h3 className="text-sm font-medium text-slate-400 mb-3">Summary</h3>
-                  <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-slate-300 leading-relaxed">
-                    {deal.summary}
+                  <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+                    {stripXml(deal.summary)}
                   </div>
                 </section>
               )}
