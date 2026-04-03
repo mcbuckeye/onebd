@@ -555,67 +555,141 @@ def send_alert_email(user_id: str, alert_name: str, deals: list):
 
 @celery_app.task(name="unified_api.workers.tasks.digest.send_daily_digest")
 def send_daily_digest():
-    """Generate and send daily deal digest to all subscribed users."""
+    """Generate and send personalized deal digests to all subscribed users."""
+    import datetime
+    import json
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
     from unified_api.services.email_digest import build_digest_html, send_digest_email
 
-    logger.info("Generating daily deal digest")
+    logger.info("Generating personalized deal digests")
+
+    # Check if today is Monday (for weekly digest users)
+    is_monday = datetime.datetime.utcnow().weekday() == 0
 
     with get_cortellis_session() as session:
-        # Get yesterday's notable deals
-        deals = session.execute(text("""
-            SELECT d.title, d.agreement_type, d.date_start::text as date,
-                   f.total_projected_current_amount as value,
-                   (SELECT c.name FROM deal_companies dc JOIN companies c ON c.id = dc.company_id
-                    WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as principal,
-                   (SELECT c.name FROM deal_companies dc JOIN companies c ON c.id = dc.company_id
-                    WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner
-            FROM deals d
-            LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-            WHERE d.date_start >= CURRENT_DATE - INTERVAL '1 day'
-            ORDER BY f.total_projected_current_amount DESC NULLS LAST
-            LIMIT 15
+        # Ensure user_digest_settings table exists
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_digest_settings (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL UNIQUE,
+                enabled BOOLEAN DEFAULT FALSE,
+                frequency VARCHAR(20) DEFAULT 'weekly',
+                therapy_areas JSONB DEFAULT '[]',
+                company_ids JSONB DEFAULT '[]',
+                email VARCHAR(255),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        session.commit()
+
+        # Get users with digest enabled
+        users = session.execute(text("""
+            SELECT uds.user_id, uds.email as digest_email, uds.frequency,
+                   uds.therapy_areas, uds.company_ids,
+                   u.email as user_email
+            FROM user_digest_settings uds
+            JOIN users u ON u.id = uds.user_id
+            WHERE uds.enabled = true
         """)).fetchall()
 
-        deal_count = session.execute(text(
-            "SELECT COUNT(*) FROM deals WHERE date_start >= CURRENT_DATE - INTERVAL '1 day'"
-        )).scalar()
-
-        # Build sections
-        sections = [
-            {
-                "title": "Today's Summary",
-                "stats": [
-                    {"label": "New Deals", "value": str(deal_count)},
-                ],
-            },
-            {
-                "title": "Notable Deals",
-                "items": [{
-                    "title": d.title,
-                    "principal": d.principal,
-                    "partner": d.partner,
-                    "value": float(d.value) if d.value else None,
-                    "date": d.date,
-                } for d in deals],
-            },
-        ]
-
-        html = build_digest_html("Daily Deal Digest", sections)
-
-        # Get subscribed users
-        users = session.execute(text(
-            "SELECT email FROM users WHERE role IN ('ceo', 'admin', 'vp_bd')"
-        )).fetchall()
-
         sent = 0
-        for user in users:
-            if send_digest_email(user.email, "BD Intelligence — Daily Digest", html):
-                sent += 1
+        total_deals_sent = 0
 
-    logger.info("Daily digest complete", sent=sent, total_users=len(users))
-    return {"status": "completed", "emails_sent": sent, "deals": deal_count}
+        for user in users:
+            # Skip weekly users on non-Monday
+            if user.frequency == 'weekly' and not is_monday:
+                logger.debug("Skipping weekly user (not Monday)", user_id=user.user_id)
+                continue
+            
+            # Skip 'off' users
+            if user.frequency == 'off':
+                logger.debug("Skipping user with frequency=off", user_id=user.user_id)
+                continue
+            
+            # Parse JSONB fields (they come as lists from PostgreSQL JSONB)
+            therapy_areas = user.therapy_areas if isinstance(user.therapy_areas, list) else json.loads(user.therapy_areas or '[]')
+            company_ids = user.company_ids if isinstance(user.company_ids, list) else json.loads(user.company_ids or '[]')
+
+            # Build personalized deal query based on user preferences
+            therapy_filter = ""
+            company_filter = ""
+            
+            if therapy_areas and len(therapy_areas) > 0:
+                # Convert Python list to PostgreSQL array format
+                areas_array = "{" + ",".join(f'"{a}"' for a in therapy_areas) + "}"
+                therapy_filter = f"AND EXISTS (SELECT 1 FROM deal_therapy_areas dta JOIN therapy_areas ta ON ta.id = dta.therapy_area_id WHERE dta.deal_id = d.id AND ta.name = ANY(ARRAY{areas_array}::text[]))"
+            
+            if company_ids and len(company_ids) > 0:
+                # Add deals involving tracked companies
+                company_filter = f"OR d.id IN (SELECT dc.deal_id FROM deal_companies dc WHERE dc.company_id = ANY(ARRAY{company_ids}::integer[]))"
+
+            # Construct the full WHERE clause
+            if therapy_filter or company_filter:
+                # User has preferences - filter by them
+                where_clause = f"""
+                    WHERE (d.date_start >= CURRENT_DATE - INTERVAL '1 day' {therapy_filter})
+                    {company_filter}
+                """
+            else:
+                # No preferences - show all recent deals
+                where_clause = "WHERE d.date_start >= CURRENT_DATE - INTERVAL '1 day'"
+
+            # Query for personalized deals
+            deals = session.execute(text(f"""
+                SELECT DISTINCT d.title, d.agreement_type, d.date_start::text as date,
+                       f.total_projected_current_amount as value,
+                       (SELECT c.name FROM deal_companies dc JOIN companies c ON c.id = dc.company_id
+                        WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as principal,
+                       (SELECT c.name FROM deal_companies dc JOIN companies c ON c.id = dc.company_id
+                        WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner
+                FROM deals d
+                LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+                {where_clause}
+                ORDER BY f.total_projected_current_amount DESC NULLS LAST
+                LIMIT 15
+            """)).fetchall()
+
+            # Count total matching deals
+            deal_count = session.execute(text(f"""
+                SELECT COUNT(DISTINCT d.id)
+                FROM deals d
+                {where_clause}
+            """)).scalar()
+
+            # Build sections
+            digest_type = "Daily" if user.frequency == 'daily' else "Weekly"
+            sections = [
+                {
+                    "title": f"{digest_type} Summary",
+                    "stats": [
+                        {"label": "New Deals", "value": str(deal_count)},
+                    ],
+                },
+                {
+                    "title": "Notable Deals" + (" Matching Your Interests" if (therapy_areas or company_ids) else ""),
+                    "items": [{
+                        "title": d.title,
+                        "principal": d.principal,
+                        "partner": d.partner,
+                        "value": float(d.value) if d.value else None,
+                        "date": d.date,
+                    } for d in deals],
+                },
+            ]
+
+            html = build_digest_html(f"Your {digest_type} Deal Digest", sections)
+
+            # Use digest_email if set, otherwise fall back to user_email
+            recipient_email = user.digest_email if user.digest_email else user.user_email
+
+            if send_digest_email(recipient_email, f"BD Intelligence — {digest_type} Digest", html):
+                sent += 1
+                total_deals_sent += deal_count
+                logger.info("Digest sent", user_id=user.user_id, email=recipient_email, deals=deal_count, frequency=user.frequency)
+
+    logger.info("Daily digest complete", sent=sent, total_users=len(users), is_monday=is_monday)
+    return {"status": "completed", "emails_sent": sent, "total_users": len(users), "is_monday": is_monday}
 
 
 # ============================================
