@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Scale, Save, Info, TrendingUp } from 'lucide-react';
+import { Scale, Save, Info, TrendingUp, FileDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '../lib/api';
 import EmptyState from '../components/EmptyState';
@@ -79,6 +79,32 @@ export default function CompBuilderPage() {
     } catch (e) {
       console.error(e);
       toast.error('Failed to save comp set');
+    }
+  };
+
+  const exportPptx = async () => {
+    const selectedDealsList = results?.deals?.filter((d: any) => selected.has(d.id)) || [];
+    try {
+      const res = await api.post('/export/comps/pptx', {
+        title: saveName || 'Comparable Deal Analysis',
+        criteria,
+        deals: selectedDealsList,
+        stats: results?.stats || {},
+      }, { responseType: 'blob' });
+      
+      const blob = new Blob([res.data]);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'comp-analysis.pptx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success('PowerPoint exported successfully');
+    } catch (e) {
+      console.error('PPTX export failed:', e);
+      toast.error('Failed to export PowerPoint');
     }
   };
 
@@ -206,6 +232,11 @@ export default function CompBuilderPage() {
                   className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-1"
                 >
                   <Save className="w-3 h-3" /> Save Comp Set
+                </button>
+                <button onClick={exportPptx} disabled={selected.size === 0}
+                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <FileDown className="w-3 h-3" /> Export PPTX
                 </button>
                 <button onClick={() => setSelected(new Set())}
                   className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300"

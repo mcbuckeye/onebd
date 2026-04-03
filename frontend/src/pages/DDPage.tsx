@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, AlertTriangle, CheckCircle, Info, Building2, Pill, Users, DollarSign, Shield } from 'lucide-react';
+import { Search, AlertTriangle, CheckCircle, Info, Building2, Pill, Users, DollarSign, Shield, FileDown } from 'lucide-react';
 import api from '../lib/api';
 
 function formatValue(v: number | null): string {
@@ -47,6 +47,28 @@ export default function DDPage() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const exportPdf = async () => {
+    if (!ddPackage) return;
+    try {
+      const res = await api.post('/export/dd/pdf', {
+        company_name: ddPackage.company?.name || 'Unknown',
+        dd_package: ddPackage,
+      }, { responseType: 'blob' });
+      
+      const blob = new Blob([res.data]);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dd-${(ddPackage.company?.name || 'report').toLowerCase().replace(/\s+/g, '-')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('PDF export failed:', e);
     }
   };
 
@@ -113,6 +135,11 @@ export default function DDPage() {
                 </div>
               </div>
               <div className="flex gap-2">
+                <button onClick={exportPdf} disabled={!ddPackage}
+                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-1 disabled:opacity-50"
+                >
+                  <FileDown className="w-3 h-3" /> Export PDF
+                </button>
                 <button onClick={expandAll} className="px-3 py-1.5 bg-slate-800 rounded text-xs text-slate-400 hover:text-slate-200">Expand All</button>
                 <button onClick={collapseAll} className="px-3 py-1.5 bg-slate-800 rounded text-xs text-slate-400 hover:text-slate-200">Collapse All</button>
               </div>
