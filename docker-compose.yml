@@ -129,7 +129,6 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./data:/app/data
-      - ./unified_api:/app/unified_api:ro
       - onebd_storage:/app/storage
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
@@ -171,9 +170,12 @@ services:
       - BROKER_URL=redis://onebd-redis:6379/0
       - RESULT_BACKEND=redis://onebd-redis:6379/1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Cortellis API credentials
+      - CORTELLIS_API_USERNAME=${CORTELLIS_API_USERNAME}
+      - CORTELLIS_API_PASSWORD=${CORTELLIS_API_PASSWORD}
+      - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
     volumes:
       - ./data:/app/data
-      - ./unified_api:/app/unified_api
       - onebd_storage:/app/storage
     command: ["celery", "-A", "unified_api.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "edgar"]
     networks:
@@ -207,9 +209,12 @@ services:
       - BROKER_URL=redis://onebd-redis:6379/0
       - RESULT_BACKEND=redis://onebd-redis:6379/1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Cortellis API credentials
+      - CORTELLIS_API_USERNAME=${CORTELLIS_API_USERNAME}
+      - CORTELLIS_API_PASSWORD=${CORTELLIS_API_PASSWORD}
+      - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
     volumes:
       - ./data:/app/data
-      - ./unified_api:/app/unified_api
       - onebd_storage:/app/storage
     command: ["celery", "-A", "unified_api.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=8", "-Q", "celery,graph"]
     deploy:
@@ -242,9 +247,12 @@ services:
       - BROKER_URL=redis://onebd-redis:6379/0
       - RESULT_BACKEND=redis://onebd-redis:6379/1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Cortellis API credentials
+      - CORTELLIS_API_USERNAME=${CORTELLIS_API_USERNAME}
+      - CORTELLIS_API_PASSWORD=${CORTELLIS_API_PASSWORD}
+      - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
     volumes:
       - ./data:/app/data
-      - ./unified_api:/app/unified_api
       - onebd_storage:/app/storage
     command: ["celery", "-A", "unified_api.workers.celery_app:celery_app", "beat", "--loglevel=INFO"]
     networks:
