@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from unified_api.config import settings
-from unified_api.routers import health, chat, search, entities, graph, analytics, export, xref, edgar, watchlist, contracts, auth, admin, dashboard, comps, dd, territory, briefings, recommendations, enrichment, agentic_rag, competitors
+from unified_api.routers import health, chat, search, entities, graph, analytics, export, xref, edgar, watchlist, contracts, auth, admin, dashboard, comps, dd, territory, briefings, recommendations, enrichment, agentic_rag, competitors, conversations, export_docs
 from unified_api.routers import settings as settings_router
 
 # Configure structured logging
@@ -177,6 +177,7 @@ app.include_router(xref.router, prefix="/api", tags=["Entity Resolution"])
 app.include_router(edgar.router, prefix="/api", tags=["Edgar SEC Filings"])
 app.include_router(watchlist.router, prefix="/api", tags=["Watchlist"])
 app.include_router(competitors.router, prefix="/api", tags=["Competitors"])
+app.include_router(conversations.router, prefix="/api", tags=["Conversations"])
 app.include_router(contracts.router, prefix="/api", tags=["Contract Intelligence"])
 app.include_router(comps.router, prefix="/api", tags=["Comps"])
 app.include_router(dd.router, prefix="/api", tags=["Due Diligence"])

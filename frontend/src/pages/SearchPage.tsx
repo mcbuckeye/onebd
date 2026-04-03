@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Filter, ChevronDown, X, Search as SearchIcon, Download } from 'lucide-react';
 import api, { SearchFilters, SearchResponse, FilterOptions } from '../lib/api';
 import EmptyState from '../components/EmptyState';
@@ -277,12 +278,20 @@ export default function SearchPage() {
                   </td>
                   <td className="px-4 py-3 text-slate-400">
                     {deal.principal_company ? (
-                      <span className="hover:text-blue-400 cursor-pointer">{deal.principal_company}</span>
+                      deal.principal_company_id ? (
+                        <Link to={`/company/${deal.principal_company_id}`} className="hover:text-blue-400">{deal.principal_company}</Link>
+                      ) : (
+                        <span>{deal.principal_company}</span>
+                      )
                     ) : '—'}
                   </td>
                   <td className="px-4 py-3 text-slate-400">
                     {deal.partner_company ? (
-                      <span className="hover:text-blue-400 cursor-pointer">{deal.partner_company}</span>
+                      deal.partner_company_id ? (
+                        <Link to={`/company/${deal.partner_company_id}`} className="hover:text-blue-400">{deal.partner_company}</Link>
+                      ) : (
+                        <span>{deal.partner_company}</span>
+                      )
                     ) : '—'}
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">{deal.deal_type || '—'}</td>

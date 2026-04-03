@@ -66,9 +66,15 @@ async def get_executive_dashboard():
                 (SELECT c.name FROM deal_companies dc
                  JOIN companies c ON c.id = dc.company_id
                  WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as principal,
+                (SELECT c.id FROM deal_companies dc
+                 JOIN companies c ON c.id = dc.company_id
+                 WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as principal_id,
                 (SELECT c.name FROM deal_companies dc
                  JOIN companies c ON c.id = dc.company_id
-                 WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner
+                 WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner,
+                (SELECT c.id FROM deal_companies dc
+                 JOIN companies c ON c.id = dc.company_id
+                 WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner_id
             FROM deals d
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
             WHERE d.date_start >= CURRENT_DATE - INTERVAL '60 days'
@@ -107,6 +113,8 @@ async def get_executive_dashboard():
                 "total_value": float(r.total_value) if r.total_value else None,
                 "principal_company": r.principal,
                 "partner_company": r.partner,
+                "principal_company_id": r.principal_id,
+                "partner_company_id": r.partner_id,
             }
             for r in notable
         ],

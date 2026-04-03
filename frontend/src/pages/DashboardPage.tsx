@@ -197,7 +197,33 @@ export default function DashboardPage() {
                     <td className="py-2.5 pr-4">
                       <div className="text-slate-200 font-medium truncate max-w-xs">{deal.title}</div>
                       <div className="text-xs text-slate-500">
-                        {deal.principal_company} → {deal.partner_company}
+                        {deal.principal_company ? (
+                          deal.principal_company_id ? (
+                            <Link 
+                              to={`/company/${deal.principal_company_id}`} 
+                              className="hover:text-blue-400"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {deal.principal_company}
+                            </Link>
+                          ) : (
+                            <span>{deal.principal_company}</span>
+                          )
+                        ) : '—'}
+                        {' → '}
+                        {deal.partner_company ? (
+                          deal.partner_company_id ? (
+                            <Link 
+                              to={`/company/${deal.partner_company_id}`} 
+                              className="hover:text-blue-400"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {deal.partner_company}
+                            </Link>
+                          ) : (
+                            <span>{deal.partner_company}</span>
+                          )
+                        ) : '—'}
                       </div>
                     </td>
                     <td className="py-2.5 pr-4 text-slate-400 text-xs">{deal.agreement_type || deal.deal_type || '—'}</td>

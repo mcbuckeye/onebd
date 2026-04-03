@@ -49,6 +49,8 @@ export interface DealSummary {
   total_value: number | null;
   principal_company: string | null;
   partner_company: string | null;
+  principal_company_id: number | null;
+  partner_company_id: number | null;
 }
 
 export interface SearchFilters {

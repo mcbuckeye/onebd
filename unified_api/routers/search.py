@@ -21,6 +21,8 @@ class DealSummary(BaseModel):
     total_value: Optional[float] = None
     principal_company: Optional[str] = None
     partner_company: Optional[str] = None
+    principal_company_id: Optional[int] = None
+    partner_company_id: Optional[int] = None
 
 
 class SearchFilters(BaseModel):
@@ -182,9 +184,15 @@ async def search_deals(
             (SELECT c.name FROM deal_companies dc
              JOIN companies c ON c.id = dc.company_id
              WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as principal,
+            (SELECT c.id FROM deal_companies dc
+             JOIN companies c ON c.id = dc.company_id
+             WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as principal_id,
             (SELECT c.name FROM deal_companies dc
              JOIN companies c ON c.id = dc.company_id
-             WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner
+             WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner,
+            (SELECT c.id FROM deal_companies dc
+             JOIN companies c ON c.id = dc.company_id
+             WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner_id
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
         {join_clause}
@@ -216,6 +224,8 @@ async def search_deals(
                 total_value=row.total_value,
                 principal_company=row.principal,
                 partner_company=row.partner,
+                principal_company_id=row.principal_id,
+                partner_company_id=row.partner_id,
             )
             for row in result
         ]
@@ -303,6 +313,8 @@ class ContractSearchResult(BaseModel):
     score: float
     principal_company: Optional[str] = None
     partner_company: Optional[str] = None
+    principal_company_id: Optional[int] = None
+    partner_company_id: Optional[int] = None
 
 
 @router.get("/search/contracts")
@@ -355,9 +367,15 @@ async def search_contracts(
                         (SELECT c.name FROM deal_companies dc
                          JOIN companies c ON c.id = dc.company_id
                          WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal,
+                        (SELECT c.id FROM deal_companies dc
+                         JOIN companies c ON c.id = dc.company_id
+                         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal_id,
                         (SELECT c.name FROM deal_companies dc
                          JOIN companies c ON c.id = dc.company_id
-                         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner
+                         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner,
+                        (SELECT c.id FROM deal_companies dc
+                         JOIN companies c ON c.id = dc.company_id
+                         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
                     FROM contract_chunks cc
                     JOIN deals d ON d.id = cc.deal_id
                     WHERE cc.embedding IS NOT NULL
@@ -375,6 +393,8 @@ async def search_contracts(
                         score=float(row.similarity),
                         principal_company=row.principal,
                         partner_company=row.partner,
+                        principal_company_id=row.principal_id,
+                        partner_company_id=row.partner_id,
                     ))
 
             except Exception as e:
@@ -396,9 +416,15 @@ async def search_contracts(
                     (SELECT c.name FROM deal_companies dc
                      JOIN companies c ON c.id = dc.company_id
                      WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal,
+                    (SELECT c.id FROM deal_companies dc
+                     JOIN companies c ON c.id = dc.company_id
+                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal_id,
                     (SELECT c.name FROM deal_companies dc
                      JOIN companies c ON c.id = dc.company_id
-                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner
+                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner,
+                    (SELECT c.id FROM deal_companies dc
+                     JOIN companies c ON c.id = dc.company_id
+                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
                 FROM contract_chunks cc
                 JOIN deals d ON d.id = cc.deal_id
                 WHERE to_tsvector('english', cc.content) @@ plainto_tsquery('english', :query)
@@ -414,8 +440,10 @@ async def search_contracts(
                     contract_id=row.contract_id,
                     content=row.content[:500] + "..." if len(row.content) > 500 else row.content,
                     score=float(row.rank),
-                    principal_company=row.principal,
+                principal_company=row.principal,
                     partner_company=row.partner,
+                    principal_company_id=row.principal_id,
+                    partner_company_id=row.partner_id,
                 ))
 
     return {
@@ -439,6 +467,8 @@ class UnifiedSearchResult(BaseModel):
     contract_id: Optional[int] = None
     principal_company: Optional[str] = None
     partner_company: Optional[str] = None
+    principal_company_id: Optional[int] = None
+    partner_company_id: Optional[int] = None
     # Edgar fields
     doc_type: Optional[str] = None
     accession_no: Optional[str] = None
@@ -500,9 +530,15 @@ async def unified_search(
                             (SELECT c.name FROM deal_companies dc
                              JOIN companies c ON c.id = dc.company_id
                              WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal,
+                            (SELECT c.id FROM deal_companies dc
+                             JOIN companies c ON c.id = dc.company_id
+                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal_id,
                             (SELECT c.name FROM deal_companies dc
                              JOIN companies c ON c.id = dc.company_id
-                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner
+                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner,
+                            (SELECT c.id FROM deal_companies dc
+                             JOIN companies c ON c.id = dc.company_id
+                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
                         FROM contract_chunks cc
                         JOIN deals d ON d.id = cc.deal_id
                         WHERE to_tsvector('english', cc.content) @@ plainto_tsquery('english', :query)
@@ -521,6 +557,8 @@ async def unified_search(
                             deal_title=row.deal_title,
                             principal_company=row.principal,
                             partner_company=row.partner,
+                            principal_company_id=row.principal_id,
+                            partner_company_id=row.partner_id,
                         ))
         except Exception as e:
             logger.error("Cortellis search failed", error=str(e))
