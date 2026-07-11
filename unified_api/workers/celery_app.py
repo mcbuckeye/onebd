@@ -308,6 +308,16 @@ def link_deals_to_filings():
             logger.info(f"Loaded {len(edgar_cik_map)} Edgar companies with CIK")
 
         with get_cortellis_session() as csession:
+            # Legacy production installations created company_xref before the
+            # durable Edgar ID column was added to the repository schema.
+            csession.execute(text("""
+                ALTER TABLE company_xref
+                ADD COLUMN IF NOT EXISTS edgar_company_id BIGINT
+            """))
+            csession.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_company_xref_edgar_company
+                ON company_xref (edgar_company_id)
+            """))
             xrefs = csession.execute(text("""
                 SELECT cortellis_id, edgar_company_id, cik
                 FROM company_xref
@@ -317,6 +327,7 @@ def link_deals_to_filings():
             # Prefer the reviewed durable cross-reference; use CIK only as a
             # backwards-compatible fallback for older xref rows.
             xref_map = {}
+            xref_backfill = []
             for row in xrefs:
                 if row.edgar_company_id is not None:
                     xref_map[row.cortellis_id] = row.edgar_company_id
@@ -324,6 +335,19 @@ def link_deals_to_filings():
                 cik_normalized = row.cik.lstrip('0') if row.cik else None
                 if cik_normalized and cik_normalized in edgar_cik_map:
                     xref_map[row.cortellis_id] = edgar_cik_map[cik_normalized]
+                    xref_backfill.append({
+                        "cortellis_id": row.cortellis_id,
+                        "edgar_company_id": edgar_cik_map[cik_normalized],
+                    })
+            if xref_backfill:
+                csession.execute(text("""
+                    UPDATE company_xref
+                    SET edgar_company_id = :edgar_company_id,
+                        updated_at = NOW()
+                    WHERE cortellis_id = :cortellis_id
+                      AND edgar_company_id IS NULL
+                """), xref_backfill)
+                csession.commit()
             logger.info(f"Loaded {len(xref_map)} company cross-references with Edgar match")
 
             if not xref_map:
