@@ -8,8 +8,10 @@ and fast retrieval before adding more external data volume.
 1. **Repair and verify Dokploy automatic deployment**
    - [x] A push to `main` creates a Dokploy deployment record and queue job.
    - [x] The checkout advances to the pushed SHA and affected services rebuild.
-   - [ ] Health checks pass and the deployed SHA is visible from the API.
-   - [ ] Failed health checks produce a visible failure or rollback.
+   - [x] Health checks pass and the deployed SHA is visible from the API image.
+   - [x] A post-Dokploy GitHub workflow waits for the expected SHA and visibly
+         fails if deployment health or the five production regressions fail.
+   - [ ] Add automated rollback after a failed post-deployment gate.
 
 2. **Separate current EDGAR ingestion from historical backfill**
    - [x] A recent-data lane always processes the latest SEC business days.

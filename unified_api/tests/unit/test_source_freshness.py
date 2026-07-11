@@ -1,8 +1,9 @@
 """Tests for source-sync freshness classification."""
 
 from datetime import date, datetime, timedelta, timezone
+from unittest.mock import patch
 
-from unified_api.routers.health import _backfill_progress, _sync_freshness
+from unified_api.routers.health import _backfill_progress, _build_commit, _sync_freshness
 
 
 def test_recent_completed_sync_is_ok():
@@ -125,3 +126,8 @@ def test_backfill_progress_reports_caught_up():
     assert result["backlog_days"] == 0
     assert result["estimated_runs_remaining"] == 0
     assert result["estimate_status"] == "caught_up"
+
+
+def test_missing_build_commit_is_reported_as_unknown():
+    with patch("pathlib.Path.read_text", side_effect=OSError):
+        assert _build_commit() == "unknown"

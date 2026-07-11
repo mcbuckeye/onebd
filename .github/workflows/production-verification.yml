@@ -1,0 +1,67 @@
+name: Post-Dokploy production verification
+
+on:
+  workflow_run:
+    workflows: [Pre-deployment quality gate]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full commit SHA expected in production
+        required: true
+
+concurrency:
+  group: onebd-production-verification
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BASE_URL: https://onebd.pchomelab.com
+      EXPECTED_SHA: ${{ inputs.commit || github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Wait for Dokploy to expose the expected image commit
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          url = os.environ["BASE_URL"] + "/api/health"
+          expected = os.environ["EXPECTED_SHA"]
+          last = None
+          for attempt in range(90):
+              try:
+                  with urllib.request.urlopen(url, timeout=15) as response:
+                      last = json.load(response)
+                  if last.get("status") == "healthy" and last.get("commit") == expected:
+                      print(f"Dokploy is serving {expected}")
+                      break
+              except Exception as exc:
+                  last = {"error": str(exc)}
+              print(f"Waiting for deployment ({attempt + 1}/90): {last}")
+              time.sleep(10)
+          else:
+              raise SystemExit(
+                  f"Dokploy did not serve healthy commit {expected}; last response={last}"
+              )
+          PY
+      - run: pip install httpx==0.28.1 PyYAML==6.0.3
+      - name: Run blocking production question regressions
+        run: >-
+          python -m unified_api.scripts.evaluate_questions
+          --base-url "$BASE_URL" --tier regression

@@ -7,6 +7,8 @@ import structlog
 import redis
 from datetime import date, datetime, timedelta, timezone
 import math
+from pathlib import Path
+import re
 
 from unified_api.config import settings
 from unified_api.services.database import check_cortellis_connection, check_edgar_connection
@@ -14,6 +16,15 @@ from unified_api.services.database import check_cortellis_connection, check_edga
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+
+def _build_commit() -> str:
+    """Return immutable image commit metadata when built from a Git checkout."""
+    try:
+        commit = Path("/app/BUILD_COMMIT").read_text().strip()
+    except OSError:
+        return "unknown"
+    return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else "unknown"
 
 
 def _as_utc(value):
@@ -168,6 +179,7 @@ class HealthResponse(BaseModel):
     """Health check response."""
     status: str
     version: str
+    commit: str
     services: dict
 
 
@@ -234,6 +246,7 @@ async def health_check():
     return HealthResponse(
         status="healthy" if all_healthy else "degraded",
         version=settings.app_version,
+        commit=_build_commit(),
         services=services,
     )
 
@@ -241,7 +254,11 @@ async def health_check():
 @router.get("/api/health")
 async def api_health():
     """Simple health check for load balancers."""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "version": settings.app_version,
+        "commit": _build_commit(),
+    }
 
 
 @router.get("/api/index-status", response_model=IndexStatus)
