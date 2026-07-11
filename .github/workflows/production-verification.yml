@@ -76,6 +76,14 @@ jobs:
         run: >-
           python -m unified_api.scripts.benchmark_edgar_search
           --base-url "$BASE_URL" --runs 3
+      - name: Trigger an explicitly requested rollback drill
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git log -1 --pretty=%B | grep -Fq '[rollback-drill]'; then
+            echo "Controlled rollback drill requested by the deployed commit."
+            exit 1
+          fi
 
   rollback:
     name: Roll back a failed production deployment
