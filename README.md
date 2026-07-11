@@ -76,10 +76,10 @@ Required environment variables:
 ### 2. Start All Services
 
 ```bash
-docker compose -f docker-compose.unified.yml up -d
+docker compose up -d
 ```
 
-This starts 8 containers:
+This starts 9 services and 10 containers (the processing worker has two replicas):
 
 | Service | Container | Port | Description |
 |---------|-----------|------|-------------|
