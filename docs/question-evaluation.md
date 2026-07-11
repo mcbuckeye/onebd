@@ -2,7 +2,9 @@
 
 **Reviewed:** 2026-07-11
 
-**Production baseline:** `onebd.pchomelab.com`, commit `47cd680`
+**Assessment baseline:** `onebd.pchomelab.com`, commit `47cd680`
+
+**Verified remediation:** commits `91e59ad` and `314efda`, deployed 2026-07-11
 
 **Status:** Provisional code-and-production review with an initial five-case
 remediation set; the full 65-case golden set is not yet automated
@@ -15,8 +17,9 @@ developer could write a suitable query by hand.
 
 The previous score treated route existence and theoretical SQL feasibility as
 successful question answering. Production checks showed that this overstated
-readiness. For example, Chat v2 answered that Pfizer had zero 2024 deals because
-it queried the exact name `Pfizer`; the canonical `Pfizer Inc` record has 23.
+readiness. For example, the assessed baseline answered that Pfizer had zero 2024
+deals because it queried the exact name `Pfizer`; the canonical `Pfizer Inc`
+record has 23. The remediated deployment now returns that grounded count.
 
 ## Rating Standard
 
@@ -88,9 +91,17 @@ The first implementation pass addresses the most consequential baseline failures
   `unified_api/evals/question_cases.yaml` and executable through
   `python -m unified_api.scripts.evaluate_questions`.
 
-The scorecard below remains the conservative pre-remediation baseline until those
-five cases pass against the deployed commit. A passing refusal improves safety but
-does not make an unavailable analytical capability Strong.
+All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
+
+1. Pfizer 2024 count returns 23 using canonical company ID 18767.
+2. Median milestone analytics refuses safely without generating substitute SQL.
+3. Bispecific comp candidates return the matching bispecific modality.
+4. Empty Roche strategy evidence does not introduce an unsupported history claim.
+5. Full-text EDGAR filtering returns non-empty 8-K results.
+
+The scorecard incorporates the directly justified rating changes below. A passing
+refusal improves safety but does not make an unavailable analytical capability
+Strong, and the remaining 60 questions still need executable production fixtures.
 
 ---
 
@@ -100,7 +111,7 @@ does not make an unavailable analytical capability Strong.
 
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
-| 1 | How many deals did Pfizer do in 2024? | 🟡 | Data supports it, but live Chat v2 returned 0 instead of 23 because entity aliases are not resolved. |
+| 1 | How many deals did Pfizer do in 2024? | ✅ | Production returns 23 through deterministic company/year SQL using canonical Pfizer ID 18767. |
 | 2 | What was the biggest pharma deal ever? | 🟡 | Deterministic over disclosed totals, but “pharma,” currency/amount semantics, and disclosure scope need explicit handling. |
 | 3 | Who are the top 5 most active acquirers this year? | ✅ | Dedicated analytics endpoint provides a bounded, reproducible query. |
 | 4 | How many ADC deals have been done? | 🟡 | Queryable, but ADC synonym/technology normalization and end-to-end chat accuracy are unverified. |
@@ -111,7 +122,7 @@ does not make an unavailable analytical capability Strong.
 | 9 | How many deals closed last week? | 🟡 | Relative dates, timezone, and closed-vs-announced field selection are not deterministic. |
 | 10 | What is the average deal size in oncology? | ✅ | Analytics can calculate it with a disclosure caveat; null and unit handling must remain explicit. |
 
-**Provisional score: 3 Strong, 7 Partial**
+**Provisional score: 4 Strong, 6 Partial**
 
 ---
 
@@ -140,7 +151,7 @@ does not make an unavailable analytical capability Strong.
 |---|---|---:|---|
 | 21 | What should we pay for a lung-cancer bispecific company? | 🟡 | Comp inputs exist, but no acquisition framework or evidence-weighted recommendation. |
 | 22 | Most likely acquisition targets in ADC oncology? | 🔧 | No target-screening model with explainable criteria. |
-| 23 | Build a comp set for a Phase 2 NSCLC bispecific license. | 🟡 | Comp builder exists, but modality is not currently applied to candidate selection. |
+| 23 | Build a comp set for a Phase 2 NSCLC bispecific license. | 🟡 | All requested dimensions now constrain candidates and return their matched values; comp quality and financial coverage still need a full truth set. |
 | 24 | Competitive landscape for CAR-T in hematology. | 🟡 | Data and briefing components exist; no complete landscape workflow or market map. |
 | 25 | Build, buy, or partner for solid-tumor ADC assets? | ❌ | Requires internal R&D, strategic fit, cost, and risk inputs that are not present. |
 | 26 | Which companies are divesting oncology assets? | 🟡 | Queryable candidates, but divestiture intent/classification is not governed. |
@@ -161,14 +172,14 @@ does not make an unavailable analytical capability Strong.
 | 32 | Who is most actively acquiring oncology assets? | ✅ | Top-acquirers analytics supports therapy filtering. |
 | 33 | Compare our deal pace to Merck's. | 🟡 | “Our company” is not configured and comparison selection is cumbersome. |
 | 34 | Alert me when a competitor does an ADC deal. | 🟡 | Saved-search alerts, Celery checks, notifications, and email exist; configuration UX/validation remains limited. |
-| 35 | What is Roche's oncology strategy from its deal pattern? | ❌ | Live test synthesized unsupported background claims after retrieving zero rows. |
+| 35 | What is Roche's oncology strategy from its deal pattern? | 🔧 | Empty evidence now returns a grounded limitation, but a source-backed strategy workflow is not implemented. |
 | 36 | Which companies just entered the bispecific space? | 🔧 | Query logic is feasible but no tested new-entrant workflow exists. |
 | 37 | Show Pfizer's partnership network. | ✅ | Graph network page and endpoint exist with canonical ID resolution. |
 | 38 | How does AbbVie's deal structure differ from Gilead's? | 🟡 | Distributions can be retrieved; grounded comparison synthesis is not proven. |
 | 39 | Are competitors building ADC portfolios faster than us? | ❌ | “Us,” portfolio boundaries, and velocity metric are not defined. |
 | 40 | Weekly competitive briefing for oncology. | 🟡 | Weekly personalized email digests now exist; competitor-focused narrative and delivery QA remain incomplete. |
 
-**Provisional score: 2 Strong, 5 Partial, 1 Needs Work, 2 Cannot**
+**Provisional score: 2 Strong, 5 Partial, 2 Needs Work, 1 Cannot**
 
 ---
 
@@ -214,10 +225,10 @@ does not make an unavailable analytical capability Strong.
 
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
-| 61 | Find 8-K filings mentioning ADC partnerships. | 🟡 | Full-text is fast, but form filtering uses the wrong column and the historical backfill has a gap. |
+| 61 | Find 8-K filings mentioning ADC partnerships. | 🟡 | Form-aware full-text filtering now works and is regression-tested; the historical backfill gap still limits completeness. |
 | 62 | Show Pfizer's 10-K risk factors. | 🟡 | Generic sections and a section endpoint exist; reliable form-aware Item 1A extraction/filtering is incomplete. |
 | 63 | Cross-reference this Cortellis deal with SEC filings. | 🟡 | Matcher is implemented with 66,980 links; company/date candidates need content-based ranking and precision evaluation. |
-| 64 | Material contracts from recent 8-K filings. | 🟡 | Recent ingestion extracts EX-10 exhibits, but form/subtype filtering and backlog coverage must be corrected. |
+| 64 | Material contracts from recent 8-K filings. | 🟡 | Recent ingestion extracts EX-10 exhibits and form filtering works; backlog coverage and structured contract classification remain incomplete. |
 | 65 | S-1 analysis for a pre-IPO biotech. | 🟡 | S-1 text is searchable; structured pipeline/financial/risk extraction is incomplete. |
 
 **Provisional score: 5 Partial**
@@ -230,16 +241,16 @@ This is a conservative code-and-smoke-test review, not the final measured score.
 
 | Category | Strong ✅ | Partial 🟡 | Needs Work 🔧 | Cannot ❌ | Total |
 |---|---:|---:|---:|---:|---:|
-| Quick Factual | 3 | 7 | 0 | 0 | 10 |
+| Quick Factual | 4 | 6 | 0 | 0 | 10 |
 | Analytical | 5 | 3 | 2 | 0 | 10 |
 | Strategic | 0 | 8 | 1 | 1 | 10 |
-| Competitive Intelligence | 2 | 5 | 1 | 2 | 10 |
+| Competitive Intelligence | 2 | 5 | 2 | 1 | 10 |
 | Due Diligence | 3 | 4 | 2 | 1 | 10 |
 | Market Landscape | 3 | 6 | 0 | 1 | 10 |
 | SEC Filings | 0 | 5 | 0 | 0 | 5 |
-| **Total** | **16** | **38** | **6** | **5** | **65** |
+| **Total** | **17** | **37** | **7** | **4** | **65** |
 
-**Provisional: 16/65 Strong (25%); 54/65 at least Partial (83%).**
+**Provisional: 17/65 Strong (26%); 54/65 at least Partial (83%).**
 
 The breadth remains useful, but correctness and grounding—not feature count—are
 the limiting factors.
