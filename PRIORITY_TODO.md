@@ -62,8 +62,13 @@ and fast retrieval before adding more external data volume.
    - [x] Add a provenance-aware parent/subsidiary relationship model without
          silently rolling subsidiaries into parents.
    - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
+   - [x] Add provenance/review schemas for company LEIs/domains and public drug
+         identifiers; external identifier population remains pending.
    - [ ] Normalize INN/development codes and public drug/target identifiers.
-   - [ ] Store match evidence, confidence, method, and review status.
+   - [x] Seed normalized Cortellis display names and conservative development-code
+         candidates for all drugs without treating organization suffixes as aliases.
+   - [x] Store match evidence, confidence, method, review status, reviewer, and
+         source reference for company aliases/identifiers, ownership, and drugs.
    - [ ] Replace nested cross-database linking loops with bulk operations.
 
 8. **Add ClinicalTrials.gov/AACT as the first new external source**

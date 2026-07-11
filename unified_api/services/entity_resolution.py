@@ -11,6 +11,7 @@ Creates and manages the company_xref cross-reference table.
 import re
 from dataclasses import dataclass
 from typing import Callable, Optional, List, Tuple
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 import structlog
@@ -18,6 +19,35 @@ import structlog
 from unified_api.services.database import get_cortellis_session, get_edgar_session
 
 logger = structlog.get_logger(__name__)
+
+
+def normalize_identifier_value(identifier_type: str, value: str) -> str:
+    """Normalize durable identifiers without inferring entity equivalence."""
+    value = (value or "").strip()
+    if identifier_type == "domain":
+        parsed = urlparse(value if "://" in value else f"//{value}")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return host[4:] if host.startswith("www.") else host
+    if identifier_type == "lei":
+        return re.sub(r"[^A-Za-z0-9]", "", value).upper()
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def candidate_drug_aliases(display_name: str) -> list[tuple[str, str, float]]:
+    """Return conservative Cortellis-native aliases for later review/linking."""
+    display_name = (display_name or "").strip()
+    if not display_name:
+        return []
+    candidates = [("display_name", display_name, 1.0)]
+    primary = display_name.split(",", 1)[0].strip()
+    if primary and primary != display_name:
+        alias_type = (
+            "development_code"
+            if re.fullmatch(r"[A-Z0-9]{2,12}(?:-[A-Z0-9]{1,12})+", primary)
+            else "primary_name_candidate"
+        )
+        candidates.append((alias_type, primary, 0.7))
+    return candidates
 
 
 def classify_name_match(
@@ -251,6 +281,146 @@ class EntityResolutionService:
                 CREATE INDEX IF NOT EXISTS idx_identity_relationship_child
                 ON company_identity_relationships(child_company_id)
             """))
+            session.execute(text("""
+                ALTER TABLE company_aliases
+                ADD COLUMN IF NOT EXISTS normalized_value VARCHAR(500),
+                ADD COLUMN IF NOT EXISTS source_reference TEXT,
+                ADD COLUMN IF NOT EXISTS evidence JSONB,
+                ADD COLUMN IF NOT EXISTS confidence FLOAT NOT NULL DEFAULT 1.0,
+                ADD COLUMN IF NOT EXISTS review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
+            """))
+            session.execute(text("""
+                UPDATE company_aliases
+                SET normalized_value = LOWER(REGEXP_REPLACE(alias_value, '[^[:alnum:]]+', '', 'g'))
+                WHERE normalized_value IS NULL
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_company_alias_normalized
+                ON company_aliases (normalized_value)
+            """))
+            session.execute(text("""
+                ALTER TABLE company_identity_relationships
+                ADD COLUMN IF NOT EXISTS evidence JSONB,
+                ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(255),
+                ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
+            """))
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS company_identifiers (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                    identifier_type VARCHAR(50) NOT NULL,
+                    identifier_value VARCHAR(500) NOT NULL,
+                    normalized_value VARCHAR(500) NOT NULL,
+                    source VARCHAR(100) NOT NULL,
+                    source_reference TEXT,
+                    evidence JSONB,
+                    confidence FLOAT NOT NULL,
+                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                    reviewed_by VARCHAR(255),
+                    reviewed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (identifier_type, normalized_value)
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_company_identifiers_company
+                ON company_identifiers (company_id)
+            """))
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS drug_aliases (
+                    id BIGSERIAL PRIMARY KEY,
+                    drug_id INTEGER NOT NULL REFERENCES drugs(id) ON DELETE CASCADE,
+                    alias_type VARCHAR(50) NOT NULL,
+                    alias_value VARCHAR(1000) NOT NULL,
+                    normalized_value VARCHAR(1000) NOT NULL,
+                    source VARCHAR(100) NOT NULL,
+                    source_reference TEXT,
+                    evidence JSONB,
+                    confidence FLOAT NOT NULL,
+                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                    reviewed_by VARCHAR(255),
+                    reviewed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (drug_id, alias_type, normalized_value)
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_drug_alias_normalized
+                ON drug_aliases (normalized_value)
+            """))
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS drug_identifiers (
+                    id BIGSERIAL PRIMARY KEY,
+                    drug_id INTEGER NOT NULL REFERENCES drugs(id) ON DELETE CASCADE,
+                    identifier_type VARCHAR(50) NOT NULL,
+                    identifier_value VARCHAR(500) NOT NULL,
+                    normalized_value VARCHAR(500) NOT NULL,
+                    source VARCHAR(100) NOT NULL,
+                    source_reference TEXT,
+                    evidence JSONB,
+                    confidence FLOAT NOT NULL,
+                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                    reviewed_by VARCHAR(255),
+                    reviewed_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (identifier_type, normalized_value)
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_drug_identifiers_drug
+                ON drug_identifiers (drug_id)
+            """))
+
+    def seed_drug_alias_records(self) -> dict:
+        """Index source display names and conservative primary-name candidates."""
+        with get_cortellis_session() as session:
+            drugs = session.execute(text(
+                "SELECT id, name_display FROM drugs ORDER BY id"
+            )).mappings().all()
+            before = session.execute(text("SELECT COUNT(*) FROM drug_aliases")).scalar() or 0
+            verified_before = session.execute(text("""
+                SELECT COUNT(*) FROM drug_aliases WHERE review_status = 'source_verified'
+            """)).scalar() or 0
+            records = []
+            for drug in drugs:
+                for alias_type, alias_value, confidence in candidate_drug_aliases(
+                    drug["name_display"]
+                ):
+                    normalized = normalize_identifier_value("drug_alias", alias_value)
+                    review_status = "source_verified" if alias_type == "display_name" else "unreviewed"
+                    records.append({
+                        "drug_id": drug["id"],
+                        "alias_type": alias_type,
+                        "alias_value": alias_value,
+                        "normalized_value": normalized,
+                        "confidence": confidence,
+                        "review_status": review_status,
+                    })
+            insert_statement = text("""
+                        INSERT INTO drug_aliases (
+                            drug_id, alias_type, alias_value, normalized_value,
+                            source, confidence, review_status
+                        ) VALUES (
+                            :drug_id, :alias_type, :alias_value, :normalized_value,
+                            'cortellis', :confidence, :review_status
+                        )
+                        ON CONFLICT DO NOTHING
+                    """)
+            for start in range(0, len(records), 5000):
+                session.execute(insert_statement, records[start:start + 5000])
+            after = session.execute(text("SELECT COUNT(*) FROM drug_aliases")).scalar() or 0
+            verified_after = session.execute(text("""
+                SELECT COUNT(*) FROM drug_aliases WHERE review_status = 'source_verified'
+            """)).scalar() or 0
+        return {
+            "drugs_checked": len(drugs),
+            "drug_aliases_created": after - before,
+            "source_verified_aliases_created": verified_after - verified_before,
+        }
 
     def improve_identity_records(self) -> dict:
         """Seed aliases and promote normalized-exact cross-source name matches."""
@@ -321,10 +491,12 @@ class EntityResolutionService:
                     }).scalar()
                     aliases_created += int(inserted is not None)
 
+        drug_stats = self.seed_drug_alias_records()
         return {
             "xrefs_checked": len(rows),
             "normalized_exact_promoted": promoted,
             "aliases_created": aliases_created,
+            **drug_stats,
         }
 
     def match_by_ticker(
