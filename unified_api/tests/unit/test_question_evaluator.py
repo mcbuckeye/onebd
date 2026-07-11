@@ -5,8 +5,15 @@ from decimal import Decimal
 from unified_api.scripts.evaluate_questions import (
     _validate_read_only_query,
     evaluate_truth_assertion,
+    truth_values_equal,
     validate_suite,
 )
+
+
+def test_truth_numeric_comparison_tolerates_json_transport_encoding():
+    assert truth_values_equal(204.4571580327864, Decimal("204.45715803278648"))
+    assert truth_values_equal("55.76", Decimal("55.76"))
+    assert not truth_values_equal("55.76", Decimal("55.77"))
 
 
 def test_truth_rows_compare_only_declared_fields():

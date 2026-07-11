@@ -20,6 +20,12 @@ def test_extracts_company_mentions_without_domain_terms():
     ) == ["Pfizer", "Merck"]
 
 
+def test_valuation_domain_term_is_not_resolved_as_a_company():
+    assert extract_company_phrases(
+        "Valuation range for oncology M&A deals, 2020–2025?"
+    ) == []
+
+
 def test_resolves_legal_suffix_to_canonical_company_id():
     def search(phrase, limit):
         assert phrase == "Pfizer"
