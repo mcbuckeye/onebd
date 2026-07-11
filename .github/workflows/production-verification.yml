@@ -101,7 +101,10 @@ jobs:
     env:
       BASE_URL: https://onebd.pchomelab.com
       FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
-      GH_TOKEN: ${{ github.token }}
+      # A dedicated repository secret is required here because GitHub suppresses
+      # pull_request events created by GITHUB_TOKEN. The rollback PR must emit
+      # genuine PR checks for protected-main enforcement.
+      GH_TOKEN: ${{ secrets.ONEBD_ROLLBACK_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -120,7 +123,7 @@ jobs:
             exit 1
           fi
 
-          rollback_branch="automated-rollback-${FAILED_SHA:0:12}-${GITHUB_RUN_ID}"
+          rollback_branch="automated-rollback-${FAILED_SHA:0:12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git switch --create "$rollback_branch" origin/main
           git config user.name "onebd-production-rollback[bot]"
           git config user.email "onebd-production-rollback[bot]@users.noreply.github.com"
