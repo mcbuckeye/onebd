@@ -46,7 +46,14 @@ jobs:
           last = None
           for attempt in range(90):
               try:
-                  with urllib.request.urlopen(url, timeout=15) as response:
+                  request = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": "OneBD-Deployment-Verifier/1.0 admin@pchomelab.com",
+                          "Accept": "application/json",
+                      },
+                  )
+                  with urllib.request.urlopen(request, timeout=15) as response:
                       last = json.load(response)
                   if last.get("status") == "healthy" and last.get("commit") == expected:
                       print(f"Dokploy is serving {expected}")
