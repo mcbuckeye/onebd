@@ -161,6 +161,12 @@ services:
       - CORTELLIS_DB_URL=postgresql://${CORTELLIS_USER:-cortellis}:${CORTELLIS_PASSWORD:-changeme}@onebd-db-cortellis:5432/${CORTELLIS_DB:-cortellis}
       - EDGAR_SOURCE_DB_URL=postgresql://postgres:postgres@onebd-db-edgar:5432/deals
       - EDGAR_DB_URL=postgresql://postgres:postgres@onebd-db-edgar:5432/deals
+      - EDGAR_USER_AGENT=${EDGAR_USER_AGENT:-OneBD onebd.pchomelab.com admin@pchomelab.com}
+      - EDGAR_STORAGE_DIR=/app/storage
+      - EDGAR_SYNC_BATCH_DAYS=${EDGAR_SYNC_BATCH_DAYS:-7}
+      - EDGAR_SYNC_OVERLAP_DAYS=${EDGAR_SYNC_OVERLAP_DAYS:-3}
+      - EDGAR_SYNC_MAX_FILINGS=${EDGAR_SYNC_MAX_FILINGS:-250}
+      - EDGAR_SYNC_EMBED=${EDGAR_SYNC_EMBED:-true}
       - NEO4J_URI=bolt://onebd-neo4j:7687
       - NEO4J_USER=neo4j
       - NEO4J_PASSWORD=${NEO4J_PASSWORD:-bdplatform123}

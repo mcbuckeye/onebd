@@ -1,7 +1,6 @@
 """
 Unified BD Intelligence Platform - Configuration
 """
-import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 
@@ -23,6 +22,12 @@ class Settings(BaseSettings):
     # Both environment variables point to the same database for compatibility
     edgar_source_db_url: str = "postgresql://postgres:postgres@onebd-db-edgar:5432/deals"
     edgar_db_url: str = "postgresql://postgres:postgres@onebd-db-edgar:5432/deals"
+    edgar_user_agent: str = "OneBD onebd.pchomelab.com admin@pchomelab.com"
+    edgar_storage_dir: str = "/app/storage"
+    edgar_sync_batch_days: int = 7
+    edgar_sync_overlap_days: int = 3
+    edgar_sync_max_filings: int = 250
+    edgar_sync_embed: bool = True
 
     # Neo4j Graph Database
     neo4j_uri: str = "bolt://onebd-neo4j:7687"

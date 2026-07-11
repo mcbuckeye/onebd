@@ -9,18 +9,58 @@ Implements SEC fair access policy:
 Imported from Edgar BD project and adapted for unified platform.
 """
 import asyncio
-import hashlib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from typing import List, Optional
 
 import httpx
 import structlog
 
-from unified_api.config import settings
-
 logger = structlog.get_logger(__name__)
+
+
+def is_priority_form(form: str, priority_forms: Optional[List[str]] = None) -> bool:
+    """Return whether a filing form (including amendments) is deal-relevant."""
+    normalized = (form or "").strip().upper()
+    base_form = normalized[:-2] if normalized.endswith("/A") else normalized
+    allowed = {value.upper() for value in (priority_forms or EDGARClient.PRIORITY_FORMS)}
+    return normalized in allowed or base_form in allowed
+
+
+def parse_master_index(content: str) -> List[dict]:
+    """Parse an SEC daily ``master.idx`` file into filing metadata."""
+    filings = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.count("|") != 4:
+            continue
+
+        cik, company_name, form, filed_on, filename = [part.strip() for part in line.split("|", 4)]
+        if not cik.isdigit() or not filename.lower().endswith(".txt"):
+            continue
+
+        try:
+            date_format = "%Y-%m-%d" if "-" in filed_on else "%Y%m%d"
+            filing_date = datetime.strptime(filed_on, date_format).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+        accession_match = re.search(r"(\d{10}-\d{2}-\d{6})\.txt$", filename)
+        if not accession_match:
+            continue
+
+        filings.append({
+            "cik": cik.lstrip("0") or "0",
+            "company_name": company_name,
+            "form": form,
+            "filing_date": filing_date,
+            "accession_number": accession_match.group(1),
+            "filename": filename,
+            "url": f"https://www.sec.gov/Archives/{filename.lstrip('/')}",
+        })
+
+    return filings
 
 
 class FilingIndexParser(HTMLParser):
@@ -126,6 +166,7 @@ class EDGARClient:
 
     BASE_URL = "https://data.sec.gov"
     SUBMISSIONS_URL = "https://data.sec.gov/submissions"
+    ARCHIVES_URL = "https://www.sec.gov/Archives"
 
     # Filing types we care about (deal-relevant)
     PRIORITY_FORMS = ["8-K", "10-K", "10-Q", "20-F", "6-K", "S-1", "F-1", "425", "SC 13D", "SC 13G"]
@@ -351,6 +392,43 @@ class EDGARClient:
             except Exception as e:
                 logger.error("Failed to fetch EDGAR filings", cik=cik_padded, error=str(e))
                 raise
+
+    async def get_daily_index(self, filing_date: date) -> List[dict]:
+        """Fetch and parse the SEC daily master index for a filing date.
+
+        Weekends and SEC holidays do not have index files; those dates return an
+        empty list so an incremental cursor can advance normally.
+        """
+        quarter = ((filing_date.month - 1) // 3) + 1
+        url = (
+            f"{self.ARCHIVES_URL}/edgar/daily-index/{filing_date.year}/"
+            f"QTR{quarter}/master.{filing_date:%Y%m%d}.idx"
+        )
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Encoding": "gzip, deflate",
+        }
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            try:
+                response = await self._rate_limited_request(client, url, headers=headers)
+            except httpx.HTTPStatusError as exc:
+                # The Archives service commonly returns 403 (rather than 404)
+                # for weekends and holidays where no index object exists.
+                if exc.response.status_code in {403, 404}:
+                    logger.info("No EDGAR daily index for date", filing_date=str(filing_date))
+                    return []
+                raise
+
+        filings = parse_master_index(response.text)
+        if "CIK|Company Name|Form Type" in response.text and not filings:
+            raise ValueError(f"SEC daily index could not be parsed for {filing_date}")
+        logger.info(
+            "Retrieved EDGAR daily index",
+            filing_date=str(filing_date),
+            filings=len(filings),
+        )
+        return filings
 
     async def download_filing(
         self,

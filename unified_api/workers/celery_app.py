@@ -102,8 +102,16 @@ def fetch_new_filings():
     Runs on rate-limited edgar queue (1 worker, 10 req/sec).
     """
     logger.info("Starting EDGAR filing fetch")
-    # TODO: Import and call actual fetch service
-    return {"status": "completed", "filings_fetched": 0}
+    try:
+        import asyncio
+        from unified_api.services.edgar_ingestion import run_edgar_sync
+
+        result = asyncio.run(run_edgar_sync())
+        logger.info("EDGAR filing fetch complete", **result)
+        return result
+    except Exception as e:
+        logger.error("EDGAR filing fetch failed", error=str(e))
+        return {"status": "failed", "error": str(e)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.cortellis.sync_deals")
