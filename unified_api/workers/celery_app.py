@@ -37,10 +37,17 @@ celery_app.conf.update(
 
     # Beat schedule for periodic tasks
     beat_schedule={
-        # Fetch new SEC EDGAR filings daily at 2 AM
+        # Always fetch current SEC filings daily, independent of backfill.
         "fetch-edgar-filings": {
             "task": "unified_api.workers.tasks.edgar.fetch_new_filings",
             "schedule": crontab(hour=2, minute=0),
+        },
+        # Temporarily advance the historical backlog every two hours. Each run
+        # is bounded and the EDGAR queue has concurrency=1, so runs cannot
+        # issue concurrent SEC requests.
+        "backfill-edgar-filings": {
+            "task": "unified_api.workers.tasks.edgar.backfill_filings",
+            "schedule": crontab(hour="*/2", minute=15),
         },
         # Sync Cortellis deals daily at 6:30 AM
         "sync-cortellis-deals": {
@@ -104,14 +111,30 @@ def fetch_new_filings():
     logger.info("Starting EDGAR filing fetch")
     try:
         import asyncio
-        from unified_api.services.edgar_ingestion import run_edgar_sync
+        from unified_api.services.edgar_ingestion import run_edgar_recent_sync
 
-        result = asyncio.run(run_edgar_sync())
+        result = asyncio.run(run_edgar_recent_sync())
         logger.info("EDGAR filing fetch complete", **result)
         return result
     except Exception as e:
         logger.error("EDGAR filing fetch failed", error=str(e))
         return {"status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="unified_api.workers.tasks.edgar.backfill_filings")
+def backfill_edgar_filings():
+    """Advance the bounded historical EDGAR cursor without blocking current data."""
+    logger.info("Starting EDGAR historical backfill")
+    try:
+        import asyncio
+        from unified_api.services.edgar_ingestion import run_edgar_sync
+
+        result = asyncio.run(run_edgar_sync())
+        logger.info("EDGAR historical backfill complete", **result)
+        return result
+    except Exception as e:
+        logger.error("EDGAR historical backfill failed", error=str(e))
+        return {"status": "failed", "lane": "backfill", "error": str(e)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.cortellis.sync_deals")
@@ -159,7 +182,10 @@ def sync_cortellis_deals():
         )
 
         sync_service = SyncService(app_config)
-        sync_log = sync_service.incremental_sync(batch_size=30)
+        sync_log = sync_service.incremental_sync(
+            batch_size=30,
+            overlap_days=settings.cortellis_sync_overlap_days,
+        )
 
         result = {
             "status": sync_log.status,

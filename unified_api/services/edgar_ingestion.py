@@ -135,7 +135,7 @@ class EDGARIngestionService:
         self.embed_chunks = settings.edgar_sync_embed if embed_chunks is None else embed_chunks
 
     def ensure_sync_state(self, initial_target: date) -> None:
-        """Create and seed the singleton sync cursor used for zero-result days."""
+        """Create and seed the historical backfill cursor."""
         with self.session_context() as session:
             session.execute(text("""
                 CREATE TABLE IF NOT EXISTS edgar_sync_state (
@@ -148,8 +148,13 @@ class EDGARIngestionService:
                     filings_fetched INTEGER NOT NULL DEFAULT 0,
                     documents_created INTEGER NOT NULL DEFAULT 0,
                     chunks_created INTEGER NOT NULL DEFAULT 0,
-                    error_message TEXT
+                    error_message TEXT,
+                    completed_at TIMESTAMPTZ
                 )
+            """))
+            session.execute(text("""
+                ALTER TABLE edgar_sync_state
+                ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ
             """))
             latest_loaded = session.execute(text("""
                 SELECT MAX(filing_date::date)
@@ -163,6 +168,31 @@ class EDGARIngestionService:
                 VALUES (1, :initial_cursor)
                 ON CONFLICT (id) DO NOTHING
             """), {"initial_cursor": initial_cursor})
+
+    def ensure_recent_sync_state(self) -> None:
+        """Create state for the independent recent-filings ingestion lane."""
+        with self.session_context() as session:
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS edgar_recent_sync_state (
+                    id SMALLINT PRIMARY KEY CHECK (id = 1),
+                    window_start DATE,
+                    window_end DATE,
+                    last_run_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ,
+                    status TEXT NOT NULL DEFAULT 'never',
+                    indexes_checked INTEGER NOT NULL DEFAULT 0,
+                    filings_seen INTEGER NOT NULL DEFAULT 0,
+                    filings_fetched INTEGER NOT NULL DEFAULT 0,
+                    documents_created INTEGER NOT NULL DEFAULT 0,
+                    chunks_created INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT
+                )
+            """))
+            session.execute(text("""
+                INSERT INTO edgar_recent_sync_state (id)
+                VALUES (1)
+                ON CONFLICT (id) DO NOTHING
+            """))
 
     def get_cursor(self) -> date:
         with self.session_context() as session:
@@ -187,11 +217,22 @@ class EDGARIngestionService:
         with self.session_context() as session:
             session.execute(text("""
                 UPDATE edgar_sync_state
-                SET last_run_at = NOW(), status = 'running', indexes_checked = 0,
+                SET last_run_at = NOW(), completed_at = NULL, status = 'running', indexes_checked = 0,
                     filings_seen = 0, filings_fetched = 0, documents_created = 0,
                     chunks_created = 0, error_message = NULL
                 WHERE id = 1
             """))
+
+    def mark_recent_running(self, window: SyncWindow) -> None:
+        with self.session_context() as session:
+            session.execute(text("""
+                UPDATE edgar_recent_sync_state
+                SET window_start = :window_start, window_end = :window_end,
+                    last_run_at = NOW(), completed_at = NULL, status = 'running',
+                    indexes_checked = 0, filings_seen = 0, filings_fetched = 0,
+                    documents_created = 0, chunks_created = 0, error_message = NULL
+                WHERE id = 1
+            """), {"window_start": window.start, "window_end": window.end})
 
     def advance_cursor(self, completed_date: date) -> None:
         with self.session_context() as session:
@@ -206,7 +247,18 @@ class EDGARIngestionService:
                 SET status = :status, indexes_checked = :indexes_checked,
                     filings_seen = :filings_seen, filings_fetched = :filings_fetched,
                     documents_created = :documents_created, chunks_created = :chunks_created,
-                    error_message = :error
+                    error_message = :error, completed_at = NOW()
+                WHERE id = 1
+            """), {**stats, "status": status, "error": error})
+
+    def finish_recent(self, status: str, stats: dict, error: Optional[str] = None) -> None:
+        with self.session_context() as session:
+            session.execute(text("""
+                UPDATE edgar_recent_sync_state
+                SET status = :status, indexes_checked = :indexes_checked,
+                    filings_seen = :filings_seen, filings_fetched = :filings_fetched,
+                    documents_created = :documents_created, chunks_created = :chunks_created,
+                    error_message = :error, completed_at = NOW()
                 WHERE id = 1
             """), {**stats, "status": status, "error": error})
 
@@ -394,22 +446,13 @@ class EDGARIngestionService:
 
         return {"status": "fetched", **totals}
 
-    async def sync_incremental(
+    async def _sync_window(
         self,
-        now: Optional[datetime] = None,
-        batch_days: Optional[int] = None,
-        overlap_days: Optional[int] = None,
-        max_filings: Optional[int] = None,
+        window: SyncWindow,
+        max_filings: int,
+        lane: str,
+        cursor: Optional[date] = None,
     ) -> dict:
-        now = now or datetime.now(timezone.utc)
-        target = now.date() - timedelta(days=1)
-        batch_days = batch_days or settings.edgar_sync_batch_days
-        overlap_days = overlap_days or settings.edgar_sync_overlap_days
-        max_filings = max_filings or settings.edgar_sync_max_filings
-
-        self.ensure_sync_state(target)
-        cursor = self.get_cursor()
-        window = calculate_sync_window(cursor, target, batch_days, overlap_days)
         companies = self.load_tracked_companies()
         stats = {
             "indexes_checked": 0,
@@ -421,11 +464,16 @@ class EDGARIngestionService:
         embedded_chunks = 0
         status = "completed"
         error = None
-        self.mark_running()
+        advance_backfill = lane == "backfill"
+        if advance_backfill:
+            self.mark_running()
+        else:
+            self.mark_recent_running(window)
 
         logger.info(
-            "Starting incremental EDGAR sync",
-            cursor=str(cursor),
+            "Starting EDGAR sync window",
+            lane=lane,
+            cursor=str(cursor) if cursor else None,
             start=str(window.start),
             end=str(window.end),
             tracked_companies=len(companies),
@@ -478,7 +526,8 @@ class EDGARIngestionService:
                         error = f"Per-run filing limit ({max_filings}) reached"
                     break
 
-                self.advance_cursor(current)
+                if advance_backfill:
+                    self.advance_cursor(current)
                 current += timedelta(days=1)
 
             except Exception as exc:
@@ -487,9 +536,13 @@ class EDGARIngestionService:
                 logger.error("EDGAR daily index sync failed", filing_date=str(current), error=error)
                 break
 
-        self.finish(status, stats, error)
+        if advance_backfill:
+            self.finish(status, stats, error)
+        else:
+            self.finish_recent(status, stats, error)
         result = {
             "status": status,
+            "lane": lane,
             "window_start": str(window.start),
             "window_end": str(window.end),
             **stats,
@@ -497,10 +550,52 @@ class EDGARIngestionService:
         }
         if error:
             result["error"] = error
-        logger.info("Incremental EDGAR sync complete", **result)
+        logger.info("EDGAR sync window complete", **result)
         return result
+
+    async def sync_incremental(
+        self,
+        now: Optional[datetime] = None,
+        batch_days: Optional[int] = None,
+        overlap_days: Optional[int] = None,
+        max_filings: Optional[int] = None,
+    ) -> dict:
+        """Advance the bounded historical EDGAR backfill cursor."""
+        now = now or datetime.now(timezone.utc)
+        target = now.date() - timedelta(days=1)
+        batch_days = batch_days or settings.edgar_sync_batch_days
+        overlap_days = overlap_days or settings.edgar_sync_overlap_days
+        max_filings = max_filings or settings.edgar_sync_max_filings
+
+        self.ensure_sync_state(target)
+        cursor = self.get_cursor()
+        window = calculate_sync_window(cursor, target, batch_days, overlap_days)
+        return await self._sync_window(window, max_filings, "backfill", cursor)
+
+    async def sync_recent(
+        self,
+        now: Optional[datetime] = None,
+        recent_days: Optional[int] = None,
+        max_filings: Optional[int] = None,
+    ) -> dict:
+        """Always replay recent SEC indexes, independent of backfill progress."""
+        now = now or datetime.now(timezone.utc)
+        target = now.date() - timedelta(days=1)
+        recent_days = max(1, recent_days or settings.edgar_recent_days)
+        max_filings = max_filings or settings.edgar_recent_max_filings
+        window = SyncWindow(
+            start=target - timedelta(days=recent_days - 1),
+            end=target,
+        )
+        self.ensure_recent_sync_state()
+        return await self._sync_window(window, max_filings, "recent")
 
 
 async def run_edgar_sync(**kwargs) -> dict:
-    """Entrypoint used by Celery and management scripts."""
+    """Backward-compatible entrypoint for the historical backfill lane."""
     return await EDGARIngestionService().sync_incremental(**kwargs)
+
+
+async def run_edgar_recent_sync(**kwargs) -> dict:
+    """Entrypoint for current filings that must not wait behind backfill."""
+    return await EDGARIngestionService().sync_recent(**kwargs)

@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     edgar_sync_batch_days: int = 7
     edgar_sync_overlap_days: int = 3
     edgar_sync_max_filings: int = 250
+    edgar_recent_days: int = 3
+    edgar_recent_max_filings: int = 250
     edgar_sync_embed: bool = True
+    edgar_freshness_warn_hours: int = 48
+    edgar_freshness_critical_hours: int = 96
+    edgar_fulltext_candidate_limit: int = 500
 
     # Neo4j Graph Database
     neo4j_uri: str = "bolt://onebd-neo4j:7687"
@@ -51,6 +56,9 @@ class Settings(BaseSettings):
     cortellis_api_username: str = ""
     cortellis_api_password: str = ""
     cortellis_base_url: str = "https://api.cortellis.com/api-ws/ws/rs"
+    cortellis_sync_overlap_days: int = 2
+    cortellis_freshness_warn_hours: int = 36
+    cortellis_freshness_critical_hours: int = 72
 
     # CORS
     allowed_origins: str = "*"

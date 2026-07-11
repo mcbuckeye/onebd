@@ -4,7 +4,7 @@ import os
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -787,12 +787,14 @@ class SyncService:
             session.expunge(sync_log)
             return sync_log
 
-    def incremental_sync(self, batch_size: int = 30) -> SyncLog:
+    def incremental_sync(self, batch_size: int = 30, overlap_days: int = 2) -> SyncLog:
         """
         Perform an incremental sync of recently updated deals.
 
         Args:
             batch_size: Number of deals to fetch per API call
+            overlap_days: Date overlap used because the API update filter is
+                day-granular. Replayed records are safely upserted.
 
         Returns:
             SyncLog with statistics
@@ -819,8 +821,15 @@ class SyncService:
                 with CortellisClient(self.config.cortellis) as client:
                     # Get updated deal IDs
                     since_date = last_sync.completed_at
-                    logger.info(f"Fetching deals updated since {since_date}...")
-                    updated_ids = list(client.get_updated_deals_since(since_date))
+                    effective_since = since_date - timedelta(days=max(1, overlap_days))
+                    logger.info(
+                        f"Fetching deals updated since {effective_since} "
+                        f"({overlap_days}-day overlap from {since_date})..."
+                    )
+                    updated_ids = list(client.get_updated_deals_since(
+                        since_date,
+                        overlap_days=overlap_days,
+                    ))
                     logger.info(f"Found {len(updated_ids)} updated deals")
 
                     if not updated_ids:

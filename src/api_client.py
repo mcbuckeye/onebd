@@ -4,7 +4,7 @@ import time
 import logging
 from typing import Optional, List, Dict, Any, Iterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -446,7 +446,41 @@ class CortellisClient:
             logger.error(f"Failed to download contract {contract_id}: {e}")
             return False
 
-    def get_updated_deals_since(self, since_date: datetime, query: str = "*") -> Iterator[int]:
+    @staticmethod
+    def build_updated_deals_query(
+        since_date: datetime,
+        query: str = "*",
+        overlap_days: int = 2,
+    ) -> str:
+        """Build a date-safe incremental query.
+
+        The Deals API filter is day-granular while local sync timestamps include
+        a time. Replaying a short overlap prevents same-day updates from being
+        skipped when the strict ``RANGE(>date)`` filter advances at midnight.
+        Transformations are upserts, so replayed deal IDs are safe.
+        """
+        cutoff = since_date - timedelta(days=max(1, overlap_days))
+        update_query = f"dealDateUpdate:RANGE(>{cutoff:%Y-%m-%d})"
+        if query and query != "*":
+            return f"({query}) AND ({update_query})"
+        return update_query
+
+    def count_updated_deals_since(
+        self,
+        since_date: datetime,
+        query: str = "*",
+        overlap_days: int = 2,
+    ) -> int:
+        """Return the API count for an incremental window without fetching records."""
+        full_query = self.build_updated_deals_query(since_date, query, overlap_days)
+        return self.search_deals(query=full_query, offset=0, hits=1).total_results
+
+    def get_updated_deals_since(
+        self,
+        since_date: datetime,
+        query: str = "*",
+        overlap_days: int = 2,
+    ) -> Iterator[int]:
         """
         Get deal IDs updated since a specific date.
 
@@ -457,12 +491,5 @@ class CortellisClient:
         Yields:
             Deal IDs that have been updated
         """
-        date_str = since_date.strftime("%Y-%m-%d")
-        update_query = f"dealDateUpdate:RANGE(>{date_str})"
-
-        if query and query != "*":
-            full_query = f"({query}) AND ({update_query})"
-        else:
-            full_query = update_query
-
+        full_query = self.build_updated_deals_query(since_date, query, overlap_days)
         yield from self.get_all_deal_ids(full_query)

@@ -148,6 +148,9 @@ class MemoryIngestionService(EDGARIngestionService):
     def ensure_sync_state(self, initial_target):
         pass
 
+    def ensure_recent_sync_state(self):
+        pass
+
     def get_cursor(self):
         return self.cursor
 
@@ -157,10 +160,16 @@ class MemoryIngestionService(EDGARIngestionService):
     def mark_running(self):
         pass
 
+    def mark_recent_running(self, window):
+        self.recent_window = window
+
     def advance_cursor(self, completed_date):
         self.advanced.append(completed_date)
 
     def finish(self, status, stats, error=None):
+        self.finished = (status, stats, error)
+
+    def finish_recent(self, status, stats, error=None):
         self.finished = (status, stats, error)
 
     def filing_is_known(self, accession_number, form):
@@ -195,12 +204,46 @@ async def test_incremental_sync_filters_companies_and_advances_empty_days():
     assert service.advanced == [date(2026, 7, 9), date(2026, 7, 10)]
 
 
+@pytest.mark.asyncio
+async def test_recent_sync_ignores_backfill_cursor_and_does_not_advance_it():
+    filing_date = date(2026, 7, 10)
+    filings = parse_master_index(MASTER_INDEX)
+    service = MemoryIngestionService(
+        FakeClient({filing_date: filings}),
+        cursor=date(2025, 11, 23),
+    )
+
+    result = await service.sync_recent(
+        now=datetime(2026, 7, 11, tzinfo=timezone.utc),
+        recent_days=3,
+        max_filings=10,
+    )
+
+    assert result["lane"] == "recent"
+    assert result["window_start"] == "2026-07-08"
+    assert result["window_end"] == "2026-07-10"
+    assert result["filings_fetched"] == 1
+    assert service.processed == [("0000320193-26-000050", 42)]
+    assert service.advanced == []
+
+
 def test_celery_task_runs_ingestion_service():
     expected = {"status": "completed", "filings_fetched": 3}
     with patch(
-        "unified_api.services.edgar_ingestion.run_edgar_sync",
+        "unified_api.services.edgar_ingestion.run_edgar_recent_sync",
         new=AsyncMock(return_value=expected),
     ):
         from unified_api.workers.celery_app import fetch_new_filings
 
         assert fetch_new_filings.run() == expected
+
+
+def test_celery_backfill_task_runs_backfill_service():
+    expected = {"status": "completed", "lane": "backfill", "filings_fetched": 3}
+    with patch(
+        "unified_api.services.edgar_ingestion.run_edgar_sync",
+        new=AsyncMock(return_value=expected),
+    ):
+        from unified_api.workers.celery_app import backfill_edgar_filings
+
+        assert backfill_edgar_filings.run() == expected

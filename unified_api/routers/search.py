@@ -6,6 +6,8 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 import structlog
 
+from unified_api.config import settings
+
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
@@ -572,24 +574,40 @@ async def unified_search(
                 if mode == "fulltext":
                     # Query source database tables directly (has the GIN index)
                     edgar_result = session.execute(text("""
+                        WITH candidates AS MATERIALIZED (
+                            SELECT
+                                c.id AS chunk_id,
+                                c.document_id,
+                                c.text AS content,
+                                to_tsvector('english', c.text) AS search_vector,
+                                d.doc_type,
+                                d.accession_no,
+                                r.filing_date,
+                                e.name AS company_name,
+                                e.ticker
+                            FROM chunks c
+                            JOIN documents d ON c.document_id = d.id
+                            JOIN raw_documents r ON d.raw_document_id = r.id
+                            JOIN companies e ON r.company_id = e.id
+                            WHERE to_tsvector('english', c.text) @@
+                                  plainto_tsquery('english', :query)
+                            LIMIT :candidate_limit
+                        )
                         SELECT
-                            c.id as chunk_id,
-                            c.document_id,
-                            c.text as content,
-                            ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', :query)) as score,
-                            d.doc_type,
-                            d.accession_no,
-                            r.filing_date,
-                            e.name as company_name,
-                            e.ticker
-                        FROM chunks c
-                        JOIN documents d ON c.document_id = d.id
-                        JOIN raw_documents r ON d.raw_document_id = r.id
-                        JOIN companies e ON r.company_id = e.id
-                        WHERE to_tsvector('english', c.text) @@ plainto_tsquery('english', :query)
+                            chunk_id, document_id, content,
+                            ts_rank(search_vector, plainto_tsquery('english', :query)) AS score,
+                            doc_type, accession_no, filing_date, company_name, ticker
+                        FROM candidates
                         ORDER BY score DESC
                         LIMIT :limit
-                    """), {"query": query, "limit": per_source_limit})
+                    """), {
+                        "query": query,
+                        "limit": per_source_limit,
+                        "candidate_limit": max(
+                            per_source_limit,
+                            settings.edgar_fulltext_candidate_limit,
+                        ),
+                    })
 
                     for row in edgar_result:
                         results.append(UnifiedSearchResult(

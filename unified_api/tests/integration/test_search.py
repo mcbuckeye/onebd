@@ -126,15 +126,21 @@ class TestEdgarFilingSearch:
         query = "material contract"
 
         result = edgar_source_session.execute(text("""
+            WITH candidates AS MATERIALIZED (
+                SELECT c.id, c.document_id, c.text,
+                       to_tsvector('english', c.text) AS search_vector
+                FROM chunks c
+                WHERE to_tsvector('english', c.text) @@
+                      plainto_tsquery('english', :query)
+                LIMIT 500
+            )
             SELECT
-                c.id,
-                c.document_id,
-                c.text,
-                ts_rank(to_tsvector('english', c.text),
+                id,
+                document_id,
+                text,
+                ts_rank(search_vector,
                         plainto_tsquery('english', :query)) as score
-            FROM chunks c
-            WHERE to_tsvector('english', c.text) @@
-                  plainto_tsquery('english', :query)
+            FROM candidates
             ORDER BY score DESC
             LIMIT 10
         """), {"query": query})

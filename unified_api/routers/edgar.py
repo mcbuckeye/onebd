@@ -8,6 +8,8 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 import structlog
 
+from unified_api.config import settings
+
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
@@ -334,7 +336,11 @@ async def search_edgar_filings(
         if mode == "fulltext":
             # Build conditions
             conditions = ["to_tsvector('english', c.text) @@ plainto_tsquery('english', :query)"]
-            params = {"query": query, "limit": limit}
+            params = {
+                "query": query,
+                "limit": limit,
+                "candidate_limit": max(limit, settings.edgar_fulltext_candidate_limit),
+            }
 
             if doc_type:
                 conditions.append("d.doc_type = :doc_type")
@@ -348,22 +354,30 @@ async def search_edgar_filings(
 
             # Query source database tables (chunks, documents, raw_documents, companies)
             result = session.execute(text(f"""
+                WITH candidates AS MATERIALIZED (
+                    SELECT
+                        c.id AS chunk_id,
+                        c.document_id,
+                        c.section,
+                        c.text,
+                        to_tsvector('english', c.text) AS search_vector,
+                        d.doc_type,
+                        d.accession_no,
+                        r.filing_date,
+                        e.name AS company_name,
+                        e.ticker
+                    FROM chunks c
+                    JOIN documents d ON c.document_id = d.id
+                    JOIN raw_documents r ON d.raw_document_id = r.id
+                    JOIN companies e ON r.company_id = e.id
+                    WHERE {where_clause}
+                    LIMIT :candidate_limit
+                )
                 SELECT
-                    c.id as chunk_id,
-                    c.document_id,
-                    c.section,
-                    c.text,
-                    ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', :query)) as score,
-                    d.doc_type,
-                    d.accession_no,
-                    r.filing_date,
-                    e.name as company_name,
-                    e.ticker
-                FROM chunks c
-                JOIN documents d ON c.document_id = d.id
-                JOIN raw_documents r ON d.raw_document_id = r.id
-                JOIN companies e ON r.company_id = e.id
-                WHERE {where_clause}
+                    chunk_id, document_id, section, text,
+                    ts_rank(search_vector, plainto_tsquery('english', :query)) AS score,
+                    doc_type, accession_no, filing_date, company_name, ticker
+                FROM candidates
                 ORDER BY score DESC
                 LIMIT :limit
             """), params)
