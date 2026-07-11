@@ -4,7 +4,7 @@
 
 **Assessment baseline:** `onebd.pchomelab.com`, commit `47cd680`
 
-**Verified remediation:** commits `91e59ad` and `314efda`, deployed 2026-07-11
+**Verified remediation:** through commit `4d5bdea`, deployed 2026-07-11
 
 **Status:** All 65 questions are versioned and executable. Five are blocking,
 deterministic production regressions; 60 are catalog probes whose numerical or
@@ -107,7 +107,25 @@ All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
 
 The scorecard incorporates the directly justified rating changes below. A passing
 refusal improves safety but does not make an unavailable analytical capability
-Strong, and the remaining 60 questions still need executable production fixtures.
+Strong, and the remaining 60 questions still need deterministic, question-specific
+truth assertions.
+
+## 2026-07-11 Priority Sprint Verification
+
+- The versioned evaluation file contains exactly 65 executable cases: five
+  deterministic regression cases and 60 catalog probes.
+- The GitHub quality gate passed backend, frontend, and Compose jobs; all three
+  checks are now required on `main` before normal merges.
+- The final database-attached production-image suite passed all 329 tests.
+- Frontend production build and `npm audit` pass with zero vulnerabilities.
+- Entity enrichment created 2,890 aliases across all 1,648 xrefs and raised the
+  high-confidence share from 19.5% to 48.9% without merging fuzzy affiliates.
+- The 3.35M-row EDGAR vector index is valid, occupies 26 GB, and is selected by
+  PostgreSQL for cosine-nearest-neighbor queries.
+- A bounded EDGAR catch-up advanced the cursor seven days to 2025-11-30, adding
+  139 filings, 275 documents, and 3,653 chunks without error.
+- The five blocking production regressions pass on the final deployment, including
+  canonical Pfizer count provenance and evidence-status assertions.
 
 ---
 

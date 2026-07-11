@@ -16,6 +16,8 @@ and fast retrieval before adding more external data volume.
    - [x] A separate resumable cursor advances the historical backlog.
    - [x] Both lanes remain idempotent and safe when their windows overlap.
    - [ ] Run bounded catch-up jobs until the historical cursor reaches current data.
+         A verified manual run advanced 2025-11-23 through 2025-11-30 and added
+         139 filings, 275 documents, and 3,653 chunks without error.
 
 3. **Add unified source-sync monitoring and alerts**
    - [ ] Report the last attempt, last success, status, cursor, source-data date,
@@ -45,10 +47,13 @@ and fast retrieval before adding more external data volume.
    - [x] Fix the existing agentic-RAG test failures.
    - [x] Add a GitHub Actions quality gate for the 65-case catalog, unit tests,
          critical lint, frontend build/audit, and Compose validation.
-   - [ ] Make Dokploy wait for the GitHub quality gate before auto-deploying.
+   - [x] Protect `main` with required `backend`, `frontend`, and `compose` checks;
+         Dokploy only receives normal merged commits after those checks pass.
 
 7. **Improve canonical company and asset identity resolution**
    - [x] Promote cross-source normalized-exact legal names and seed alias records.
+         Production now has 2,890 aliases across all 1,648 xrefs and 48.9%
+         high-confidence matches (up from 19.5%).
    - [x] Add a provenance-aware parent/subsidiary relationship model without
          silently rolling subsidiaries into parents.
    - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
