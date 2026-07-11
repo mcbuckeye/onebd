@@ -72,3 +72,164 @@ jobs:
         run: >-
           python -m unified_api.scripts.evaluate_questions
           --base-url "$BASE_URL" --tier regression
+      - name: Enforce deployed EDGAR search latency budgets
+        run: >-
+          python -m unified_api.scripts.benchmark_edgar_search
+          --base-url "$BASE_URL" --runs 3
+
+  rollback:
+    name: Roll back a failed production deployment
+    needs: verify
+    if: >-
+      always() &&
+      needs.verify.result == 'failure' &&
+      github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      actions: write
+      contents: write
+    env:
+      BASE_URL: https://onebd.pchomelab.com
+      FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create a revert commit from the failed main revision
+        id: revert
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          current_sha="$(git rev-parse origin/main)"
+          if [[ "$current_sha" != "$FAILED_SHA" ]]; then
+            echo "Main advanced from $FAILED_SHA to $current_sha; refusing to revert newer work."
+            exit 1
+          fi
+
+          rollback_branch="automated-rollback-${FAILED_SHA:0:12}-${GITHUB_RUN_ID}"
+          git switch --create "$rollback_branch" origin/main
+          git config user.name "onebd-production-rollback[bot]"
+          git config user.email "onebd-production-rollback[bot]@users.noreply.github.com"
+
+          parent_count="$(git rev-list --parents -n 1 "$FAILED_SHA" | awk '{print NF - 1}')"
+          if [[ "$parent_count" -gt 1 ]]; then
+            git revert --mainline 1 --no-edit "$FAILED_SHA"
+          else
+            git revert --no-edit "$FAILED_SHA"
+          fi
+
+          rollback_sha="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/$rollback_branch"
+          echo "branch=$rollback_branch" >> "$GITHUB_OUTPUT"
+          echo "sha=$rollback_sha" >> "$GITHUB_OUTPUT"
+          echo "Created rollback $rollback_sha for failed deployment $FAILED_SHA"
+
+      - name: Run the protected pre-deployment gate on the rollback
+        env:
+          ROLLBACK_BRANCH: ${{ steps.revert.outputs.branch }}
+          ROLLBACK_SHA: ${{ steps.revert.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run pre-deployment.yml --ref "$ROLLBACK_BRANCH"
+
+          required=(backend frontend compose)
+          for attempt in $(seq 1 120); do
+            checks="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$ROLLBACK_SHA/check-runs?per_page=100")"
+            pending=0
+            for name in "${required[@]}"; do
+              conclusion="$(jq -r --arg name "$name" \
+                '[.check_runs[] | select(.name == $name)] | sort_by(.started_at) | last | .conclusion // "pending"' \
+                <<<"$checks")"
+              echo "$name: $conclusion"
+              case "$conclusion" in
+                success) ;;
+                pending|neutral) pending=1 ;;
+                *) echo "Rollback quality gate failed in $name ($conclusion)"; exit 1 ;;
+              esac
+            done
+            if [[ "$pending" -eq 0 ]]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for rollback quality checks"
+          exit 1
+
+      - name: Fast-forward protected main to the verified rollback
+        env:
+          ROLLBACK_SHA: ${{ steps.revert.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          current_sha="$(git rev-parse origin/main)"
+          if [[ "$current_sha" != "$FAILED_SHA" ]]; then
+            echo "Main advanced from $FAILED_SHA to $current_sha; refusing to overwrite newer work."
+            exit 1
+          fi
+          git push origin "$ROLLBACK_SHA:refs/heads/main"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Dokploy redeployed the rollback
+        env:
+          EXPECTED_SHA: ${{ steps.revert.outputs.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          url = os.environ["BASE_URL"] + "/api/health"
+          expected = os.environ["EXPECTED_SHA"]
+          last = None
+          for attempt in range(90):
+              try:
+                  request = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": "OneBD-Rollback-Verifier/1.0 admin@pchomelab.com",
+                          "Accept": "application/json",
+                      },
+                  )
+                  with urllib.request.urlopen(request, timeout=15) as response:
+                      last = json.load(response)
+                  if last.get("status") == "healthy" and last.get("commit") == expected:
+                      print(f"Dokploy is serving rollback {expected}")
+                      break
+              except Exception as exc:
+                  last = {"error": str(exc)}
+              print(f"Waiting for rollback deployment ({attempt + 1}/90): {last}")
+              time.sleep(10)
+          else:
+              raise SystemExit(
+                  f"Dokploy did not serve healthy rollback {expected}; last response={last}"
+              )
+          PY
+
+      - run: pip install httpx==0.28.1 PyYAML==6.0.3
+      - name: Re-run production regressions on the rollback
+        run: >-
+          python -m unified_api.scripts.evaluate_questions
+          --base-url "$BASE_URL" --tier regression
+      - name: Re-run EDGAR latency budgets on the rollback
+        run: >-
+          python -m unified_api.scripts.benchmark_edgar_search
+          --base-url "$BASE_URL" --runs 3
+
+      - name: Remove the temporary rollback branch
+        if: success()
+        env:
+          ROLLBACK_BRANCH: ${{ steps.revert.outputs.branch }}
+        run: git push origin --delete "$ROLLBACK_BRANCH"

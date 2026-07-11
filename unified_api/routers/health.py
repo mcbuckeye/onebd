@@ -392,6 +392,29 @@ async def data_health_check():
                     sources["last_sync_time"] = last_success
             except Exception:
                 pass
+
+            # Common operational state includes advisory retry timing and the
+            # last alert transition for every instrumented source job.
+            if session.execute(text(
+                "SELECT to_regclass('public.source_job_state')"
+            )).scalar():
+                sources["source_jobs"] = [dict(row) for row in session.execute(text("""
+                    SELECT source_key, label, status, last_started_at,
+                           last_completed_at, last_success_at,
+                           consecutive_failures, retry_count, next_retry_at,
+                           last_error, alert_status, updated_at
+                    FROM source_job_state
+                    ORDER BY source_key
+                """)).mappings().all()]
+                sources["source_job_notifications"] = [
+                    dict(row) for row in session.execute(text("""
+                        SELECT id, source_key, event_type, severity, detail,
+                               created_at, delivered_at, delivery_error
+                        FROM source_job_notifications
+                        ORDER BY created_at DESC
+                        LIMIT 20
+                    """)).mappings().all()
+                ]
     except Exception as e:
         sources["cortellis_deals"] = {"error": str(e)}
         sources["companies"] = {"error": str(e)}
@@ -535,6 +558,28 @@ async def data_health_check():
                 "status": "critical",
                 "detail": "sync state unavailable",
             })
+
+    graph_state = next(
+        (
+            state for state in sources.get("source_jobs", [])
+            if state["source_key"] == "neo4j"
+        ),
+        None,
+    )
+    if graph_state:
+        from unified_api.services.source_monitoring import (
+            SOURCE_POLICIES,
+            classify_source_job,
+        )
+
+        severity, detail = classify_source_job(
+            graph_state, SOURCE_POLICIES["neo4j"]
+        )
+        sync_checks.append({
+            "name": "Neo4j Graph Sync",
+            "status": severity,
+            "detail": detail,
+        })
 
     health["checks"].extend(sync_checks)
     degraded = any(check["status"] in {"warning", "critical"} for check in sync_checks)

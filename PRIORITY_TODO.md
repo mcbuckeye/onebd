@@ -11,7 +11,9 @@ and fast retrieval before adding more external data volume.
    - [x] Health checks pass and the deployed SHA is visible from the API image.
    - [x] A post-Dokploy GitHub workflow waits for the expected SHA and visibly
          fails if deployment health or the five production regressions fail.
-   - [ ] Add automated rollback after a failed post-deployment gate.
+   - [x] Add a concurrency-safe automated revert after a failed production gate;
+         the revert passes the protected pre-deploy checks, redeploys through the
+         existing GitHub/Dokploy integration, and is verified in production.
 
 2. **Separate current EDGAR ingestion from historical backfill**
    - [x] A recent-data lane always processes the latest SEC business days.
@@ -24,13 +26,19 @@ and fast retrieval before adding more external data volume.
          cursor throughput, filings/hour, remaining runs, and estimated catch-up.
 
 3. **Add unified source-sync monitoring and alerts**
-   - [ ] Report the last attempt, last success, status, cursor, source-data date,
-         lag, duration, counts, retry state, and error for each source.
+   - [x] Persist a common last-attempt, last-success, status, exponential retry
+         advisory, consecutive-failure, error, and alert-transition model for
+         Cortellis, both EDGAR lanes, and Neo4j graph syncs.
+   - [ ] Standardize cursor, source-data date, lag, duration, and count fields in
+         the common payload; the source-specific health records already expose
+         these fields for Cortellis and both EDGAR lanes.
    - [x] Report those fields plus throughput and ETA for both EDGAR lanes; retry
          state still needs a common model across Cortellis and graph syncs.
    - [x] Mark `/api/health/data` degraded when a source exceeds its lag budget.
    - [x] Treat partial source runs as degraded even when their timestamp is fresh.
-   - [ ] Add notifications for failed or stale Cortellis, EDGAR, and graph jobs.
+   - [x] Add deduplicated warning/critical/recovery events for failed or stale
+         Cortellis, EDGAR, and graph jobs, with optional webhook/email delivery
+         and durable in-app history when no delivery channel is configured.
 
 4. **Verify and harden Cortellis incremental synchronization**
    - [x] Compare the API's newest modified deals with the local watermark.
@@ -50,7 +58,8 @@ and fast retrieval before adding more external data volume.
    - [x] Remove the unused duplicate 994 MB GIN index concurrently after proving
          equivalence and retaining the index selected by PostgreSQL.
    - [x] Add a deployable HTTP latency smoke budget for common and filtered terms.
-   - [ ] Add latency-oriented integration coverage for common and filtered queries.
+   - [x] Enforce common and filtered EDGAR HTTP latency budgets after every
+         production deployment and again after any automated rollback.
 
 6. **Make builds reproducible and establish CI deployment gates**
    - [x] Pin direct Python dependencies and API/frontend container base images.

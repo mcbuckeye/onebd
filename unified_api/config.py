@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     neo4j_uri: str = "bolt://onebd-neo4j:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "bdplatform123"
+    graph_freshness_warn_hours: int = 36
+    graph_freshness_critical_hours: int = 72
+
+    # Optional operations notification channels. State transitions are always
+    # persisted even when neither delivery channel is configured.
+    source_health_webhook_url: str = ""
+    source_health_alert_email: str = ""
 
     # Redis
     redis_url: str = "redis://onebd-redis:6379/0"
