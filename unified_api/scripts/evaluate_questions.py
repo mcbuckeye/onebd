@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import date, datetime
 from decimal import Decimal
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -74,6 +75,37 @@ def _json_value(value: Any) -> Any:
     return value
 
 
+def _comparison_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    if isinstance(value, str) and re.fullmatch(
+        r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?",
+        value,
+    ):
+        return float(value)
+    return None
+
+
+def truth_values_equal(actual: Any, expected: Any) -> bool:
+    """Compare JSON/SQL values while tolerating transport numeric encoding."""
+    actual_number = _comparison_number(actual)
+    expected_number = _comparison_number(expected)
+    if actual_number is not None and expected_number is not None:
+        return math.isclose(actual_number, expected_number, rel_tol=1e-12, abs_tol=1e-9)
+    if isinstance(actual, list) and isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            truth_values_equal(left, right)
+            for left, right in zip(actual, expected)
+        )
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(
+            truth_values_equal(actual[key], expected[key]) for key in actual
+        )
+    return actual == expected
+
+
 def evaluate_truth_assertion(
     payload: Any,
     truth_payload: dict,
@@ -85,12 +117,12 @@ def evaluate_truth_assertion(
     kind = assertion["type"]
 
     if kind == "equals":
-        passed = actual == expected
+        passed = truth_values_equal(actual, expected)
     elif kind == "rows_equal":
         fields = assertion["fields"]
         actual = [{field: row.get(field) for field in fields} for row in actual]
         expected = [{field: row.get(field) for field in fields} for row in expected]
-        passed = actual == expected
+        passed = truth_values_equal(actual, expected)
     else:
         raise ValueError(f"Unknown truth assertion type: {kind}")
 
