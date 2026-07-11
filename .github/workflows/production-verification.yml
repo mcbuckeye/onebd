@@ -97,6 +97,7 @@ jobs:
     permissions:
       actions: write
       contents: write
+      pull-requests: write
     env:
       BASE_URL: https://onebd.pchomelab.com
       FAILED_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -137,6 +138,21 @@ jobs:
           echo "sha=$rollback_sha" >> "$GITHUB_OUTPUT"
           echo "Created rollback $rollback_sha for failed deployment $FAILED_SHA"
 
+      - name: Open a protected rollback pull request
+        id: rollback_pr
+        env:
+          ROLLBACK_BRANCH: ${{ steps.revert.outputs.branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_url="$(gh pr create \
+            --base main \
+            --head "$ROLLBACK_BRANCH" \
+            --title "Automated rollback of ${FAILED_SHA:0:12}" \
+            --body "Generated after production verification failed for $FAILED_SHA. This revert must pass the protected quality gate before merge.")"
+          echo "number=${pr_url##*/}" >> "$GITHUB_OUTPUT"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
       - name: Run the protected pre-deployment gate on the rollback
         env:
           ROLLBACK_BRANCH: ${{ steps.revert.outputs.branch }}
@@ -171,8 +187,10 @@ jobs:
           echo "Timed out waiting for rollback quality checks"
           exit 1
 
-      - name: Fast-forward protected main to the verified rollback
+      - name: Merge the verified rollback through protected main
+        id: promote
         env:
+          ROLLBACK_PR: ${{ steps.rollback_pr.outputs.number }}
           ROLLBACK_SHA: ${{ steps.revert.outputs.sha }}
         shell: bash
         run: |
@@ -183,7 +201,14 @@ jobs:
             echo "Main advanced from $FAILED_SHA to $current_sha; refusing to overwrite newer work."
             exit 1
           fi
-          git push origin "$ROLLBACK_SHA:refs/heads/main"
+          gh pr merge "$ROLLBACK_PR" --merge --delete-branch
+          git fetch origin main
+          deployment_sha="$(git rev-parse origin/main)"
+          if ! git merge-base --is-ancestor "$ROLLBACK_SHA" "$deployment_sha"; then
+            echo "Merged main $deployment_sha does not contain rollback $ROLLBACK_SHA"
+            exit 1
+          fi
+          echo "sha=$deployment_sha" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         with:
@@ -191,7 +216,7 @@ jobs:
 
       - name: Verify Dokploy redeployed the rollback
         env:
-          EXPECTED_SHA: ${{ steps.revert.outputs.sha }}
+          EXPECTED_SHA: ${{ steps.promote.outputs.sha }}
         run: |
           python - <<'PY'
           import json
@@ -235,9 +260,3 @@ jobs:
         run: >-
           python -m unified_api.scripts.benchmark_edgar_search
           --base-url "$BASE_URL" --runs 3
-
-      - name: Remove the temporary rollback branch
-        if: success()
-        env:
-          ROLLBACK_BRANCH: ${{ steps.revert.outputs.branch }}
-        run: git push origin --delete "$ROLLBACK_BRANCH"
