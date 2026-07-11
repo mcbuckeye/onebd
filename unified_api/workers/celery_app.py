@@ -309,13 +309,18 @@ def link_deals_to_filings():
 
         with get_cortellis_session() as csession:
             xrefs = csession.execute(text("""
-                SELECT cortellis_id, cik
+                SELECT cortellis_id, edgar_company_id, cik
                 FROM company_xref
-                WHERE cik IS NOT NULL AND cik <> ''
+                WHERE edgar_company_id IS NOT NULL
+                   OR (cik IS NOT NULL AND cik <> '')
             """)).fetchall()
-            # Map cortellis_id -> edgar_company_id via CIK
+            # Prefer the reviewed durable cross-reference; use CIK only as a
+            # backwards-compatible fallback for older xref rows.
             xref_map = {}
             for row in xrefs:
+                if row.edgar_company_id is not None:
+                    xref_map[row.cortellis_id] = row.edgar_company_id
+                    continue
                 cik_normalized = row.cik.lstrip('0') if row.cik else None
                 if cik_normalized and cik_normalized in edgar_cik_map:
                     xref_map[row.cortellis_id] = edgar_cik_map[cik_normalized]
@@ -344,86 +349,106 @@ def link_deals_to_filings():
             """))
             csession.commit()
 
-            # Get existing links to avoid duplicates
-            existing = csession.execute(text("SELECT deal_id, edgar_document_id FROM deal_filing_links")).fetchall()
-            existing_pairs = {(r.deal_id, r.edgar_document_id) for r in existing}
-            logger.info(f"Found {len(existing_pairs)} existing links")
-
             # Get deals with cross-referenced companies and dates
             cortellis_ids = list(xref_map.keys())
-            # Process in chunks
+            insert_links = text("""
+                INSERT INTO deal_filing_links (
+                    deal_id, edgar_document_id, edgar_company_id,
+                    match_type, date_distance_days, confidence
+                ) VALUES (
+                    :deal_id, :doc_id, :edgar_company_id,
+                    :match_type, :days_diff, :confidence
+                )
+                ON CONFLICT (deal_id, edgar_document_id) DO NOTHING
+            """)
+            filings_loaded = 0
+            query_batches = 0
+            from unified_api.services.deal_filing_linker import (
+                build_bulk_deal_filing_links,
+            )
+
+            # Each batch performs one Cortellis deal query, one EDGAR filing
+            # query, and one existing-link query. The previous implementation
+            # opened an EDGAR session and ran a query for every deal.
             for chunk_start in range(0, len(cortellis_ids), 500):
                 chunk_ids = cortellis_ids[chunk_start:chunk_start + 500]
-                placeholders = ",".join(str(cid) for cid in chunk_ids)
-
-                deals = csession.execute(text(f"""
+                deals = csession.execute(text("""
                     SELECT d.id as deal_id, dc.company_id as cortellis_company_id,
-                           d.date_start, d.date_event_most_recent
+                           d.date_start
                     FROM deals d
                     JOIN deal_companies dc ON dc.deal_id = d.id
-                    WHERE dc.company_id IN ({placeholders})
+                    WHERE dc.company_id = ANY(:company_ids)
                       AND d.date_start IS NOT NULL
                     ORDER BY d.date_start DESC
-                """)).fetchall()
+                """), {"company_ids": chunk_ids}).mappings().all()
 
                 deals_checked += len(deals)
-
-                # For each deal, find matching filings by company + date window
-                for deal in deals:
-                    edgar_company_id = xref_map.get(deal.cortellis_company_id)
-                    if not edgar_company_id:
-                        continue
-
-                    deal_date = deal.date_start
-
-                    # Search Edgar for filings by this company within ±30 days
-                    with get_edgar_source_session() as esession:
-                        filings = esession.execute(text("""
-                            SELECT d.id as doc_id, d.doc_type, d.title, d.published_at,
-                                   rd.filing_date,
-                                   ABS(EXTRACT(EPOCH FROM (rd.filing_date - :deal_date)) / 86400)::int as days_diff
+                if not deals:
+                    continue
+                deal_ids = list({int(deal["deal_id"]) for deal in deals})
+                existing = csession.execute(text("""
+                    SELECT deal_id, edgar_document_id
+                    FROM deal_filing_links
+                    WHERE deal_id = ANY(:deal_ids)
+                """), {"deal_ids": deal_ids}).all()
+                existing_pairs = {(row.deal_id, row.edgar_document_id) for row in existing}
+                edgar_company_ids = list({
+                    xref_map[int(deal["cortellis_company_id"])] for deal in deals
+                })
+                min_date = min(deal["date_start"] for deal in deals)
+                max_date = max(deal["date_start"] for deal in deals)
+                with get_edgar_source_session() as esession:
+                    filings = esession.execute(text("""
+                            SELECT d.id AS doc_id, d.doc_type,
+                                   rd.company_id AS edgar_company_id,
+                                   rd.filing_date
                             FROM documents d
                             JOIN raw_documents rd ON rd.id = d.raw_document_id
-                            WHERE rd.company_id = :edgar_company_id
-                              AND rd.filing_date BETWEEN :deal_date - INTERVAL '30 days'
-                                                     AND :deal_date + INTERVAL '30 days'
+                            WHERE rd.company_id = ANY(:company_ids)
+                              AND rd.filing_date BETWEEN :min_date - INTERVAL '30 days'
+                                                     AND :max_date + INTERVAL '30 days'
                               AND d.parse_ok = true
-                            ORDER BY ABS(EXTRACT(EPOCH FROM (rd.filing_date - :deal_date)))
-                            LIMIT 10
                         """), {
-                            "edgar_company_id": edgar_company_id,
-                            "deal_date": deal_date,
-                        }).fetchall()
+                            "company_ids": edgar_company_ids,
+                            "min_date": min_date,
+                            "max_date": max_date,
+                        }).mappings().all()
 
-                        for filing in filings:
-                            if (deal.deal_id, filing.doc_id) in existing_pairs:
-                                continue
-
-                            # Compute confidence based on date distance
-                            days_diff = filing.days_diff or 30
-                            confidence = max(0.3, 1.0 - (days_diff / 30.0) * 0.5)
-
-                            csession.execute(text("""
-                                INSERT INTO deal_filing_links
-                                    (deal_id, edgar_document_id, edgar_company_id, match_type, date_distance_days, confidence)
-                                VALUES (:deal_id, :doc_id, :edgar_company_id, :match_type, :days_diff, :confidence)
-                                ON CONFLICT (deal_id, edgar_document_id) DO NOTHING
-                            """), {
-                                "deal_id": deal.deal_id,
-                                "doc_id": filing.doc_id,
-                                "edgar_company_id": edgar_company_id,
-                                "match_type": f"company_date_{filing.doc_type}",
-                                "days_diff": days_diff,
-                                "confidence": confidence,
-                            })
-                            links_created += 1
-                            existing_pairs.add((deal.deal_id, filing.doc_id))
+                query_batches += 1
+                filings_loaded += len(filings)
+                links = build_bulk_deal_filing_links(
+                    deals,
+                    filings,
+                    xref_map,
+                    existing_pairs=existing_pairs,
+                )
+                for start in range(0, len(links), 5000):
+                    result = csession.execute(insert_links, links[start:start + 5000])
+                    links_created += max(0, result.rowcount or 0)
 
                 csession.commit()
-                logger.info(f"Processed {deals_checked} deals, {links_created} links so far")
+                logger.info(
+                    "Bulk deal-filing link progress",
+                    deals_checked=deals_checked,
+                    filings_loaded=filings_loaded,
+                    links_created=links_created,
+                    query_batches=query_batches,
+                )
 
-        logger.info("Deal-filing linking complete", links_created=links_created, deals_checked=deals_checked)
-        return {"status": "completed", "links_created": links_created, "deals_checked": deals_checked}
+        logger.info(
+            "Deal-filing linking complete",
+            links_created=links_created,
+            deals_checked=deals_checked,
+            filings_loaded=filings_loaded,
+            query_batches=query_batches,
+        )
+        return {
+            "status": "completed",
+            "links_created": links_created,
+            "deals_checked": deals_checked,
+            "filings_loaded": filings_loaded,
+            "query_batches": query_batches,
+        }
 
     except Exception as e:
         logger.error("Deal-filing linking failed", error=str(e))

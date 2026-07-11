@@ -86,7 +86,8 @@ and fast retrieval before adding more external data volume.
          candidates for all drugs without treating organization suffixes as aliases.
    - [x] Store match evidence, confidence, method, review status, reviewer, and
          source reference for company aliases/identifiers, ownership, and drugs.
-   - [ ] Replace nested cross-database linking loops with bulk operations.
+   - [x] Replace the per-deal EDGAR session/query loop with bounded bulk queries,
+         an indexed in-memory date join, and batched idempotent inserts.
 
 8. **Add ClinicalTrials.gov/AACT as the first new external source**
    - [ ] Link trials to existing companies, assets, indications, and targets.
