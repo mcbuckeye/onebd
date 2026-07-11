@@ -18,11 +18,16 @@ and fast retrieval before adding more external data volume.
    - [ ] Run bounded catch-up jobs until the historical cursor reaches current data.
          A verified manual run advanced 2025-11-23 through 2025-11-30 and added
          139 filings, 275 documents, and 3,653 chunks without error.
+   - [x] Persist append-only recent/backfill run history and report observed
+         cursor throughput, filings/hour, remaining runs, and estimated catch-up.
 
 3. **Add unified source-sync monitoring and alerts**
    - [ ] Report the last attempt, last success, status, cursor, source-data date,
          lag, duration, counts, retry state, and error for each source.
+   - [x] Report those fields plus throughput and ETA for both EDGAR lanes; retry
+         state still needs a common model across Cortellis and graph syncs.
    - [x] Mark `/api/health/data` degraded when a source exceeds its lag budget.
+   - [x] Treat partial source runs as degraded even when their timestamp is fresh.
    - [ ] Add notifications for failed or stale Cortellis, EDGAR, and graph jobs.
 
 4. **Verify and harden Cortellis incremental synchronization**
