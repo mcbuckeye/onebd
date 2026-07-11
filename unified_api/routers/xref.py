@@ -22,6 +22,10 @@ class CompanySearchResult(BaseModel):
     cik: Optional[str] = None
     similarity: float = 0
     has_xref: bool = False
+    matched_alias: Optional[str] = None
+    parent_company_id: Optional[int] = None
+    parent_company_name: Optional[str] = None
+    relationship_type: Optional[str] = None
 
 
 class XrefData(BaseModel):

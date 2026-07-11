@@ -95,13 +95,22 @@ def resolve_company_mentions(
 
         if selected_exact:
             candidate = selected_exact
-            resolutions.append({
+            resolution = {
                 "mention": phrase,
                 "status": "resolved",
                 "company_id": candidate["id"],
                 "canonical_name": candidate["name"],
                 "ticker": candidate.get("ticker"),
-            })
+            }
+            for key in (
+                "matched_alias",
+                "parent_company_id",
+                "parent_company_name",
+                "relationship_type",
+            ):
+                if candidate.get(key) is not None:
+                    resolution[key] = candidate[key]
+            resolutions.append(resolution)
         elif exact or plausible:
             choices = (exact or plausible)[:3]
             resolutions.append({

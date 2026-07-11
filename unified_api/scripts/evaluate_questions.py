@@ -11,6 +11,8 @@ import yaml
 
 
 DEFAULT_CASES = Path(__file__).parents[1] / "evals" / "question_cases.yaml"
+VALID_TIERS = {"regression", "catalog"}
+VALID_RATINGS = {"strong", "partial", "needs_work", "cannot"}
 
 
 def get_path(payload: Any, path: str) -> Any:
@@ -78,17 +80,65 @@ def run_case(client: httpx.Client, case: dict) -> list[str]:
     return failures
 
 
+def validate_suite(suite: dict) -> list[str]:
+    """Validate that the versioned catalog covers every evaluation question."""
+    errors = []
+    cases = suite.get("cases") or []
+    ids = [case.get("id") for case in cases]
+    expected_ids = list(range(1, 66))
+    if sorted(ids) != expected_ids:
+        errors.append(f"case IDs must be exactly 1..65; got {sorted(ids)}")
+
+    for case in cases:
+        label = f"case #{case.get('id')}"
+        if case.get("tier") not in VALID_TIERS:
+            errors.append(f"{label}: tier must be one of {sorted(VALID_TIERS)}")
+        if case.get("rating") not in VALID_RATINGS:
+            errors.append(f"{label}: rating must be one of {sorted(VALID_RATINGS)}")
+        if not case.get("question"):
+            errors.append(f"{label}: question is required")
+        request = case.get("request") or {}
+        if request.get("method") not in {"GET", "POST"} or not request.get("path"):
+            errors.append(f"{label}: executable request method/path is required")
+        if not case.get("assertions"):
+            errors.append(f"{label}: at least one assertion is required")
+
+    regression_count = sum(case.get("tier") == "regression" for case in cases)
+    if regression_count < 5:
+        errors.append("at least five deterministic regression cases are required")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://onebd.pchomelab.com")
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument(
+        "--tier",
+        choices=["regression", "catalog", "all"],
+        default="regression",
+    )
+    parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
     suite = yaml.safe_load(args.cases.read_text())
+    validation_errors = validate_suite(suite)
+    if validation_errors:
+        for error in validation_errors:
+            print(f"INVALID {error}")
+        return 2
+    if args.validate_only:
+        print(f"VALID {len(suite['cases'])} executable cases")
+        return 0
+
+    selected = [
+        case for case in suite["cases"]
+        if args.tier == "all" or case["tier"] == args.tier
+    ]
     failed = 0
     with httpx.Client(base_url=args.base_url, timeout=args.timeout) as client:
-        for case in suite["cases"]:
+        for case in selected:
             failures = run_case(client, case)
             label = f"#{case['id']} {case['question']}"
             if failures:
@@ -99,7 +149,7 @@ def main() -> int:
             else:
                 print(f"PASS {label}")
 
-    total = len(suite["cases"])
+    total = len(selected)
     print(f"\n{total - failed}/{total} cases passed")
     return 1 if failed else 0
 

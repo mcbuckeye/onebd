@@ -32,23 +32,26 @@ and fast retrieval before adding more external data volume.
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
    - [ ] Capture representative `EXPLAIN (ANALYZE, BUFFERS)` plans.
-   - [ ] Create and validate the missing `chunks.embedding` vector index, then
-         verify query-plan usage; the production integrity check currently skips it.
+   - [x] Create the production IVFFlat cosine index on `chunks.vector`, configure
+         semantic queries with 40 probes, and make the integrity test blocking.
    - [ ] Remove redundant indexes after query-plan validation.
    - [ ] Add latency-oriented integration coverage for common and filtered queries.
 
 6. **Make builds reproducible and establish CI deployment gates**
-   - [ ] Pin Python dependencies and container base images.
+   - [x] Pin direct Python dependencies and API/frontend container base images.
    - [x] Use `npm ci` with the committed frontend lockfile.
-   - [ ] Resolve the current frontend dependency audit findings (6 high,
-         5 moderate, and 1 low severity in the 2026-07-11 build).
+   - [x] Resolve frontend dependency audit findings (zero vulnerabilities on
+         2026-07-11 after the Vite/Axios/router updates).
    - [x] Fix the existing agentic-RAG test failures.
-   - [ ] Require unit, integration, lint, and Compose validation before deployment.
+   - [x] Add a GitHub Actions quality gate for the 65-case catalog, unit tests,
+         critical lint, frontend build/audit, and Compose validation.
+   - [ ] Make Dokploy wait for the GitHub quality gate before auto-deploying.
 
 7. **Improve canonical company and asset identity resolution**
-   - [ ] Raise production high-confidence mappings above the 20% quality floor;
-         the database-attached suite measured 19.5% on 2026-07-11.
-   - [ ] Normalize CIK, LEI, ticker, domain, legal name, aliases, and ownership.
+   - [x] Promote cross-source normalized-exact legal names and seed alias records.
+   - [x] Add a provenance-aware parent/subsidiary relationship model without
+         silently rolling subsidiaries into parents.
+   - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
    - [ ] Normalize INN/development codes and public drug/target identifiers.
    - [ ] Store match evidence, confidence, method, and review status.
    - [ ] Replace nested cross-database linking loops with bulk operations.
@@ -88,10 +91,12 @@ and fast retrieval before adding more external data volume.
 - [x] Fix EDGAR form filters to use the actual filing subtype.
 - [x] Apply requested modality filters before comp-set candidate ranking.
 - [x] Seed an executable evaluation harness with the first five regression cases.
-- [ ] Convert all 65 questions into executable, versioned golden-set fixtures.
-- [ ] Add governed definitions and truth queries for every financial/date metric.
-- [ ] Require source IDs/citations and evaluation results before rating an answer Strong.
-- [ ] Run the golden set as a CI and pre-deployment gate.
+- [x] Convert all 65 questions into executable, versioned fixtures: 5 blocking
+      regression truths and 60 catalog probes awaiting deterministic truth values.
+- [x] Publish governed definitions for supported and unsupported financial metrics.
+- [x] Return source IDs/query provenance and evidence status from Chat v2.
+- [x] Validate the full catalog and regression harness in CI.
+- [ ] Replace each catalog probe's basic response assertion with deterministic truth.
 
 ## Implementation Status vs PRD
 

@@ -56,6 +56,25 @@ def test_prefers_ticker_backed_parent_over_suffix_duplicates():
     assert result[0]["company_id"] == 18767
 
 
+def test_resolution_preserves_reviewable_parent_relationship():
+    def search(phrase, limit):
+        return [{
+            "id": 18862,
+            "name": "Pfizer Ltd",
+            "ticker": None,
+            "has_xref": True,
+            "parent_company_id": 18767,
+            "parent_company_name": "Pfizer Inc",
+            "relationship_type": "subsidiary",
+        }]
+
+    result = resolve_company_mentions("Pfizer Ltd deals", search=search)
+
+    assert result[0]["company_id"] == 18862
+    assert result[0]["parent_company_id"] == 18767
+    assert result[0]["relationship_type"] == "subsidiary"
+
+
 def test_milestone_analytics_does_not_substitute_total_value():
     limitation = _structured_metric_limitation(
         "What is the median milestone payment for Phase 3 license deals?"

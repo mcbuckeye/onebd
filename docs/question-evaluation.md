@@ -6,8 +6,9 @@
 
 **Verified remediation:** commits `91e59ad` and `314efda`, deployed 2026-07-11
 
-**Status:** Provisional code-and-production review with an initial five-case
-remediation set; the full 65-case golden set is not yet automated
+**Status:** All 65 questions are versioned and executable. Five are blocking,
+deterministic production regressions; 60 are catalog probes whose numerical or
+evidence truth assertions still need to be specified.
 
 ## Purpose
 
@@ -90,6 +91,11 @@ The first implementation pass addresses the most consequential baseline failures
 - Five production regressions (#1, #14, #23, #35, and #61) are versioned in
   `unified_api/evals/question_cases.yaml` and executable through
   `python -m unified_api.scripts.evaluate_questions`.
+- Chat v2 now returns record-level or aggregate-query citations and marks evidence
+  as grounded only when retrieved data has source provenance.
+- `/api/analytics/metric-definitions` publishes the semantic contract for deal
+  count, projected totals, reported paid totals, upfronts, milestones, royalties,
+  and acquisition premiums.
 
 All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
 
@@ -136,12 +142,12 @@ Strong, and the remaining 60 questions still need executable production fixtures
 | 14 | Median milestone payment for Phase 3 license deals? | 🔧 | No governed milestone aggregation; live chat incorrectly queried total projected value. |
 | 15 | Compare Pfizer vs Merck vs Novartis deal activity. | 🟡 | Endpoint exists; frontend uses hardcoded IDs and entity selection is not robust. |
 | 16 | Typical royalty rates for oncology bispecifics? | 🔧 | Contract retrieval exists, but structured royalty extraction is not complete at scale. |
-| 17 | Deals with disclosed upfront over $100M. | ✅ | Advanced search can filter disclosed financial fields when “upfront” is mapped to the correct column. |
+| 17 | Deals with disclosed upfront over $100M. | 🔧 | No governed structured upfront column exists; the platform now refuses instead of treating projected-at-signing or total value as upfront. |
 | 18 | Percentage of 2024 deals that were M&A vs licensing. | ✅ | Agreement-type distribution endpoint supports the calculation. |
 | 19 | YoY deal-volume growth by therapy area. | ✅ | Dedicated YoY analytics endpoint exists. |
 | 20 | Largest deal in each major therapy area. | 🟡 | Straightforward SQL, but no demonstrated product workflow/golden result yet. |
 
-**Provisional score: 5 Strong, 3 Partial, 2 Needs Work**
+**Provisional score: 4 Strong, 3 Partial, 3 Needs Work**
 
 ---
 
@@ -242,24 +248,25 @@ This is a conservative code-and-smoke-test review, not the final measured score.
 | Category | Strong ✅ | Partial 🟡 | Needs Work 🔧 | Cannot ❌ | Total |
 |---|---:|---:|---:|---:|---:|
 | Quick Factual | 4 | 6 | 0 | 0 | 10 |
-| Analytical | 5 | 3 | 2 | 0 | 10 |
+| Analytical | 4 | 3 | 3 | 0 | 10 |
 | Strategic | 0 | 8 | 1 | 1 | 10 |
 | Competitive Intelligence | 2 | 5 | 2 | 1 | 10 |
 | Due Diligence | 3 | 4 | 2 | 1 | 10 |
 | Market Landscape | 3 | 6 | 0 | 1 | 10 |
 | SEC Filings | 0 | 5 | 0 | 0 | 5 |
-| **Total** | **17** | **37** | **7** | **4** | **65** |
+| **Total** | **16** | **37** | **8** | **4** | **65** |
 
-**Provisional: 17/65 Strong (26%); 54/65 at least Partial (83%).**
+**Provisional: 16/65 Strong (25%); 53/65 at least Partial (82%).**
 
 The breadth remains useful, but correctness and grounding—not feature count—are
 the limiting factors.
 
 ## Executable Evaluation Specification
 
-The 65 questions should become versioned fixtures. The first five production
-regressions are now represented in `unified_api/evals/question_cases.yaml`; the
-remaining 60 still need truth fixtures. Each case must include:
+All 65 questions are versioned in `unified_api/evals/question_cases.yaml`. The
+five regression-tier cases have deterministic production assertions. The other
+60 are executable catalog probes with basic response-safety assertions and still
+need question-specific truth values. A completed truth case must include:
 
 ```yaml
 id: 1
@@ -299,7 +306,8 @@ Evaluation rules:
    announced/closed dates, acquisition premium, and phase-at-deal.
 3. ✅ Evidence-only synthesis: refuse or clearly return “not found” on empty results.
 4. Source references and meaningful confidence/provenance in Chat v2.
-5. 🟡 Executable golden-set harness seeded with 5 of 65 questions.
+5. 🟡 Executable 65-question harness, with 5 deterministic truth cases and 60
+   response-safety catalog probes.
 
 ### P1 — Broken or incomplete workflows
 

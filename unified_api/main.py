@@ -111,6 +111,11 @@ async def lifespan(app: FastAPI):
         endpoints=len(app.routes),
         debug=settings.debug,
     )
+    try:
+        from unified_api.services.entity_resolution import get_entity_resolution_service
+        get_entity_resolution_service().ensure_identity_schema()
+    except Exception as exc:
+        logger.warning("Identity schema initialization failed", error=str(exc))
 
     yield
 

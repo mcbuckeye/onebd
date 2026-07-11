@@ -456,15 +456,14 @@ class TestEdgarIndexes:
         assert exists, "GIN index on chunks.text is missing"
 
     def test_chunks_embedding_index(self, edgar_source_session):
-        """Verify vector index exists on chunks.embedding."""
+        """Verify cosine vector search is backed by an ANN index."""
         result = edgar_source_session.execute(text("""
             SELECT EXISTS (
                 SELECT FROM pg_indexes
                 WHERE tablename = 'chunks'
-                  AND indexdef LIKE '%embedding%'
+                  AND indexdef ILIKE '%USING ivfflat%'
+                  AND indexdef ILIKE '%(vector vector_cosine_ops)%'
             )
         """))
         exists = result.scalar()
-        # May not exist yet if not using pgvector
-        if not exists:
-            pytest.skip("Vector index on chunks.embedding not created")
+        assert exists, "IVFFlat cosine index on chunks.vector is missing"

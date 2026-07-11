@@ -24,6 +24,14 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+@router.get("/analytics/metric-definitions")
+async def metric_definitions():
+    """Return the governed semantic contract for financial and count metrics."""
+    from unified_api.services.governed_metrics import METRIC_DEFINITIONS
+
+    return {"metrics": METRIC_DEFINITIONS, "version": 1}
+
+
 class TrendDataPoint(BaseModel):
     """A single data point in a time series."""
     period: str  # YYYY or YYYY-QN

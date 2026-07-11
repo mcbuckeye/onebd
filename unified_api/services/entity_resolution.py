@@ -10,7 +10,7 @@ Creates and manages the company_xref cross-reference table.
 """
 import re
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Callable, Optional, List, Tuple
 
 from sqlalchemy import text
 import structlog
@@ -18,6 +18,18 @@ import structlog
 from unified_api.services.database import get_cortellis_session, get_edgar_session
 
 logger = structlog.get_logger(__name__)
+
+
+def classify_name_match(
+    normalize: Callable[[str], str],
+    cortellis_name: str,
+    edgar_name: str,
+    similarity: float,
+) -> tuple[str, float]:
+    """Promote normalized exact names without overstating fuzzy matches."""
+    if normalize(cortellis_name) == normalize(edgar_name):
+        return "exact_name", 1.0
+    return "trigram", float(similarity)
 
 
 def format_cik(cik: str) -> Optional[str]:
@@ -193,6 +205,125 @@ class EntityResolutionService:
             conn.commit()
 
         logger.info("company_aliases table created")
+
+    def ensure_identity_schema(self) -> None:
+        """Create durable alias and ownership structures used during resolution."""
+        with get_cortellis_session() as session:
+            session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS company_aliases (
+                    id SERIAL PRIMARY KEY,
+                    xref_id INTEGER REFERENCES company_xref(id) ON DELETE CASCADE,
+                    alias_type VARCHAR(50) NOT NULL,
+                    alias_value VARCHAR(500) NOT NULL,
+                    effective_from DATE,
+                    effective_to DATE,
+                    source VARCHAR(50) NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            session.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_company_alias_identity
+                ON company_aliases (xref_id, alias_type, LOWER(alias_value))
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_aliases_value_trgm
+                ON company_aliases USING gin (alias_value gin_trgm_ops)
+            """))
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS company_identity_relationships (
+                    id SERIAL PRIMARY KEY,
+                    parent_company_id INTEGER NOT NULL REFERENCES companies(id),
+                    child_company_id INTEGER NOT NULL REFERENCES companies(id),
+                    relationship_type VARCHAR(50) NOT NULL,
+                    effective_from DATE,
+                    effective_to DATE,
+                    source VARCHAR(100) NOT NULL,
+                    source_reference TEXT,
+                    confidence FLOAT NOT NULL DEFAULT 1.0,
+                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (parent_company_id, child_company_id, relationship_type)
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_identity_relationship_child
+                ON company_identity_relationships(child_company_id)
+            """))
+
+    def improve_identity_records(self) -> dict:
+        """Seed aliases and promote normalized-exact cross-source name matches."""
+        self.ensure_identity_schema()
+        with get_cortellis_session() as session:
+            rows = session.execute(text("""
+                SELECT cx.id AS xref_id, cx.edgar_company_id, cx.ticker,
+                       cx.match_method, cx.match_confidence, c.name AS cortellis_name
+                FROM company_xref cx
+                JOIN companies c ON c.id = cx.cortellis_id
+            """)).mappings().all()
+
+        edgar_ids = [row["edgar_company_id"] for row in rows if row["edgar_company_id"]]
+        edgar_by_id = {}
+        if edgar_ids:
+            with get_edgar_session() as session:
+                edgar_rows = session.execute(text("""
+                    SELECT id, name, ticker FROM companies WHERE id = ANY(:ids)
+                """), {"ids": edgar_ids}).mappings().all()
+                edgar_by_id = {row["id"]: row for row in edgar_rows}
+
+        promoted = 0
+        aliases_created = 0
+        with get_cortellis_session() as session:
+            for row in rows:
+                edgar = edgar_by_id.get(row["edgar_company_id"])
+                if edgar:
+                    method, confidence = classify_name_match(
+                        self.normalize_company_name,
+                        row["cortellis_name"],
+                        edgar["name"],
+                        row["match_confidence"] or 0,
+                    )
+                    if method == "exact_name" and (
+                        row["match_method"] != method or row["match_confidence"] != confidence
+                    ):
+                        session.execute(text("""
+                            UPDATE company_xref
+                            SET match_method = 'exact_name', match_confidence = 1.0,
+                                updated_at = NOW()
+                            WHERE id = :xref_id
+                        """), {"xref_id": row["xref_id"]})
+                        promoted += 1
+
+                aliases = [
+                    ("legal_name", row["cortellis_name"], "cortellis"),
+                    ("legal_name", edgar["name"], "sec") if edgar else None,
+                    ("ticker", row["ticker"], "xref") if row["ticker"] else None,
+                    ("ticker", edgar["ticker"], "sec")
+                    if edgar and edgar.get("ticker") else None,
+                ]
+                for alias in aliases:
+                    if not alias or not alias[1]:
+                        continue
+                    inserted = session.execute(text("""
+                        INSERT INTO company_aliases (
+                            xref_id, alias_type, alias_value, source
+                        ) VALUES (:xref_id, :alias_type, :alias_value, :source)
+                        ON CONFLICT DO NOTHING
+                        RETURNING id
+                    """), {
+                        "xref_id": row["xref_id"],
+                        "alias_type": alias[0],
+                        "alias_value": alias[1],
+                        "source": alias[2],
+                    }).scalar()
+                    aliases_created += int(inserted is not None)
+
+        return {
+            "xrefs_checked": len(rows),
+            "normalized_exact_promoted": promoted,
+            "aliases_created": aliases_created,
+        }
 
     def match_by_ticker(
         self,
@@ -818,15 +949,44 @@ class EntityResolutionService:
                     c.company_type,
                     c.ticker,
                     c.cik,
-                    similarity(UPPER(c.name), :normalized) as sim,
-                    cx.id as xref_id
+                    GREATEST(
+                        similarity(UPPER(c.name), :normalized),
+                        COALESCE(alias_match.sim, 0)
+                    ) as sim,
+                    cx.id as xref_id,
+                    alias_match.alias_value AS matched_alias,
+                    rel.parent_company_id,
+                    parent.name AS parent_company_name,
+                    rel.relationship_type
                 FROM companies c
                 LEFT JOIN company_xref cx ON cx.cortellis_id = c.id
+                LEFT JOIN LATERAL (
+                    SELECT ca.alias_value,
+                           similarity(UPPER(ca.alias_value), :normalized) AS sim
+                    FROM company_aliases ca
+                    WHERE ca.xref_id = cx.id
+                      AND (
+                          ca.alias_value ILIKE :pattern
+                          OR similarity(UPPER(ca.alias_value), :normalized) > 0.3
+                      )
+                    ORDER BY
+                        CASE WHEN UPPER(ca.alias_value) = :normalized THEN 0 ELSE 1 END,
+                        sim DESC
+                    LIMIT 1
+                ) alias_match ON TRUE
+                LEFT JOIN company_identity_relationships rel
+                  ON rel.child_company_id = c.id
+                 AND (rel.effective_to IS NULL OR rel.effective_to >= CURRENT_DATE)
+                 AND rel.review_status IN ('verified', 'unreviewed')
+                LEFT JOIN companies parent ON parent.id = rel.parent_company_id
                 WHERE c.name ILIKE :pattern
                    OR similarity(UPPER(c.name), :normalized) > 0.3
+                   OR alias_match.alias_value IS NOT NULL
                 ORDER BY
                     CASE WHEN UPPER(c.name) = :normalized THEN 0 ELSE 1 END,
-                    similarity(UPPER(c.name), :normalized) DESC
+                    CASE WHEN UPPER(alias_match.alias_value) = :normalized THEN 0 ELSE 1 END,
+                    (cx.id IS NOT NULL) DESC,
+                    sim DESC
                 LIMIT :limit
             """), {
                 "normalized": normalized,
@@ -844,6 +1004,10 @@ class EntityResolutionService:
                     "cik": row.cik,
                     "similarity": float(row.sim) if row.sim else 0,
                     "has_xref": row.xref_id is not None,
+                    "matched_alias": row.matched_alias,
+                    "parent_company_id": row.parent_company_id,
+                    "parent_company_name": row.parent_company_name,
+                    "relationship_type": row.relationship_type,
                 })
 
             return companies

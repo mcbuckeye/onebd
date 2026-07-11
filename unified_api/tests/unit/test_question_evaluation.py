@@ -1,6 +1,14 @@
 """Tests for the executable question-evaluation harness."""
 
-from unified_api.scripts.evaluate_questions import evaluate_assertion, get_path
+from pathlib import Path
+
+import yaml
+
+from unified_api.scripts.evaluate_questions import (
+    evaluate_assertion,
+    get_path,
+    validate_suite,
+)
 
 
 def test_get_path_handles_nested_lists():
@@ -32,3 +40,11 @@ def test_excludes_detects_unsupported_claims():
     )
 
     assert passed
+
+
+def test_versioned_suite_covers_all_65_questions():
+    path = Path(__file__).parents[2] / "evals" / "question_cases.yaml"
+    suite = yaml.safe_load(path.read_text())
+
+    assert validate_suite(suite) == []
+    assert len(suite["cases"]) == 65

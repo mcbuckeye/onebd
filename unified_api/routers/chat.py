@@ -44,6 +44,7 @@ class ChatResponse(BaseModel):
     search_results: Optional[List[SearchResult]] = None
     data: Optional[List[dict]] = None
     resolved_entities: List[dict] = []
+    citations: List[dict] = []
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -115,6 +116,7 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
     from unified_api.services.database import get_cortellis_session
 
     from unified_api.services.question_context import resolve_company_mentions
+    from unified_api.services.governed_metrics import build_citations
 
     metric_limitation = _structured_metric_limitation(message)
     if metric_limitation:
@@ -193,6 +195,7 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
             if data
             else "No supporting database records were found for this question."
         )
+        citations = build_citations("sql", data, sql_query)
 
         return ChatResponse(
             response=response_text,
@@ -200,6 +203,7 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
             sql_query=sql_query,
             data=data[:20],  # Limit data in response
             resolved_entities=resolved_entities,
+            citations=citations,
         )
 
     except Exception as e:
@@ -214,19 +218,9 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
 
 def _structured_metric_limitation(message: str) -> Optional[str]:
     """Refuse aggregate metrics that do not yet have a governed structured field."""
-    normalized = message.lower()
-    aggregate_terms = ("average", "median", "typical", "range", "structure")
-    if "milestone" in normalized and any(term in normalized for term in aggregate_terms):
-        return (
-            "Structured milestone-payment analytics are not available yet. The platform "
-            "will not substitute total projected deal value for milestone payments."
-        )
-    if "acquisition premium" in normalized:
-        return (
-            "Acquisition-premium analytics are not available because pre-announcement "
-            "market-value data has not been integrated."
-        )
-    return None
+    from unified_api.services.governed_metrics import metric_limitation
+
+    return metric_limitation(message)
 
 
 def _missing_resolved_entity_ids(sql_query: str, resolved_entities: List[dict]) -> List[int]:
@@ -276,6 +270,7 @@ async def _handle_rag_query(message: str) -> ChatResponse:
     from unified_api.services.database import get_cortellis_session
     from unified_api.services.embed import get_embedding_provider
     from unified_api.services.llm import get_llm_service
+    from unified_api.services.governed_metrics import build_citations
 
     llm_service = get_llm_service()
 
@@ -336,6 +331,10 @@ async def _handle_rag_query(message: str) -> ChatResponse:
         response=response_text,
         mode_used="rag",
         search_results=search_results,
+        citations=build_citations(
+            "rag",
+            [result.model_dump() for result in search_results],
+        ),
     )
 
 
@@ -416,6 +415,7 @@ async def _handle_graph_query(message: str, llm_service) -> ChatResponse:
             response=response_text,
             mode_used="graph",
             data=data,
+            citations=[],
         )
 
     except Exception as e:
@@ -456,6 +456,7 @@ class ChatV2Response(BaseModel):
     follow_ups: List[str] = []
     actions: List[dict] = []
     resolved_entities: List[dict] = []
+    citations: List[dict] = []
 
 
 @router.post("/chat/v2", response_model=ChatV2Response)
@@ -470,6 +471,7 @@ async def chat_v2(request: ChatRequest):
     - Action links (save search, export, view dashboard)
     """
     from unified_api.services.llm import get_llm_service
+    from unified_api.services.governed_metrics import append_citation_section
 
     llm_service = get_llm_service()
 
@@ -510,6 +512,10 @@ async def chat_v2(request: ChatRequest):
 
     confidence = dict(synthesis["confidence"])
     confidence["entity_resolution"] = raw_response.resolved_entities
+    confidence["evidence_status"] = (
+        "grounded" if data and raw_response.citations else confidence.get("evidence_status", "limited")
+    )
+    answer = append_citation_section(synthesis["answer"], raw_response.citations)
 
     # Build action suggestions
     actions = [
@@ -523,7 +529,7 @@ async def chat_v2(request: ChatRequest):
         actions.append({"label": "View Analytics", "type": "navigate", "params": {"path": "/analytics"}})
 
     return ChatV2Response(
-        answer=synthesis["answer"],
+        answer=answer,
         intent=intent,
         confidence=confidence,
         data=data[:10],
@@ -531,4 +537,5 @@ async def chat_v2(request: ChatRequest):
         follow_ups=synthesis["follow_ups"],
         actions=actions,
         resolved_entities=raw_response.resolved_entities,
+        citations=raw_response.citations,
     )

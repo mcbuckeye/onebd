@@ -13,6 +13,11 @@ Key validations:
 import pytest
 from sqlalchemy import text
 
+from unified_api.services.entity_resolution import (
+    EntityResolutionService,
+    classify_name_match,
+)
+
 # Known company mappings for validation (ground truth)
 KNOWN_MAPPINGS = [
     # (cortellis_name_pattern, cik, expected_match)
@@ -33,6 +38,28 @@ FALSE_POSITIVE_CASES = [
     # (cortellis_name_pattern, should_not_match_cik)
     # Add known cases where name similarity could cause incorrect matches
 ]
+
+
+def test_normalized_legal_names_are_promoted_to_exact_matches():
+    service = EntityResolutionService()
+
+    assert classify_name_match(
+        service.normalize_company_name,
+        "Pfizer Inc.",
+        "PFIZER INC",
+        0.82,
+    ) == ("exact_name", 1.0)
+
+
+def test_distinct_affiliates_remain_fuzzy_matches():
+    service = EntityResolutionService()
+
+    assert classify_name_match(
+        service.normalize_company_name,
+        "Johnson & Johnson Innovation LLC",
+        "Johnson & Johnson",
+        0.67,
+    ) == ("trigram", 0.67)
 
 
 @pytest.mark.cortellis

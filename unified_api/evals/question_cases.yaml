@@ -2,6 +2,8 @@ version: 1
 dataset_as_of: 2026-07-11
 cases:
   - id: 1
+    tier: regression
+    rating: strong
     question: How many deals did Pfizer do in 2024?
     request:
       method: POST
@@ -16,8 +18,16 @@ cases:
       - type: equals
         path: resolved_entities.0.company_id
         value: 18767
+      - type: min_length
+        path: citations
+        value: 1
+      - type: equals
+        path: confidence.evidence_status
+        value: grounded
 
   - id: 14
+    tier: regression
+    rating: needs_work
     question: What is the median milestone payment for Phase 3 license deals?
     request:
       method: POST
@@ -28,13 +38,16 @@ cases:
     assertions:
       - type: contains
         path: answer
-        value: Structured milestone-payment analytics are not available
+        value: Milestone payment analytics are not available
       - type: equals
         path: sql_query
         value: null
 
   - id: 23
-    question: Build a comp set for bispecific deals.
+    tier: regression
+    rating: partial
+    question: Build a comp set for a Phase 2 NSCLC bispecific license.
+    scope_note: Regression currently isolates modality filtering; full multi-filter truth remains pending.
     request:
       method: POST
       path: /api/comps/build
@@ -51,12 +64,14 @@ cases:
         value: bispecific
 
   - id: 35
-    question: What is Roche's oncology strategy based on its deal pattern?
+    tier: regression
+    rating: needs_work
+    question: What is Roche's oncology strategy from its deal pattern?
     request:
       method: POST
       path: /api/chat/v2
       json:
-        message: What is Roche's oncology strategy based on its deal pattern?
+        message: What is Roche's oncology strategy from its deal pattern?
         mode: auto
     assertions:
       - type: excludes
@@ -64,7 +79,10 @@ cases:
         value: Historically
 
   - id: 61
-    question: Find 8-K filings mentioning agreements.
+    tier: regression
+    rating: partial
+    question: Find 8-K filings mentioning ADC partnerships.
+    scope_note: Regression proves the 8-K form filter with a broader agreement term.
     request:
       method: GET
       path: /api/edgar/search
@@ -81,3 +99,1083 @@ cases:
         path: $root
         field: doc_type
         value: 8-K
+
+  - id: 2
+    tier: catalog
+    rating: partial
+    question: 'What was the biggest pharma deal ever?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What was the biggest pharma deal ever?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 3
+    tier: catalog
+    rating: strong
+    question: 'Who are the top 5 most active acquirers this year?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Who are the top 5 most active acquirers this year?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 4
+    tier: catalog
+    rating: partial
+    question: 'How many ADC deals have been done?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'How many ADC deals have been done?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 5
+    tier: catalog
+    rating: partial
+    question: 'What is BeiGene''s total deal count?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What is BeiGene''s total deal count?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 6
+    tier: catalog
+    rating: partial
+    question: 'When was the last oncology M&A deal over $1B?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'When was the last oncology M&A deal over $1B?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 7
+    tier: catalog
+    rating: strong
+    question: 'Is there a deal between Pfizer and Seagen?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Is there a deal between Pfizer and Seagen?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 8
+    tier: catalog
+    rating: partial
+    question: 'What phase is drug X in?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What phase is drug X in?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 9
+    tier: catalog
+    rating: partial
+    question: 'How many deals closed last week?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'How many deals closed last week?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 10
+    tier: catalog
+    rating: strong
+    question: 'What is the average deal size in oncology?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What is the average deal size in oncology?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 11
+    tier: catalog
+    rating: partial
+    question: 'Typical upfront payments for Phase 2 ADC assets?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Typical upfront payments for Phase 2 ADC assets?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 12
+    tier: catalog
+    rating: strong
+    question: 'Valuation range for oncology M&A deals, 2020–2025?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Valuation range for oncology M&A deals, 2020–2025?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 13
+    tier: catalog
+    rating: strong
+    question: 'How have deal values trended over five years?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'How have deal values trended over five years?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 15
+    tier: catalog
+    rating: partial
+    question: 'Compare Pfizer vs Merck vs Novartis deal activity.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Compare Pfizer vs Merck vs Novartis deal activity.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 16
+    tier: catalog
+    rating: needs_work
+    question: 'Typical royalty rates for oncology bispecifics?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Typical royalty rates for oncology bispecifics?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 17
+    tier: catalog
+    rating: needs_work
+    question: 'Deals with disclosed upfront over $100M.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Deals with disclosed upfront over $100M.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 18
+    tier: catalog
+    rating: strong
+    question: 'Percentage of 2024 deals that were M&A vs licensing.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Percentage of 2024 deals that were M&A vs licensing.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 19
+    tier: catalog
+    rating: strong
+    question: 'YoY deal-volume growth by therapy area.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'YoY deal-volume growth by therapy area.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 20
+    tier: catalog
+    rating: partial
+    question: 'Largest deal in each major therapy area.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Largest deal in each major therapy area.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 21
+    tier: catalog
+    rating: partial
+    question: 'What should we pay for a lung-cancer bispecific company?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What should we pay for a lung-cancer bispecific company?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 22
+    tier: catalog
+    rating: needs_work
+    question: 'Most likely acquisition targets in ADC oncology?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Most likely acquisition targets in ADC oncology?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 24
+    tier: catalog
+    rating: partial
+    question: 'Competitive landscape for CAR-T in hematology.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Competitive landscape for CAR-T in hematology.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 25
+    tier: catalog
+    rating: cannot
+    question: 'Build, buy, or partner for solid-tumor ADC assets?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Build, buy, or partner for solid-tumor ADC assets?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 26
+    tier: catalog
+    rating: partial
+    question: 'Which companies are divesting oncology assets?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Which companies are divesting oncology assets?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 27
+    tier: catalog
+    rating: partial
+    question: 'Expected acquisition premium for a Phase 3 company?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Expected acquisition premium for a Phase 3 company?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 28
+    tier: catalog
+    rating: partial
+    question: 'Generate a DD package on Company X.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Generate a DD package on Company X.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 29
+    tier: catalog
+    rating: partial
+    question: 'Warm introduction paths between us and Company Y.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Warm introduction paths between us and Company Y.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 30
+    tier: catalog
+    rating: partial
+    question: 'Recommend deals/targets I have not seen.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Recommend deals/targets I have not seen.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 31
+    tier: catalog
+    rating: partial
+    question: 'What has Pfizer done in the last 90 days?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What has Pfizer done in the last 90 days?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 32
+    tier: catalog
+    rating: strong
+    question: 'Who is most actively acquiring oncology assets?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Who is most actively acquiring oncology assets?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 33
+    tier: catalog
+    rating: partial
+    question: 'Compare our deal pace to Merck''s.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Compare our deal pace to Merck''s.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 34
+    tier: catalog
+    rating: partial
+    question: 'Alert me when a competitor does an ADC deal.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Alert me when a competitor does an ADC deal.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 36
+    tier: catalog
+    rating: needs_work
+    question: 'Which companies just entered the bispecific space?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Which companies just entered the bispecific space?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 37
+    tier: catalog
+    rating: strong
+    question: 'Show Pfizer''s partnership network.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Show Pfizer''s partnership network.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 38
+    tier: catalog
+    rating: partial
+    question: 'How does AbbVie''s deal structure differ from Gilead''s?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'How does AbbVie''s deal structure differ from Gilead''s?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 39
+    tier: catalog
+    rating: cannot
+    question: 'Are competitors building ADC portfolios faster than us?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Are competitors building ADC portfolios faster than us?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 40
+    tier: catalog
+    rating: partial
+    question: 'Weekly competitive briefing for oncology.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Weekly competitive briefing for oncology.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 41
+    tier: catalog
+    rating: partial
+    question: 'Full DD on Company X.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Full DD on Company X.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 42
+    tier: catalog
+    rating: strong
+    question: 'What territories are available for Drug Y?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What territories are available for Drug Y?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 43
+    tier: catalog
+    rating: partial
+    question: 'Contracts mentioning royalty rates for this drug.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Contracts mentioning royalty rates for this drug.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 44
+    tier: catalog
+    rating: partial
+    question: 'Risk flags for this acquisition target.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Risk flags for this acquisition target.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 45
+    tier: catalog
+    rating: needs_work
+    question: 'Export a comp set with deal values to Excel.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Export a comp set with deal values to Excel.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 46
+    tier: catalog
+    rating: partial
+    question: 'What SEC filings relate to this deal?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'What SEC filings relate to this deal?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 47
+    tier: catalog
+    rating: needs_work
+    question: 'Milestone structure for comparable deals.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Milestone structure for comparable deals.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 48
+    tier: catalog
+    rating: cannot
+    question: 'IP landscape for KRAS inhibitors.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'IP landscape for KRAS inhibitors.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 49
+    tier: catalog
+    rating: strong
+    question: 'Timeline of all deals for this target company.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Timeline of all deals for this target company.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 50
+    tier: catalog
+    rating: strong
+    question: 'Who else licensed this company''s technology?'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Who else licensed this company''s technology?'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 51
+    tier: catalog
+    rating: partial
+    question: 'Oncology deal landscape 2024 for the board.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Oncology deal landscape 2024 for the board.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 52
+    tier: catalog
+    rating: strong
+    question: 'Top 20 largest pharma deals ever.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Top 20 largest pharma deals ever.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 53
+    tier: catalog
+    rating: strong
+    question: 'Deal-activity heatmap by therapy area.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Deal-activity heatmap by therapy area.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 54
+    tier: catalog
+    rating: strong
+    question: 'Deal volume by geography.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Deal volume by geography.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 55
+    tier: catalog
+    rating: partial
+    question: 'M&A vs licensing split in oncology over time.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'M&A vs licensing split in oncology over time.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 56
+    tier: catalog
+    rating: cannot
+    question: 'Market map of NSCLC deal activity.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Market map of NSCLC deal activity.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 57
+    tier: catalog
+    rating: partial
+    question: 'PDF export of this board analysis.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'PDF export of this board analysis.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 58
+    tier: catalog
+    rating: partial
+    question: 'Our therapeutic focus versus the industry.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Our therapeutic focus versus the industry.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 59
+    tier: catalog
+    rating: partial
+    question: 'Quarterly deal report for Q2 2025.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Quarterly deal report for Q2 2025.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 60
+    tier: catalog
+    rating: partial
+    question: 'Indications with the most deal-activity growth.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Indications with the most deal-activity growth.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 62
+    tier: catalog
+    rating: partial
+    question: 'Show Pfizer''s 10-K risk factors.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Show Pfizer''s 10-K risk factors.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 63
+    tier: catalog
+    rating: partial
+    question: 'Cross-reference this Cortellis deal with SEC filings.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Cross-reference this Cortellis deal with SEC filings.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 64
+    tier: catalog
+    rating: partial
+    question: 'Material contracts from recent 8-K filings.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'Material contracts from recent 8-K filings.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error
+
+  - id: 65
+    tier: catalog
+    rating: partial
+    question: 'S-1 analysis for a pre-IPO biotech.'
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: 'S-1 analysis for a pre-IPO biotech.'
+        mode: auto
+    assertions:
+      - type: min_length
+        path: answer
+        value: 1
+      - type: excludes
+        path: answer
+        value: encountered an error

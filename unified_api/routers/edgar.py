@@ -407,6 +407,7 @@ async def search_edgar_filings(
                 embedding_provider = get_embedding_provider()
                 query_embedding = await embedding_provider.embed_single(query)
                 embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+                session.execute(text("SET LOCAL ivfflat.probes = 40"))
 
                 conditions = ["c.vector IS NOT NULL"]
                 params = {"embedding": embedding_str, "limit": limit}
