@@ -144,7 +144,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh workflow run pre-deployment.yml --ref "$ROLLBACK_BRANCH"
+          gh workflow run quality-gate.yml --ref "$ROLLBACK_BRANCH"
 
           required=(backend frontend compose)
           for attempt in $(seq 1 120); do
