@@ -22,7 +22,12 @@ def compute_health_score(metrics: Dict[str, Any]) -> Dict[str, Any]:
     last_sync_str = metrics.get("last_sync")
     if last_sync_str:
         try:
-            last_sync = datetime.fromisoformat(last_sync_str.replace("Z", "+00:00"))
+            if isinstance(last_sync_str, datetime):
+                last_sync = last_sync_str
+            else:
+                last_sync = datetime.fromisoformat(
+                    str(last_sync_str).replace("Z", "+00:00")
+                )
             if last_sync.tzinfo is None:
                 last_sync = last_sync.replace(tzinfo=timezone.utc)
             age_hours = (datetime.now(timezone.utc) - last_sync).total_seconds() / 3600

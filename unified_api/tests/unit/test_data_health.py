@@ -1,6 +1,8 @@
 """
 TDD: Data health check tests.
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 
@@ -37,6 +39,18 @@ class TestDataHealthScoring:
             "last_sync": "2026-07-15T06:30:00",
         })
         assert 0 <= result["overall_score"] <= 100
+
+    def test_accepts_database_datetime_for_last_sync(self):
+        from unified_api.services.data_health import compute_health_score
+
+        result = compute_health_score({
+            "last_sync": datetime.now(timezone.utc) - timedelta(hours=1),
+        })
+
+        freshness = next(
+            check for check in result["checks"] if check["name"] == "Data Freshness"
+        )
+        assert freshness["status"] == "ok"
 
     def test_stale_sync_flags_warning(self):
         from unified_api.services.data_health import compute_health_score
