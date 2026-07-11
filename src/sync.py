@@ -4,7 +4,7 @@ import os
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +22,31 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def assess_zero_result_window(
+    watermark: datetime,
+    now: datetime,
+    source_total: int,
+    *,
+    max_watermark_age_days: int = 7,
+) -> tuple[bool, str]:
+    """Decide whether an empty incremental result is safe to accept."""
+    if source_total <= 0:
+        return False, "source catalog probe returned zero records"
+
+    def naive_utc(value: datetime) -> datetime:
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    watermark = naive_utc(watermark)
+    now = naive_utc(now)
+    if watermark > now + timedelta(minutes=5):
+        return False, "watermark is in the future"
+    if now - watermark > timedelta(days=max_watermark_age_days):
+        return False, "zero results with a stale watermark"
+    return True, "validated zero-result window"
 
 
 class DealTransformer:
@@ -833,6 +858,24 @@ class SyncService:
                     logger.info(f"Found {len(updated_ids)} updated deals")
 
                     if not updated_ids:
+                        source_total = client.search_deals(
+                            query="*",
+                            offset=0,
+                            hits=1,
+                        ).total_results
+                        zero_is_valid, zero_reason = assess_zero_result_window(
+                            since_date,
+                            datetime.utcnow(),
+                            source_total,
+                        )
+                        if not zero_is_valid:
+                            raise RuntimeError(
+                                f"Unsafe Cortellis zero-result sync: {zero_reason}"
+                            )
+                        logger.info(
+                            "Incremental sync returned no changes; "
+                            f"source catalog probe found {source_total} records"
+                        )
                         sync_log.completed_at = datetime.utcnow()
                         sync_log.status = "completed"
                         sync_log.records_processed = 0
@@ -847,6 +890,8 @@ class SyncService:
                     transformer = DealTransformer(session)
                     records_processed = 0
                     records_updated = 0
+                    processed_ids = []
+                    batch_errors = []
 
                     for i in range(0, len(updated_ids), batch_size):
                         batch_ids = updated_ids[i:i + batch_size]
@@ -854,27 +899,41 @@ class SyncService:
 
                         try:
                             records = client.get_deal_records(batch_ids)
+                            returned_ids = {record.id for record in records}
+                            missing_ids = sorted(set(batch_ids) - returned_ids)
+                            if missing_ids:
+                                batch_errors.append(
+                                    f"API batch omitted deal IDs: {missing_ids}"
+                                )
                             for record in records:
                                 transformer.transform_deal(record)
                                 records_processed += 1
                                 records_updated += 1
+                                processed_ids.append(record.id)
 
                             session.commit()
                         except Exception as e:
                             logger.exception(f"Error processing batch: {e}")
                             session.rollback()
+                            batch_errors.append(
+                                f"batch {batch_ids[0]}..{batch_ids[-1]}: {e}"
+                            )
+                            transformer = DealTransformer(session)
                             continue
 
                     # Download contracts for updated deals
                     contracts_downloaded = self._download_contracts_for_deals(
-                        session, client, updated_ids
+                        session, client, processed_ids
                     )
 
                     sync_log.completed_at = datetime.utcnow()
-                    sync_log.status = "completed"
+                    sync_log.status = "partial" if batch_errors else "completed"
                     sync_log.records_processed = records_processed
                     sync_log.records_updated = records_updated
                     sync_log.contracts_downloaded = contracts_downloaded
+                    sync_log.error_message = (
+                        "; ".join(batch_errors)[:4000] if batch_errors else None
+                    )
                     session.commit()
 
                     logger.info(

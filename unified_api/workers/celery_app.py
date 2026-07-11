@@ -217,6 +217,8 @@ def sync_cortellis_deals():
             "records_updated": sync_log.records_updated,
             "contracts_downloaded": sync_log.contracts_downloaded,
         }
+        if sync_log.error_message:
+            result["error"] = sync_log.error_message
         logger.info("Cortellis sync complete", **result)
         return result
 

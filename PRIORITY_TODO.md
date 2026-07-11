@@ -35,15 +35,21 @@ and fast retrieval before adding more external data volume.
 4. **Verify and harden Cortellis incremental synchronization**
    - [x] Compare the API's newest modified deals with the local watermark.
    - [x] Use an overlap window so date-only API filters cannot skip same-day updates.
-   - [ ] Distinguish a legitimate zero-result run from a stale or invalid watermark.
-   - [ ] Add regression tests for midnight, same-day, and retry boundaries.
+   - [x] Validate zero-result runs against a nonempty source catalog and reject
+         future/stale watermarks instead of advancing them as successful.
+   - [x] Mark omitted/failed API batches partial so the last successful watermark
+         remains eligible for retry, and expose the batch error from the worker.
+   - [x] Add regression tests for midnight, same-day, timezone, and retry boundaries.
 
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
-   - [ ] Capture representative `EXPLAIN (ANALYZE, BUFFERS)` plans.
+   - [x] Capture representative `EXPLAIN (ANALYZE, BUFFERS)` plans for common,
+         filtered, rare-term, and 40-probe vector searches in production.
    - [x] Create the production IVFFlat cosine index on `chunks.vector`, configure
          semantic queries with 40 probes, and make the integrity test blocking.
-   - [ ] Remove redundant indexes after query-plan validation.
+   - [x] Remove the unused duplicate 994 MB GIN index concurrently after proving
+         equivalence and retaining the index selected by PostgreSQL.
+   - [x] Add a deployable HTTP latency smoke budget for common and filtered terms.
    - [ ] Add latency-oriented integration coverage for common and filtered queries.
 
 6. **Make builds reproducible and establish CI deployment gates**
