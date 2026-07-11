@@ -2,6 +2,7 @@
 Chat endpoints for natural language queries.
 Routes queries to appropriate backend (SQL, RAG, or Graph).
 """
+import re
 from typing import Optional, List, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -42,6 +43,7 @@ class ChatResponse(BaseModel):
     sql_query: Optional[str] = None
     search_results: Optional[List[SearchResult]] = None
     data: Optional[List[dict]] = None
+    resolved_entities: List[dict] = []
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -61,10 +63,7 @@ async def chat(request: ChatRequest):
     3. Execute against the appropriate backend
     4. Format and return results
     """
-    from sqlalchemy import text
-    from unified_api.services.database import get_cortellis_session
     from unified_api.services.llm import get_llm_service
-    from unified_api.services.embed import get_embedding_provider
 
     logger.info(
         "Processing chat request",
@@ -115,8 +114,56 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
-    # Generate SQL
-    sql_query = await llm_service.generate_sql(message)
+    from unified_api.services.question_context import resolve_company_mentions
+
+    metric_limitation = _structured_metric_limitation(message)
+    if metric_limitation:
+        return ChatResponse(
+            response=metric_limitation,
+            mode_used="sql",
+            data=[],
+        )
+
+    resolved_entities = resolve_company_mentions(message)
+    ambiguous = [
+        entity for entity in resolved_entities if entity.get("status") == "ambiguous"
+    ]
+    if ambiguous:
+        choices = "; ".join(
+            f"{entity['mention']}: " + ", ".join(
+                f"{candidate['canonical_name']} (ID {candidate['company_id']})"
+                for candidate in entity.get("candidates", [])
+            )
+            for entity in ambiguous
+        )
+        return ChatResponse(
+            response=f"The company name is ambiguous. Please choose one of: {choices}",
+            mode_used="sql",
+            data=[],
+            resolved_entities=resolved_entities,
+        )
+
+    # Use governed templates for common metrics; fall back to LLM generation for
+    # questions that do not yet have a deterministic query shape.
+    sql_query = _build_governed_sql(message, resolved_entities)
+    if sql_query is None:
+        sql_query = await llm_service.generate_sql(
+            message,
+            resolved_entities=resolved_entities,
+        )
+
+    missing_ids = _missing_resolved_entity_ids(sql_query, resolved_entities)
+    if missing_ids:
+        return ChatResponse(
+            response=(
+                "The generated query did not preserve the resolved company identity, "
+                "so it was not executed. Please retry or select the company explicitly."
+            ),
+            mode_used="sql",
+            sql_query=sql_query,
+            data=[],
+            resolved_entities=resolved_entities,
+        )
 
     # Validate and clean SQL (basic safety check)
     sql_lower = sql_query.lower()
@@ -141,13 +188,18 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
                 data = []
 
         # Format response
-        response_text = await llm_service.format_response(message, data)
+        response_text = (
+            await llm_service.format_response(message, data)
+            if data
+            else "No supporting database records were found for this question."
+        )
 
         return ChatResponse(
             response=response_text,
             mode_used="sql",
             sql_query=sql_query,
             data=data[:20],  # Limit data in response
+            resolved_entities=resolved_entities,
         )
 
     except Exception as e:
@@ -156,7 +208,66 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
             response=f"I generated a query but it failed to execute. Error: {str(e)[:200]}",
             mode_used="sql",
             sql_query=sql_query,
+            resolved_entities=resolved_entities,
         )
+
+
+def _structured_metric_limitation(message: str) -> Optional[str]:
+    """Refuse aggregate metrics that do not yet have a governed structured field."""
+    normalized = message.lower()
+    aggregate_terms = ("average", "median", "typical", "range", "structure")
+    if "milestone" in normalized and any(term in normalized for term in aggregate_terms):
+        return (
+            "Structured milestone-payment analytics are not available yet. The platform "
+            "will not substitute total projected deal value for milestone payments."
+        )
+    if "acquisition premium" in normalized:
+        return (
+            "Acquisition-premium analytics are not available because pre-announcement "
+            "market-value data has not been integrated."
+        )
+    return None
+
+
+def _missing_resolved_entity_ids(sql_query: str, resolved_entities: List[dict]) -> List[int]:
+    """Require generated SQL to bind every unambiguous company to its canonical ID."""
+    missing = []
+    for entity in resolved_entities:
+        if entity.get("status") != "resolved":
+            continue
+        company_id = int(entity["company_id"])
+        if not re.search(rf"(?<!\d){company_id}(?!\d)", sql_query):
+            missing.append(company_id)
+    return missing
+
+
+def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional[str]:
+    """Build deterministic SQL for supported, high-value question patterns."""
+    resolved = [
+        entity for entity in resolved_entities if entity.get("status") == "resolved"
+    ]
+    year_match = re.search(r"\b(19|20)\d{2}\b", message)
+    normalized = message.lower()
+
+    if (
+        len(resolved) == 1
+        and year_match
+        and "deal" in normalized
+        and re.search(r"\bhow many\b|\bcount\b|\bnumber of\b", normalized)
+    ):
+        company_id = int(resolved[0]["company_id"])
+        year = int(year_match.group(0))
+        return (
+            "SELECT COUNT(DISTINCT d.id) AS deal_count "
+            "FROM deals d "
+            "JOIN deal_companies dc ON dc.deal_id = d.id "
+            f"WHERE dc.company_id = {company_id} "
+            f"AND d.date_start >= DATE '{year}-01-01' "
+            f"AND d.date_start < DATE '{year + 1}-01-01' "
+            "LIMIT 20"
+        )
+
+    return None
 
 
 async def _handle_rag_query(message: str) -> ChatResponse:
@@ -344,6 +455,7 @@ class ChatV2Response(BaseModel):
     sql_query: Optional[str] = None
     follow_ups: List[str] = []
     actions: List[dict] = []
+    resolved_entities: List[dict] = []
 
 
 @router.post("/chat/v2", response_model=ChatV2Response)
@@ -382,7 +494,22 @@ async def chat_v2(request: ChatRequest):
         sql_query = raw_response.sql_query
 
     # Synthesize response
-    synthesis = await llm_service.synthesize_response(request.message, mode, data)
+    if not data and raw_response.response:
+        synthesis = {
+            "answer": raw_response.response,
+            "confidence": {
+                "data_completeness": "0 records retrieved",
+                "sample_size": 0,
+                "disclosure_rate": None,
+                "evidence_status": "insufficient",
+            },
+            "follow_ups": [],
+        }
+    else:
+        synthesis = await llm_service.synthesize_response(request.message, mode, data)
+
+    confidence = dict(synthesis["confidence"])
+    confidence["entity_resolution"] = raw_response.resolved_entities
 
     # Build action suggestions
     actions = [
@@ -398,9 +525,10 @@ async def chat_v2(request: ChatRequest):
     return ChatV2Response(
         answer=synthesis["answer"],
         intent=intent,
-        confidence=synthesis["confidence"],
+        confidence=confidence,
         data=data[:10],
         sql_query=sql_query,
         follow_ups=synthesis["follow_ups"],
         actions=actions,
+        resolved_entities=raw_response.resolved_entities,
     )

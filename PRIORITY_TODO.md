@@ -37,8 +37,10 @@ and fast retrieval before adding more external data volume.
 
 6. **Make builds reproducible and establish CI deployment gates**
    - [ ] Pin Python dependencies and container base images.
-   - [ ] Use `npm ci` with the committed frontend lockfile.
-   - [ ] Fix the existing agentic-RAG test failures.
+   - [x] Use `npm ci` with the committed frontend lockfile.
+   - [ ] Resolve the current frontend dependency audit findings (6 high,
+         5 moderate, and 1 low severity in the 2026-07-11 build).
+   - [x] Fix the existing agentic-RAG test failures.
    - [ ] Require unit, integration, lint, and Compose validation before deployment.
 
 7. **Improve canonical company and asset identity resolution**
@@ -72,6 +74,20 @@ and fast retrieval before adding more external data volume.
 - [x] Expose actionable source freshness and lag in health reporting.
 - [x] Prove and correct Cortellis incremental watermark behavior.
 - [x] Reduce representative EDGAR full-text search latency to seconds or less.
+
+### Evaluation Trustworthiness Sprint
+
+- [x] Regrade the 65-question evaluation using end-to-end correctness criteria.
+- [x] Resolve unambiguous company mentions to canonical IDs before SQL generation.
+- [x] Refuse unsupported milestone/premium metrics instead of substituting total value.
+- [x] Prevent synthesis from adding claims when no populated evidence is returned.
+- [x] Fix EDGAR form filters to use the actual filing subtype.
+- [x] Apply requested modality filters before comp-set candidate ranking.
+- [x] Seed an executable evaluation harness with the first five regression cases.
+- [ ] Convert all 65 questions into executable, versioned golden-set fixtures.
+- [ ] Add governed definitions and truth queries for every financial/date metric.
+- [ ] Require source IDs/citations and evaluation results before rating an answer Strong.
+- [ ] Run the golden set as a CI and pre-deployment gate.
 
 ## Implementation Status vs PRD
 

@@ -1,0 +1,83 @@
+version: 1
+dataset_as_of: 2026-07-11
+cases:
+  - id: 1
+    question: How many deals did Pfizer do in 2024?
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: How many deals did Pfizer do in 2024?
+        mode: auto
+    assertions:
+      - type: equals
+        path: data.0.deal_count
+        value: 23
+      - type: equals
+        path: resolved_entities.0.company_id
+        value: 18767
+
+  - id: 14
+    question: What is the median milestone payment for Phase 3 license deals?
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: What is the median milestone payment for Phase 3 license deals?
+        mode: auto
+    assertions:
+      - type: contains
+        path: answer
+        value: Structured milestone-payment analytics are not available
+      - type: equals
+        path: sql_query
+        value: null
+
+  - id: 23
+    question: Build a comp set for bispecific deals.
+    request:
+      method: POST
+      path: /api/comps/build
+      json:
+        modality: bispecific
+        limit: 5
+    assertions:
+      - type: min_length
+        path: deals
+        value: 1
+      - type: all_contains
+        path: deals
+        field: modality
+        value: bispecific
+
+  - id: 35
+    question: What is Roche's oncology strategy based on its deal pattern?
+    request:
+      method: POST
+      path: /api/chat/v2
+      json:
+        message: What is Roche's oncology strategy based on its deal pattern?
+        mode: auto
+    assertions:
+      - type: excludes
+        path: answer
+        value: Historically
+
+  - id: 61
+    question: Find 8-K filings mentioning agreements.
+    request:
+      method: GET
+      path: /api/edgar/search
+      params:
+        query: agreement
+        mode: fulltext
+        doc_type: 8-K
+        limit: 5
+    assertions:
+      - type: min_length
+        path: $root
+        value: 1
+      - type: all_equal
+        path: $root
+        field: doc_type
+        value: 8-K

@@ -159,13 +159,14 @@ async def get_company_filings(
     params = {"company_id": company_id, "limit": limit, "offset": offset}
 
     if doc_type:
-        type_filter = "AND d.doc_type = :doc_type"
+        type_filter = "AND COALESCE(d.subtype, d.doc_type) = :doc_type"
         params["doc_type"] = doc_type
 
     with get_edgar_session() as session:
         result = session.execute(text(f"""
             SELECT
-                d.id, d.accession_no, d.doc_type, d.title, d.published_at,
+                d.id, d.accession_no, COALESCE(d.subtype, d.doc_type) AS doc_type,
+                d.title, d.published_at,
                 r.filing_date, r.url,
                 e.name as company_name, e.ticker
             FROM documents d
@@ -216,7 +217,7 @@ async def search_filings(
         params["search"] = f"%{search}%"
 
     if doc_type:
-        conditions.append("d.doc_type = :doc_type")
+        conditions.append("COALESCE(d.subtype, d.doc_type) = :doc_type")
         params["doc_type"] = doc_type
 
     if company:
@@ -236,7 +237,8 @@ async def search_filings(
     with get_edgar_session() as session:
         result = session.execute(text(f"""
             SELECT
-                d.id, d.accession_no, d.doc_type, d.title, d.published_at,
+                d.id, d.accession_no, COALESCE(d.subtype, d.doc_type) AS doc_type,
+                d.title, d.published_at,
                 r.filing_date, r.url,
                 e.name as company_name, e.ticker
             FROM documents d
@@ -272,7 +274,8 @@ async def get_filing_detail(filing_id: int):
     with get_edgar_session() as session:
         result = session.execute(text("""
             SELECT
-                d.id, d.accession_no, d.doc_type, d.title, d.published_at,
+                d.id, d.accession_no, COALESCE(d.subtype, d.doc_type) AS doc_type,
+                d.title, d.published_at,
                 d.section_path, d.parse_ok,
                 r.filing_date, r.url, r.filing_metadata,
                 e.id as company_id, e.name as company_name, e.ticker, e.cik,
@@ -343,7 +346,7 @@ async def search_edgar_filings(
             }
 
             if doc_type:
-                conditions.append("d.doc_type = :doc_type")
+                conditions.append("COALESCE(d.subtype, d.doc_type) = :doc_type")
                 params["doc_type"] = doc_type
 
             if company:
@@ -361,7 +364,7 @@ async def search_edgar_filings(
                         c.section,
                         c.text,
                         to_tsvector('english', c.text) AS search_vector,
-                        d.doc_type,
+                        COALESCE(d.subtype, d.doc_type) AS doc_type,
                         d.accession_no,
                         r.filing_date,
                         e.name AS company_name,
@@ -409,7 +412,7 @@ async def search_edgar_filings(
                 params = {"embedding": embedding_str, "limit": limit}
 
                 if doc_type:
-                    conditions.append("d.doc_type = :doc_type")
+                    conditions.append("COALESCE(d.subtype, d.doc_type) = :doc_type")
                     params["doc_type"] = doc_type
 
                 if company:
@@ -426,7 +429,7 @@ async def search_edgar_filings(
                         c.section,
                         c.text,
                         1 - (c.vector <=> CAST(:embedding AS vector)) as score,
-                        d.doc_type,
+                        COALESCE(d.subtype, d.doc_type) AS doc_type,
                         d.accession_no,
                         r.filing_date,
                         e.name as company_name,
@@ -612,7 +615,8 @@ async def get_edgar_deal_detail(deal_id: int):
         prov_result = session.execute(text("""
             SELECT
                 p.id, p.quote_text, p.paragraph_id,
-                d.id as doc_id, d.doc_type, d.accession_no,
+                d.id as doc_id, COALESCE(d.subtype, d.doc_type) AS doc_type,
+                d.accession_no,
                 c.name as company_name
             FROM provenance p
             LEFT JOIN documents d ON p.document_id = d.id
@@ -705,7 +709,8 @@ async def get_filing_content(
     with get_edgar_source_session() as session:
         # Verify filing exists
         doc = session.execute(text("""
-            SELECT d.id, d.doc_type, d.title, d.accession_no, d.published_at,
+            SELECT d.id, COALESCE(d.subtype, d.doc_type) AS doc_type,
+                   d.title, d.accession_no, d.published_at,
                    e.name as company_name, e.ticker, r.url
             FROM documents d
             JOIN raw_documents r ON d.raw_document_id = r.id
@@ -854,7 +859,8 @@ async def get_filing_related_deals(filing_id: int):
     # Get filing info
     with get_edgar_source_session() as edgar_session:
         doc = edgar_session.execute(text("""
-            SELECT d.id, d.published_at, d.doc_type, d.accession_no,
+            SELECT d.id, d.published_at,
+                   COALESCE(d.subtype, d.doc_type) AS doc_type, d.accession_no,
                    e.cik, e.name as company_name, r.filing_date
             FROM documents d
             JOIN raw_documents r ON d.raw_document_id = r.id

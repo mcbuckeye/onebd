@@ -153,12 +153,12 @@ class TestEdgarFilingSearch:
         query = "agreement"
 
         result = edgar_source_session.execute(text("""
-            SELECT c.id, d.doc_type
+            SELECT c.id, COALESCE(d.subtype, d.doc_type) AS doc_type
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
             WHERE to_tsvector('english', c.text) @@
                   plainto_tsquery('english', :query)
-              AND d.doc_type = '8-K'
+              AND COALESCE(d.subtype, d.doc_type) = '8-K'
             LIMIT 5
         """), {"query": query})
 

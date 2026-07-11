@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 import structlog
 
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 
 from .models import (
     ConversationState,
@@ -756,8 +755,6 @@ If information was incomplete or errors occurred, note what additional data migh
 
         Yields events for UI to display reasoning trace in real-time.
         """
-        import asyncio
-
         start_time = time.time()
 
         initial_state = AgentState()
@@ -777,7 +774,11 @@ If information was incomplete or errors occurred, note what additional data migh
             # We simulate by running and yielding checkpoints
 
             final_state = await self.graph.ainvoke(initial_state)
-            cs = final_state.conversation_state
+            cs = (
+                final_state.get("conversation_state")
+                if isinstance(final_state, dict)
+                else final_state.conversation_state
+            )
 
             # Yield all reasoning steps
             if cs:

@@ -580,7 +580,7 @@ async def unified_search(
                                 c.document_id,
                                 c.text AS content,
                                 to_tsvector('english', c.text) AS search_vector,
-                                d.doc_type,
+                                COALESCE(d.subtype, d.doc_type) AS doc_type,
                                 d.accession_no,
                                 r.filing_date,
                                 e.name AS company_name,

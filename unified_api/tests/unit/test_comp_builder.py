@@ -1,8 +1,6 @@
 """
 TDD: Comp builder tests — write these FIRST, then implement.
 """
-import pytest
-
 
 class TestCompMatchScoring:
     """Test deal similarity scoring for comp building."""
@@ -80,3 +78,22 @@ class TestCompSetStats:
         assert stats["disclosed"] == 0
         assert stats["mean"] is None
         assert stats["median"] is None
+
+
+class TestCompCandidateFilters:
+    """Requested dimensions must constrain the SQL candidate pool."""
+
+    def test_modality_is_applied_before_similarity_ranking(self):
+        from unified_api.routers.comps import CompBuildRequest, build_comp_filters
+
+        conditions, params = build_comp_filters(CompBuildRequest(
+            indication="NSCLC",
+            phase="Phase 2",
+            modality="bispecific",
+            deal_type="License",
+        ))
+
+        where = " ".join(conditions)
+        assert "deal_technologies" in where
+        assert "t.name ILIKE :modality" in where
+        assert params["modality"] == "%bispecific%"

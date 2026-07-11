@@ -3,11 +3,11 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json ./
+# Copy the manifest and committed lockfile before source code for a stable cache layer.
+COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm install
+# Install exactly the dependency graph recorded in package-lock.json.
+RUN npm ci
 
 # Copy source files
 COPY . .

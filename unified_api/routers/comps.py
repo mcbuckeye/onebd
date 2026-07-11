@@ -31,6 +31,50 @@ class CompSaveRequest(BaseModel):
     notes: Optional[str] = None
 
 
+def build_comp_filters(req: CompBuildRequest) -> tuple[list[str], dict]:
+    """Build candidate filters so every requested comp dimension is enforced."""
+    conditions: list[str] = []
+    params: dict = {"limit": min(req.limit * 3, 100)}
+
+    if req.indication:
+        conditions.append("""
+            d.id IN (
+                SELECT di.deal_id FROM deal_indications di
+                JOIN indications i ON i.id = di.indication_id
+                WHERE i.name ILIKE :indication
+            )
+        """)
+        params["indication"] = f"%{req.indication}%"
+
+    if req.phase:
+        conditions.append("d.phase_highest_start ILIKE :phase")
+        params["phase"] = f"%{req.phase}%"
+
+    if req.modality:
+        conditions.append("""
+            d.id IN (
+                SELECT dt.deal_id FROM deal_technologies dt
+                JOIN technologies t ON t.id = dt.technology_id
+                WHERE t.name ILIKE :modality
+            )
+        """)
+        params["modality"] = f"%{req.modality}%"
+
+    if req.deal_type:
+        conditions.append("d.agreement_type ILIKE :deal_type")
+        params["deal_type"] = f"%{req.deal_type}%"
+
+    if req.date_from:
+        conditions.append("d.date_start >= :date_from")
+        params["date_from"] = req.date_from
+
+    if req.date_to:
+        conditions.append("d.date_start <= :date_to")
+        params["date_to"] = req.date_to
+
+    return conditions, params
+
+
 @router.post("/comps/build")
 async def build_comps(req: CompBuildRequest):
     """
@@ -38,34 +82,7 @@ async def build_comps(req: CompBuildRequest):
     """
     with get_cortellis_session() as session:
         # Build query to find candidate deals
-        conditions = []
-        params: dict = {"limit": min(req.limit * 3, 100)}  # fetch more, then score/rank
-
-        if req.indication:
-            conditions.append("""
-                d.id IN (
-                    SELECT di.deal_id FROM deal_indications di
-                    JOIN indications i ON i.id = di.indication_id
-                    WHERE i.name ILIKE :indication
-                )
-            """)
-            params["indication"] = f"%{req.indication}%"
-
-        if req.phase:
-            conditions.append("d.phase_highest_start ILIKE :phase")
-            params["phase"] = f"%{req.phase}%"
-
-        if req.deal_type:
-            conditions.append("d.agreement_type ILIKE :deal_type")
-            params["deal_type"] = f"%{req.deal_type}%"
-
-        if req.date_from:
-            conditions.append("d.date_start >= :date_from")
-            params["date_from"] = req.date_from
-
-        if req.date_to:
-            conditions.append("d.date_start <= :date_to")
-            params["date_to"] = req.date_to
+        conditions, params = build_comp_filters(req)
 
         where = " AND ".join(conditions) if conditions else "1=1"
 

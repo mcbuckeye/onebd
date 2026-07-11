@@ -1,7 +1,7 @@
 """
 Neo4j graph database tool for the Agentic RAG agent.
 """
-from typing import Any, Optional
+from typing import Optional
 import structlog
 
 from neo4j import AsyncGraphDatabase, AsyncDriver
@@ -135,14 +135,13 @@ len(await result.fetch_all()) if hasattr(result, 'fetch_all') else 1000
                 query_executed=query
             )
 
-    async def is_available(self) -> bool:
-        """Check if Neo4j is reachable."""
-        try:
-            driver = await self._get_driver()
-            await driver.verify_connectivity()
-            return True
-        except Exception:
-            return False
+    def is_available(self) -> bool:
+        """Return whether the tool is configured without leaking an un-awaited coroutine."""
+        return self._driver is not None or all([
+            self._uri,
+            self._username,
+            self._password,
+        ])
 
     def get_schema_description(self) -> str:
         """Return schema description for LLM."""

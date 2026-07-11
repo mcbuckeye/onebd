@@ -72,6 +72,16 @@ Important notes:
 - When searching for "largest" or deals with amounts, add: WHERE f.total_projected_current_amount IS NOT NULL
 - Use LEFT JOIN for deal_finance_summary since not all deals have financial data
 - Use NULLS LAST when ordering by amounts: ORDER BY amount DESC NULLS LAST
+- Resolved entities below are authoritative. For status=resolved, filter on the
+  supplied companies.id through deal_companies; do not substitute a name match.
+- For status=ambiguous, do not silently merge candidates. Return candidate company
+  IDs/names so the user can disambiguate.
+- Never treat total_projected_current_amount as an upfront, milestone, royalty, or
+  acquisition-premium value. If the requested metric has no governed column, do
+  not substitute a different financial field.
+
+Resolved entities (JSON):
+{resolved_entities}
 
 User question: {question}
 
@@ -158,13 +168,16 @@ class LLMService:
             logger.error("Intent classification failed", error=str(e))
             return "general"
 
-    async def generate_sql(self, question: str) -> str:
+    async def generate_sql(self, question: str, resolved_entities: Optional[List[dict]] = None) -> str:
         """Generate SQL query from natural language question."""
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "user", "content": SQL_GENERATION_PROMPT.format(question=question)}
+                    {"role": "user", "content": SQL_GENERATION_PROMPT.format(
+                        question=question,
+                        resolved_entities=json.dumps(resolved_entities or [], default=str),
+                    )}
                 ],
                 max_tokens=500,
                 temperature=0,
@@ -212,6 +225,25 @@ class LLMService:
 
     async def synthesize_response(self, question: str, mode: str, data: list) -> dict:
         """Generate a synthesized intelligence response with confidence indicators."""
+        meaningful = any(
+            not isinstance(row, dict) or any(value is not None for value in row.values())
+            for row in data
+        )
+        if not data or not meaningful:
+            return {
+                "answer": (
+                    "No supporting records with populated values were found for this "
+                    "question, so the platform cannot provide a reliable answer."
+                ),
+                "confidence": {
+                    "data_completeness": f"{len(data)} records retrieved",
+                    "sample_size": len(data),
+                    "disclosure_rate": None,
+                    "evidence_status": "insufficient",
+                },
+                "follow_ups": _suggest_follow_ups(question),
+            }
+
         limited = data[:30]
         results_json = json.dumps(limited, indent=2, default=str)
 
