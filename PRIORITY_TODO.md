@@ -32,7 +32,9 @@ and fast retrieval before adding more external data volume.
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
    - [ ] Capture representative `EXPLAIN (ANALYZE, BUFFERS)` plans.
-   - [ ] Remove redundant indexes and verify pgvector index usage.
+   - [ ] Create and validate the missing `chunks.embedding` vector index, then
+         verify query-plan usage; the production integrity check currently skips it.
+   - [ ] Remove redundant indexes after query-plan validation.
    - [ ] Add latency-oriented integration coverage for common and filtered queries.
 
 6. **Make builds reproducible and establish CI deployment gates**
@@ -44,6 +46,8 @@ and fast retrieval before adding more external data volume.
    - [ ] Require unit, integration, lint, and Compose validation before deployment.
 
 7. **Improve canonical company and asset identity resolution**
+   - [ ] Raise production high-confidence mappings above the 20% quality floor;
+         the database-attached suite measured 19.5% on 2026-07-11.
    - [ ] Normalize CIK, LEI, ticker, domain, legal name, aliases, and ownership.
    - [ ] Normalize INN/development codes and public drug/target identifiers.
    - [ ] Store match evidence, confidence, method, and review status.

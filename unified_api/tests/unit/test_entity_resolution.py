@@ -12,7 +12,6 @@ Key validations:
 """
 import pytest
 from sqlalchemy import text
-from typing import Dict, Any, List, Optional
 
 # Known company mappings for validation (ground truth)
 KNOWN_MAPPINGS = [
@@ -142,8 +141,15 @@ class TestEntityResolution:
             FROM company_xref cx
             JOIN companies c ON c.id = cx.cortellis_id
             WHERE c.name ILIKE :pattern
+              AND cx.cik IS NOT NULL
+            ORDER BY
+                CASE WHEN LOWER(c.name) = LOWER(:company_name) THEN 0 ELSE 1 END,
+                cx.match_confidence DESC NULLS LAST
             LIMIT 1
-        """), {"pattern": f"%{company_pattern}%"})
+        """), {
+            "pattern": f"%{company_pattern}%",
+            "company_name": company_pattern,
+        })
 
         row = result.fetchone()
 
