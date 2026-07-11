@@ -109,6 +109,44 @@ def test_company_year_deal_count_uses_governed_sql():
     assert "2025-01-01" in sql
 
 
+@pytest.mark.parametrize(
+    ("question", "required_sql"),
+    [
+        ("Who are the top 5 most active acquirers this year?", "dc.role = 'Partner'"),
+        ("What is the average deal size in oncology?", "ta.name = 'Cancer'"),
+        ("Valuation range for oncology M&A deals, 2020–2025?", "d.agreement_type = 'Company - M&A"),
+        ("How have deal values trended over five years?", "INTERVAL '5 years'"),
+        ("Percentage of 2024 deals that were M&A vs licensing.", "ILIKE '%License%'"),
+        ("Who is most actively acquiring oncology assets?", "ta.name = 'Cancer'"),
+        ("Top 20 largest pharma deals ever.", "LIMIT 20"),
+        ("Deal-activity heatmap by therapy area.", "GROUP BY ta.name"),
+        ("Deal volume by geography.", "JOIN territories t"),
+    ],
+)
+def test_high_value_questions_use_governed_sql(question, required_sql):
+    sql = _build_governed_sql(question, [])
+
+    assert sql is not None
+    assert required_sql in sql
+
+
+def test_financial_governed_sql_normalizes_currency_and_unit():
+    sql = _build_governed_sql("What is the average deal size in oncology?", [])
+
+    assert "total_projected_current_currency = 'USD'" in sql
+    assert "total_projected_current_unit = 'Million'" in sql
+
+
+def test_ma_governed_sql_uses_agreement_type_not_empty_deal_type():
+    sql = _build_governed_sql(
+        "Valuation range for oncology M&A deals, 2020–2025?",
+        [],
+    )
+
+    assert "agreement_type" in sql
+    assert "deal_type" not in sql
+
+
 @pytest.mark.asyncio
 async def test_empty_synthesis_is_deterministic_and_grounded():
     service = object.__new__(LLMService)

@@ -15,7 +15,9 @@ from sqlalchemy import text
 
 from unified_api.services.entity_resolution import (
     EntityResolutionService,
+    candidate_drug_aliases,
     classify_name_match,
+    normalize_identifier_value,
 )
 
 # Known company mappings for validation (ground truth)
@@ -60,6 +62,28 @@ def test_distinct_affiliates_remain_fuzzy_matches():
         "Johnson & Johnson",
         0.67,
     ) == ("trigram", 0.67)
+
+
+def test_domain_and_lei_normalization_preserve_durable_identity():
+    assert normalize_identifier_value("domain", "https://www.Pfizer.com/about") == "pfizer.com"
+    assert normalize_identifier_value("lei", "5493-00ABC xyz") == "549300ABCXYZ"
+
+
+def test_drug_alias_candidates_do_not_split_organization_suffixes_as_synonyms():
+    aliases = candidate_drug_aliases(
+        "SUV-2208A, Example University/Example Bio"
+    )
+
+    assert aliases == [
+        ("display_name", "SUV-2208A, Example University/Example Bio", 1.0),
+        ("development_code", "SUV-2208A", 0.7),
+    ]
+
+
+def test_simple_drug_display_name_is_not_given_a_speculative_alias():
+    assert candidate_drug_aliases("enterololin") == [
+        ("display_name", "enterololin", 1.0)
+    ]
 
 
 @pytest.mark.cortellis

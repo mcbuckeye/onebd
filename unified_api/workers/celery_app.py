@@ -79,6 +79,11 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.maintenance.refresh_materialized_views",
             "schedule": crontab(hour=8, minute=30),
         },
+        # Cheap, resumable normalization of the structured Cortellis finance JSON.
+        "extract-cortellis-financial-terms": {
+            "task": "unified_api.workers.tasks.enrichment.extract_financial_terms",
+            "schedule": crontab(minute="*/15"),
+        },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
             "task": "unified_api.workers.tasks.pageindex.batch_index_contracts",
@@ -135,6 +140,23 @@ def backfill_edgar_filings():
     except Exception as e:
         logger.error("EDGAR historical backfill failed", error=str(e))
         return {"status": "failed", "lane": "backfill", "error": str(e)}
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.extract_financial_terms")
+def extract_cortellis_financial_terms():
+    """Normalize one resumable batch of Cortellis finance JSON."""
+    logger.info("Starting Cortellis financial term extraction")
+    try:
+        from unified_api.services.database import get_cortellis_session
+        from unified_api.services.financial_terms import extract_financial_term_batch
+
+        with get_cortellis_session() as session:
+            result = extract_financial_term_batch(session, batch_size=1000)
+        logger.info("Cortellis financial term extraction complete", **result)
+        return result
+    except Exception as e:
+        logger.error("Cortellis financial term extraction failed", error=str(e))
+        return {"status": "failed", "error": str(e)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.cortellis.sync_deals")

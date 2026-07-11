@@ -144,6 +144,7 @@ class MemoryIngestionService(EDGARIngestionService):
         self.advanced = []
         self.finished = None
         self.processed = []
+        self.recorded_run = None
 
     def ensure_sync_state(self, initial_target):
         pass
@@ -171,6 +172,9 @@ class MemoryIngestionService(EDGARIngestionService):
 
     def finish_recent(self, status, stats, error=None):
         self.finished = (status, stats, error)
+
+    def record_sync_run(self, **kwargs):
+        self.recorded_run = kwargs
 
     def filing_is_known(self, accession_number, form):
         return False
@@ -202,6 +206,9 @@ async def test_incremental_sync_filters_companies_and_advances_empty_days():
     assert result["documents_created"] == 2
     assert service.processed == [("0000320193-26-000050", 42)]
     assert service.advanced == [date(2026, 7, 9), date(2026, 7, 10)]
+    assert service.recorded_run["cursor_start"] == date(2026, 7, 8)
+    assert service.recorded_run["cursor_end"] == date(2026, 7, 10)
+    assert service.recorded_run["stats"]["filings_fetched"] == 1
 
 
 @pytest.mark.asyncio
@@ -225,6 +232,8 @@ async def test_recent_sync_ignores_backfill_cursor_and_does_not_advance_it():
     assert result["filings_fetched"] == 1
     assert service.processed == [("0000320193-26-000050", 42)]
     assert service.advanced == []
+    assert service.recorded_run["lane"] == "recent"
+    assert service.recorded_run["cursor_end"] is None
 
 
 def test_celery_task_runs_ingestion_service():

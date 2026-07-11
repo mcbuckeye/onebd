@@ -28,6 +28,17 @@ COPY unified_api/ ./unified_api/
 COPY src/ ./src/
 COPY agent/ ./agent/
 
+# Record the exact checkout in the image. Dokploy builds from its Git checkout,
+# so this gives post-deployment verification an immutable target.
+COPY .git/HEAD /tmp/onebd-git/HEAD
+COPY .git/refs/ /tmp/onebd-git/refs/
+RUN head_value="$(cat /tmp/onebd-git/HEAD)" && \
+    case "$head_value" in \
+      "ref: "*) cat "/tmp/onebd-git/${head_value#ref: }" ;; \
+      *) printf '%s\n' "$head_value" ;; \
+    esac > /app/BUILD_COMMIT && \
+    rm -rf /tmp/onebd-git
+
 # Create storage directory
 RUN mkdir -p /app/storage /app/data
 

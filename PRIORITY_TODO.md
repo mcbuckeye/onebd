@@ -8,8 +8,10 @@ and fast retrieval before adding more external data volume.
 1. **Repair and verify Dokploy automatic deployment**
    - [x] A push to `main` creates a Dokploy deployment record and queue job.
    - [x] The checkout advances to the pushed SHA and affected services rebuild.
-   - [ ] Health checks pass and the deployed SHA is visible from the API.
-   - [ ] Failed health checks produce a visible failure or rollback.
+   - [x] Health checks pass and the deployed SHA is visible from the API image.
+   - [x] A post-Dokploy GitHub workflow waits for the expected SHA and visibly
+         fails if deployment health or the five production regressions fail.
+   - [ ] Add automated rollback after a failed post-deployment gate.
 
 2. **Separate current EDGAR ingestion from historical backfill**
    - [x] A recent-data lane always processes the latest SEC business days.
@@ -18,11 +20,16 @@ and fast retrieval before adding more external data volume.
    - [ ] Run bounded catch-up jobs until the historical cursor reaches current data.
          A verified manual run advanced 2025-11-23 through 2025-11-30 and added
          139 filings, 275 documents, and 3,653 chunks without error.
+   - [x] Persist append-only recent/backfill run history and report observed
+         cursor throughput, filings/hour, remaining runs, and estimated catch-up.
 
 3. **Add unified source-sync monitoring and alerts**
    - [ ] Report the last attempt, last success, status, cursor, source-data date,
          lag, duration, counts, retry state, and error for each source.
+   - [x] Report those fields plus throughput and ETA for both EDGAR lanes; retry
+         state still needs a common model across Cortellis and graph syncs.
    - [x] Mark `/api/health/data` degraded when a source exceeds its lag budget.
+   - [x] Treat partial source runs as degraded even when their timestamp is fresh.
    - [ ] Add notifications for failed or stale Cortellis, EDGAR, and graph jobs.
 
 4. **Verify and harden Cortellis incremental synchronization**
@@ -57,8 +64,13 @@ and fast retrieval before adding more external data volume.
    - [x] Add a provenance-aware parent/subsidiary relationship model without
          silently rolling subsidiaries into parents.
    - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
+   - [x] Add provenance/review schemas for company LEIs/domains and public drug
+         identifiers; external identifier population remains pending.
    - [ ] Normalize INN/development codes and public drug/target identifiers.
-   - [ ] Store match evidence, confidence, method, and review status.
+   - [x] Seed normalized Cortellis display names and conservative development-code
+         candidates for all drugs without treating organization suffixes as aliases.
+   - [x] Store match evidence, confidence, method, review status, reviewer, and
+         source reference for company aliases/identifiers, ownership, and drugs.
    - [ ] Replace nested cross-database linking loops with bulk operations.
 
 8. **Add ClinicalTrials.gov/AACT as the first new external source**
@@ -74,7 +86,10 @@ and fast retrieval before adding more external data volume.
          ClinicalTrials.gov without coupling OneBD to BeOne-specific CSV outputs.
 
 10. **Build higher-value intelligence workflows after the foundation is stable**
-    - [ ] Structured milestone, royalty, and scale-clause extraction.
+    - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a
+          provenance-preserving beta table with resumable scheduled extraction.
+    - [ ] Validate extracted term precision/coverage before enabling governed
+          aggregate answers; add contract-derived scale-clause extraction.
     - [ ] Deal-to-trial and deal-to-regulatory-event timelines.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.
@@ -101,7 +116,11 @@ and fast retrieval before adding more external data volume.
 - [x] Publish governed definitions for supported and unsupported financial metrics.
 - [x] Return source IDs/query provenance and evidence status from Chat v2.
 - [x] Validate the full catalog and regression harness in CI.
-- [ ] Replace each catalog probe's basic response assertion with deterministic truth.
+- [x] Require every Strong-rated case to compare the deployed response with a
+      read-only database truth query. Ten cases now meet this standard; six
+      optimistic/context-dependent ratings were downgraded pending real proof.
+- [ ] Replace each remaining catalog probe's basic response assertion with
+      deterministic truth or an evidence-scored narrative rubric.
 
 ## Implementation Status vs PRD
 

@@ -26,8 +26,12 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Git
-.git/
+# Git: retain only non-secret commit metadata so deployed images can identify
+# the exact checkout Dokploy built. All other .git content remains excluded.
+.git/*
+!.git/HEAD
+!.git/refs/
+!.git/refs/**
 .gitignore
 
 # Docker

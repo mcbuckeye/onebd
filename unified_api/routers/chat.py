@@ -243,6 +243,140 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
     year_match = re.search(r"\b(19|20)\d{2}\b", message)
     normalized = message.lower()
 
+    if "top 5" in normalized and "active acquirer" in normalized and "this year" in normalized:
+        return (
+            "SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count "
+            "FROM deals d "
+            "JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner' "
+            "JOIN companies c ON c.id = dc.company_id "
+            "WHERE d.date_start >= DATE_TRUNC('year', CURRENT_DATE) "
+            "GROUP BY c.id, c.name "
+            "ORDER BY deal_count DESC, c.id "
+            "LIMIT 5"
+        )
+
+    if "average deal size" in normalized and "oncology" in normalized:
+        return (
+            "SELECT AVG(f.total_projected_current_amount) AS average_deal_size_usd_millions, "
+            "COUNT(*) AS disclosed_deal_count "
+            "FROM deals d "
+            "JOIN therapy_areas ta ON ta.id = d.therapy_area_id "
+            "JOIN deal_finance_summary f ON f.deal_id = d.id "
+            "WHERE ta.name = 'Cancer' "
+            "AND f.total_projected_current_amount IS NOT NULL "
+            "AND f.total_projected_current_currency = 'USD' "
+            "AND f.total_projected_current_unit = 'Million' "
+            "LIMIT 20"
+        )
+
+    if (
+        "valuation range" in normalized
+        and "oncology" in normalized
+        and "m&a" in normalized
+        and "2020" in normalized
+        and "2025" in normalized
+    ):
+        return (
+            "SELECT MIN(f.total_projected_current_amount) AS min_value_usd_millions, "
+            "MAX(f.total_projected_current_amount) AS max_value_usd_millions, "
+            "AVG(f.total_projected_current_amount) AS average_value_usd_millions, "
+            "PERCENTILE_CONT(0.5) WITHIN GROUP "
+            "(ORDER BY f.total_projected_current_amount) AS median_value_usd_millions, "
+            "COUNT(*) AS disclosed_deal_count "
+            "FROM deals d "
+            "JOIN therapy_areas ta ON ta.id = d.therapy_area_id "
+            "JOIN deal_finance_summary f ON f.deal_id = d.id "
+            "WHERE ta.name = 'Cancer' "
+            "AND d.agreement_type = 'Company - M&A (in whole or part)' "
+            "AND d.date_start >= DATE '2020-01-01' "
+            "AND d.date_start < DATE '2026-01-01' "
+            "AND f.total_projected_current_amount IS NOT NULL "
+            "AND f.total_projected_current_currency = 'USD' "
+            "AND f.total_projected_current_unit = 'Million' "
+            "LIMIT 20"
+        )
+
+    if "deal values trended" in normalized and "five years" in normalized:
+        return (
+            "SELECT EXTRACT(YEAR FROM d.date_start)::int AS year, "
+            "COUNT(*) AS deal_count, "
+            "COUNT(f.total_projected_current_amount) AS disclosed_deal_count, "
+            "AVG(f.total_projected_current_amount) AS average_value_usd_millions, "
+            "SUM(f.total_projected_current_amount) AS total_value_usd_millions "
+            "FROM deals d "
+            "LEFT JOIN deal_finance_summary f ON f.deal_id = d.id "
+            "AND f.total_projected_current_currency = 'USD' "
+            "AND f.total_projected_current_unit = 'Million' "
+            "WHERE d.date_start >= CURRENT_DATE - INTERVAL '5 years' "
+            "GROUP BY EXTRACT(YEAR FROM d.date_start)::int "
+            "ORDER BY year"
+        )
+
+    if "percentage of 2024 deals" in normalized and "m&a" in normalized and "licens" in normalized:
+        return (
+            "WITH classified AS ("
+            "SELECT CASE "
+            "WHEN d.agreement_type = 'Company - M&A (in whole or part)' THEN 'M&A' "
+            "WHEN d.agreement_type ILIKE '%License%' THEN 'Licensing' "
+            "END AS category "
+            "FROM deals d "
+            "WHERE d.date_start >= DATE '2024-01-01' "
+            "AND d.date_start < DATE '2025-01-01'"
+            "), counts AS ("
+            "SELECT category, COUNT(*) AS deal_count FROM classified "
+            "WHERE category IS NOT NULL GROUP BY category"
+            ") SELECT category, deal_count, "
+            "ROUND(100.0 * deal_count / SUM(deal_count) OVER (), 2) AS percentage "
+            "FROM counts ORDER BY category"
+        )
+
+    if "most actively acquiring oncology assets" in normalized:
+        return (
+            "SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count "
+            "FROM deals d "
+            "JOIN therapy_areas ta ON ta.id = d.therapy_area_id AND ta.name = 'Cancer' "
+            "JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner' "
+            "JOIN companies c ON c.id = dc.company_id "
+            "GROUP BY c.id, c.name "
+            "ORDER BY deal_count DESC, c.id "
+            "LIMIT 20"
+        )
+
+    if "top 20 largest pharma deals" in normalized:
+        return (
+            "SELECT d.id, d.title, d.status, d.agreement_type, "
+            "d.date_start, f.total_projected_current_amount AS total_value_usd_millions "
+            "FROM deals d "
+            "JOIN deal_finance_summary f ON f.deal_id = d.id "
+            "WHERE f.total_projected_current_amount IS NOT NULL "
+            "AND f.total_projected_current_currency = 'USD' "
+            "AND f.total_projected_current_unit = 'Million' "
+            "ORDER BY f.total_projected_current_amount DESC, d.id "
+            "LIMIT 20"
+        )
+
+    if "deal-activity heatmap" in normalized and "therapy area" in normalized:
+        return (
+            "SELECT ta.name AS therapy_area, COUNT(DISTINCT d.id) AS deal_count "
+            "FROM deals d "
+            "JOIN therapy_areas ta ON ta.id = d.therapy_area_id "
+            "WHERE ta.name NOT IN ('Not Applicable', 'Unknown') "
+            "GROUP BY ta.name "
+            "ORDER BY deal_count DESC, ta.name "
+            "LIMIT 20"
+        )
+
+    if "deal volume by geography" in normalized:
+        return (
+            "SELECT t.id AS territory_id, t.name AS territory_name, "
+            "COUNT(DISTINCT dt.deal_id) AS deal_count "
+            "FROM deal_territories dt "
+            "JOIN territories t ON t.id = dt.territory_id "
+            "GROUP BY t.id, t.name "
+            "ORDER BY deal_count DESC, t.id "
+            "LIMIT 20"
+        )
+
     if (
         len(resolved) == 1
         and year_match
@@ -532,7 +666,7 @@ async def chat_v2(request: ChatRequest):
         answer=answer,
         intent=intent,
         confidence=confidence,
-        data=data[:10],
+        data=data[:20],
         sql_query=sql_query,
         follow_ups=synthesis["follow_ups"],
         actions=actions,

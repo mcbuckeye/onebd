@@ -5,7 +5,10 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 import structlog
 import redis
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+import math
+from pathlib import Path
+import re
 
 from unified_api.config import settings
 from unified_api.services.database import check_cortellis_connection, check_edgar_connection
@@ -13,6 +16,15 @@ from unified_api.services.database import check_cortellis_connection, check_edga
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+
+def _build_commit() -> str:
+    """Return immutable image commit metadata when built from a Git checkout."""
+    try:
+        commit = Path("/app/BUILD_COMMIT").read_text().strip()
+    except OSError:
+        return "unknown"
+    return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else "unknown"
 
 
 def _as_utc(value):
@@ -46,6 +58,8 @@ def _sync_freshness(last_completed, warn_hours, critical_hours, run_status=None)
     )
     if run_status == "failed":
         status = "critical"
+    elif run_status == "partial":
+        status = "warning"
     elif run_status == "running":
         status = "running"
     elif age_hours >= critical_hours:
@@ -54,10 +68,110 @@ def _sync_freshness(last_completed, warn_hours, critical_hours, run_status=None)
         status = "warning"
     else:
         status = "ok"
+    detail = f"last completed {age_hours:.1f}h ago"
+    if run_status in {"failed", "partial"}:
+        detail = f"last run {run_status}; {detail}"
     return {
         "status": status,
         "age_hours": age_hours,
-        "detail": f"last completed {age_hours:.1f}h ago",
+        "detail": detail,
+    }
+
+
+def _as_date(value):
+    if value is None:
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _backfill_progress(
+    cursor,
+    target,
+    runs,
+    *,
+    schedule_interval_hours=2.0,
+    fallback_days_per_run=7.0,
+):
+    """Estimate EDGAR catch-up from append-only observed run history."""
+    cursor = _as_date(cursor)
+    target = _as_date(target)
+    if cursor is None or target is None:
+        return {
+            "backlog_days": None,
+            "estimate_status": "unavailable",
+            "detail": "cursor or target is unavailable",
+        }
+
+    backlog_days = max(0, (target - cursor).days)
+    completed_runs = []
+    total_days_advanced = 0
+    total_filings = 0
+    total_duration_hours = 0.0
+    for run in runs or []:
+        if run.get("status") not in {"completed", "partial"}:
+            continue
+        start = _as_date(run.get("cursor_start"))
+        end = _as_date(run.get("cursor_end"))
+        started_at = _as_utc(run.get("started_at"))
+        completed_at = _as_utc(run.get("completed_at"))
+        if start is None or end is None or completed_at is None or started_at is None:
+            continue
+        duration_hours = max(
+            0.0,
+            (completed_at - started_at).total_seconds() / 3600,
+        )
+        completed_runs.append(run)
+        total_days_advanced += max(0, (end - start).days)
+        total_filings += int(run.get("filings_fetched") or 0)
+        total_duration_hours += duration_hours
+
+    if completed_runs and total_days_advanced > 0:
+        days_per_run = total_days_advanced / len(completed_runs)
+        estimate_basis = "observed"
+    else:
+        days_per_run = max(0.1, float(fallback_days_per_run))
+        estimate_basis = "configured_capacity"
+
+    average_duration_hours = (
+        total_duration_hours / len(completed_runs) if completed_runs else None
+    )
+    effective_interval = max(
+        float(schedule_interval_hours),
+        average_duration_hours or 0.0,
+    )
+    estimated_runs = math.ceil(backlog_days / days_per_run) if backlog_days else 0
+    estimated_hours = round(estimated_runs * effective_interval, 1)
+    estimated_completion = datetime.now(timezone.utc) + timedelta(hours=estimated_hours)
+
+    return {
+        "backlog_days": backlog_days,
+        "target_date": target.isoformat(),
+        "cursor_date": cursor.isoformat(),
+        "runs_sampled": len(completed_runs),
+        "cursor_days_per_run": round(days_per_run, 2),
+        "average_run_duration_seconds": (
+            round(average_duration_hours * 3600, 1)
+            if average_duration_hours is not None
+            else None
+        ),
+        "filings_per_run": (
+            round(total_filings / len(completed_runs), 2)
+            if completed_runs
+            else None
+        ),
+        "filings_per_hour": (
+            round(total_filings / total_duration_hours, 2)
+            if total_duration_hours > 0
+            else None
+        ),
+        "estimated_runs_remaining": estimated_runs,
+        "estimated_catchup_hours": estimated_hours,
+        "estimated_completion_at": estimated_completion.isoformat(),
+        "estimate_status": "caught_up" if backlog_days == 0 else estimate_basis,
     }
 
 
@@ -65,6 +179,7 @@ class HealthResponse(BaseModel):
     """Health check response."""
     status: str
     version: str
+    commit: str
     services: dict
 
 
@@ -131,6 +246,7 @@ async def health_check():
     return HealthResponse(
         status="healthy" if all_healthy else "degraded",
         version=settings.app_version,
+        commit=_build_commit(),
         services=services,
     )
 
@@ -138,7 +254,11 @@ async def health_check():
 @router.get("/api/health")
 async def api_health():
     """Simple health check for load balancers."""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "version": settings.app_version,
+        "commit": _build_commit(),
+    }
 
 
 @router.get("/api/index-status", response_model=IndexStatus)
@@ -317,10 +437,27 @@ async def data_health_check():
                 if backfill:
                     backfill_info = dict(backfill)
                     cursor = backfill["last_index_date"]
-                    backfill_info["backlog_days"] = max(
-                        0,
-                        ((datetime.now(timezone.utc).date() - date.resolution) - cursor).days,
+                    history = []
+                    if session.execute(text(
+                        "SELECT to_regclass('public.edgar_sync_runs')"
+                    )).scalar():
+                        history = session.execute(text("""
+                            SELECT cursor_start, cursor_end, started_at, completed_at,
+                                   status, filings_fetched
+                            FROM edgar_sync_runs
+                            WHERE lane = 'backfill'
+                            ORDER BY completed_at DESC
+                            LIMIT 30
+                        """)).mappings().all()
+                    progress = _backfill_progress(
+                        cursor,
+                        datetime.now(timezone.utc).date() - date.resolution,
+                        history,
+                        schedule_interval_hours=2,
+                        fallback_days_per_run=settings.edgar_sync_batch_days,
                     )
+                    backfill_info["backlog_days"] = progress["backlog_days"]
+                    backfill_info["progress"] = progress
                     backfill_info["freshness"] = _sync_freshness(
                         backfill.get("completed_at") or backfill.get("last_run_at"),
                         settings.edgar_freshness_warn_hours,

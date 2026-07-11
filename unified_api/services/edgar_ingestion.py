@@ -168,6 +168,7 @@ class EDGARIngestionService:
                 VALUES (1, :initial_cursor)
                 ON CONFLICT (id) DO NOTHING
             """), {"initial_cursor": initial_cursor})
+        self.ensure_sync_run_history()
 
     def ensure_recent_sync_state(self) -> None:
         """Create state for the independent recent-filings ingestion lane."""
@@ -193,6 +194,71 @@ class EDGARIngestionService:
                 VALUES (1)
                 ON CONFLICT (id) DO NOTHING
             """))
+        self.ensure_sync_run_history()
+
+    def ensure_sync_run_history(self) -> None:
+        """Create an append-only run ledger used for throughput and ETA metrics."""
+        with self.session_context() as session:
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS edgar_sync_runs (
+                    id BIGSERIAL PRIMARY KEY,
+                    lane TEXT NOT NULL CHECK (lane IN ('recent', 'backfill')),
+                    window_start DATE NOT NULL,
+                    window_end DATE NOT NULL,
+                    cursor_start DATE,
+                    cursor_end DATE,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    status TEXT NOT NULL,
+                    indexes_checked INTEGER NOT NULL DEFAULT 0,
+                    filings_seen INTEGER NOT NULL DEFAULT 0,
+                    filings_fetched INTEGER NOT NULL DEFAULT 0,
+                    documents_created INTEGER NOT NULL DEFAULT 0,
+                    chunks_created INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_edgar_sync_runs_lane_completed
+                ON edgar_sync_runs (lane, completed_at DESC)
+            """))
+
+    def record_sync_run(
+        self,
+        lane: str,
+        window: SyncWindow,
+        cursor_start: Optional[date],
+        cursor_end: Optional[date],
+        started_at: datetime,
+        status: str,
+        stats: dict,
+        error: Optional[str],
+    ) -> None:
+        """Persist one completed lane run without overwriting prior evidence."""
+        if self.session_context is None:
+            return
+        with self.session_context() as session:
+            session.execute(text("""
+                INSERT INTO edgar_sync_runs (
+                    lane, window_start, window_end, cursor_start, cursor_end,
+                    started_at, status, indexes_checked, filings_seen,
+                    filings_fetched, documents_created, chunks_created, error_message
+                ) VALUES (
+                    :lane, :window_start, :window_end, :cursor_start, :cursor_end,
+                    :started_at, :status, :indexes_checked, :filings_seen,
+                    :filings_fetched, :documents_created, :chunks_created, :error
+                )
+            """), {
+                "lane": lane,
+                "window_start": window.start,
+                "window_end": window.end,
+                "cursor_start": cursor_start,
+                "cursor_end": cursor_end,
+                "started_at": started_at,
+                "status": status,
+                "error": error,
+                **stats,
+            })
 
     def get_cursor(self) -> date:
         with self.session_context() as session:
@@ -453,6 +519,7 @@ class EDGARIngestionService:
         lane: str,
         cursor: Optional[date] = None,
     ) -> dict:
+        started_at = datetime.now(timezone.utc)
         companies = self.load_tracked_companies()
         stats = {
             "indexes_checked": 0,
@@ -465,6 +532,7 @@ class EDGARIngestionService:
         status = "completed"
         error = None
         advance_backfill = lane == "backfill"
+        completed_cursor = cursor
         if advance_backfill:
             self.mark_running()
         else:
@@ -528,6 +596,7 @@ class EDGARIngestionService:
 
                 if advance_backfill:
                     self.advance_cursor(current)
+                    completed_cursor = current
                 current += timedelta(days=1)
 
             except Exception as exc:
@@ -540,6 +609,19 @@ class EDGARIngestionService:
             self.finish(status, stats, error)
         else:
             self.finish_recent(status, stats, error)
+        try:
+            self.record_sync_run(
+                lane=lane,
+                window=window,
+                cursor_start=cursor,
+                cursor_end=completed_cursor if advance_backfill else None,
+                started_at=started_at,
+                status=status,
+                stats=stats,
+                error=error,
+            )
+        except Exception as exc:
+            logger.warning("Failed to record EDGAR sync run history", error=str(exc))
         result = {
             "status": status,
             "lane": lane,
