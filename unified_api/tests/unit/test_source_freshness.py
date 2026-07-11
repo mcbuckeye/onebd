@@ -47,3 +47,10 @@ def test_missing_sync_state_is_critical():
         "age_hours": None,
         "detail": "no completed run",
     }
+
+
+def test_first_running_sync_without_completion_reports_running():
+    result = _sync_freshness(None, 24, 48, "running")
+
+    assert result["status"] == "running"
+    assert result["age_hours"] is None

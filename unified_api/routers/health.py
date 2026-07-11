@@ -31,6 +31,12 @@ def _as_utc(value):
 def _sync_freshness(last_completed, warn_hours, critical_hours, run_status=None):
     """Return a consistent freshness status for a scheduled source job."""
     completed = _as_utc(last_completed)
+    if run_status == "running" and completed is None:
+        return {
+            "status": "running",
+            "age_hours": None,
+            "detail": "run in progress; no prior completion timestamp",
+        }
     if completed is None:
         return {"status": "critical", "age_hours": None, "detail": "no completed run"}
 
@@ -249,8 +255,12 @@ async def data_health_check():
                 """)).mappings().first()
                 if last_sync:
                     sync_info = dict(last_sync)
+                    last_success = session.execute(text(
+                        "SELECT MAX(completed_at) FROM sync_log WHERE status = 'completed'"
+                    )).scalar()
+                    sync_info["last_success_at"] = last_success
                     sync_info["freshness"] = _sync_freshness(
-                        last_sync["completed_at"],
+                        last_success,
                         settings.cortellis_freshness_warn_hours,
                         settings.cortellis_freshness_critical_hours,
                         last_sync["status"],
@@ -259,7 +269,7 @@ async def data_health_check():
                         "SELECT MAX(date_change_last) FROM deals"
                     )).scalar()
                     sources["cortellis_sync"] = sync_info
-                    sources["last_sync_time"] = last_sync["completed_at"]
+                    sources["last_sync_time"] = last_success
             except Exception:
                 pass
     except Exception as e:

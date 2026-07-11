@@ -6,31 +6,31 @@ The next phase prioritizes trustworthy deployments, observable data freshness,
 and fast retrieval before adding more external data volume.
 
 1. **Repair and verify Dokploy automatic deployment**
-   - [ ] A push to `main` creates a Dokploy deployment record and queue job.
-   - [ ] The checkout advances to the pushed SHA and affected services rebuild.
+   - [x] A push to `main` creates a Dokploy deployment record and queue job.
+   - [x] The checkout advances to the pushed SHA and affected services rebuild.
    - [ ] Health checks pass and the deployed SHA is visible from the API.
    - [ ] Failed health checks produce a visible failure or rollback.
 
 2. **Separate current EDGAR ingestion from historical backfill**
-   - [ ] A recent-data lane always processes the latest SEC business days.
-   - [ ] A separate resumable cursor advances the historical backlog.
-   - [ ] Both lanes remain idempotent and safe when their windows overlap.
+   - [x] A recent-data lane always processes the latest SEC business days.
+   - [x] A separate resumable cursor advances the historical backlog.
+   - [x] Both lanes remain idempotent and safe when their windows overlap.
    - [ ] Run bounded catch-up jobs until the historical cursor reaches current data.
 
 3. **Add unified source-sync monitoring and alerts**
    - [ ] Report the last attempt, last success, status, cursor, source-data date,
          lag, duration, counts, retry state, and error for each source.
-   - [ ] Mark `/api/health/data` degraded when a source exceeds its lag budget.
+   - [x] Mark `/api/health/data` degraded when a source exceeds its lag budget.
    - [ ] Add notifications for failed or stale Cortellis, EDGAR, and graph jobs.
 
 4. **Verify and harden Cortellis incremental synchronization**
-   - [ ] Compare the API's newest modified deals with the local watermark.
-   - [ ] Use an overlap window so date-only API filters cannot skip same-day updates.
+   - [x] Compare the API's newest modified deals with the local watermark.
+   - [x] Use an overlap window so date-only API filters cannot skip same-day updates.
    - [ ] Distinguish a legitimate zero-result run from a stale or invalid watermark.
    - [ ] Add regression tests for midnight, same-day, and retry boundaries.
 
 5. **Improve EDGAR full-text and semantic-search performance**
-   - [ ] Rank a bounded indexed candidate set instead of every matching chunk.
+   - [x] Rank a bounded indexed candidate set instead of every matching chunk.
    - [ ] Capture representative `EXPLAIN (ANALYZE, BUFFERS)` plans.
    - [ ] Remove redundant indexes and verify pgvector index usage.
    - [ ] Add latency-oriented integration coverage for common and filtered queries.
@@ -67,11 +67,11 @@ and fast retrieval before adding more external data volume.
 
 ### Immediate Reliability Sprint
 
-- [ ] Repair and prove the GitHub-to-Dokploy deployment path.
-- [ ] Deploy independent EDGAR recent and backfill jobs.
-- [ ] Expose actionable source freshness and lag in health reporting.
-- [ ] Prove and correct Cortellis incremental watermark behavior.
-- [ ] Reduce representative EDGAR full-text search latency to seconds or less.
+- [x] Repair and prove the GitHub-to-Dokploy deployment path.
+- [x] Deploy independent EDGAR recent and backfill jobs.
+- [x] Expose actionable source freshness and lag in health reporting.
+- [x] Prove and correct Cortellis incremental watermark behavior.
+- [x] Reduce representative EDGAR full-text search latency to seconds or less.
 
 ## Implementation Status vs PRD
 
