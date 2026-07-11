@@ -79,7 +79,10 @@ and fast retrieval before adding more external data volume.
          ClinicalTrials.gov without coupling OneBD to BeOne-specific CSV outputs.
 
 10. **Build higher-value intelligence workflows after the foundation is stable**
-    - [ ] Structured milestone, royalty, and scale-clause extraction.
+    - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a
+          provenance-preserving beta table with resumable scheduled extraction.
+    - [ ] Validate extracted term precision/coverage before enabling governed
+          aggregate answers; add contract-derived scale-clause extraction.
     - [ ] Deal-to-trial and deal-to-regulatory-event timelines.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.

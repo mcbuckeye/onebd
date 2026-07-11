@@ -10,6 +10,186 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+FINANCE_PARSER_VERSION = 2
+
+
+def _as_list(value: Any) -> list:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _number(value: Any) -> Optional[float]:
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _millions(value: Any, unit: Optional[str]) -> Optional[float]:
+    number = _number(value)
+    if number is None:
+        return None
+    normalized = (unit or "").lower()
+    if normalized in {"billion", "bn"}:
+        return number * 1000
+    if normalized in {"thousand", "k"}:
+        return number / 1000
+    return number
+
+
+def _term_type(payment_type: Optional[str], *, is_breakdown: bool) -> str:
+    normalized = (payment_type or "unspecified").lower()
+    if "upfront" in normalized or "up front" in normalized:
+        return "upfront_payment"
+    if "royalty" in normalized and "%" in normalized:
+        return "royalty_rate"
+    if "transfer price" in normalized and "%" in normalized:
+        return "transfer_price_rate"
+    if "sales milestone" in normalized or "commercial milestone" in normalized:
+        return "commercial_milestone"
+    if "dev/reg milestone" in normalized:
+        return "development_regulatory_milestone"
+    if "development milestone" in normalized or "clinical milestone" in normalized:
+        return "development_milestone"
+    if "regulatory milestone" in normalized:
+        return "regulatory_milestone"
+    if "milestone" in normalized:
+        return "milestone_component" if is_breakdown else "milestone_total"
+    if "royalty" in normalized:
+        return "royalty_payment"
+    slug = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+    return slug or "unspecified"
+
+
+def _extract_payment(
+    payment: dict,
+    *,
+    deal_id: Optional[int],
+    recipient: str,
+    basis: str,
+    source_path: str,
+    is_breakdown: bool = False,
+) -> dict:
+    values = payment.get("Values") or {}
+    value_attributes = values.get("@attributes") or {}
+    reported = values.get("ValueReported") or {}
+    reported_attributes = reported.get("@attributes") or {}
+    converted = values.get("ValueConvertedToUSD") or {}
+    converted_attributes = converted.get("@attributes") or {}
+    payment_type = payment.get("Type")
+    term_type = _term_type(payment_type, is_breakdown=is_breakdown)
+    reported_unit = reported_attributes.get("unit")
+    reported_value = _number(reported.get("@text"))
+
+    rate_min = rate_max = None
+    if term_type in {"royalty_rate", "transfer_price_rate"}:
+        if reported_unit == "%" and reported_value is not None:
+            rate_min = rate_max = reported_value
+        else:
+            parsed_rates = _parse_royalty_rates(payment.get("Note") or "")
+            if parsed_rates:
+                rate_min = parsed_rates["min_rate"]
+                rate_max = parsed_rates["max_rate"]
+
+    amount_reported_millions = None
+    amount_usd_millions = None
+    if reported_unit != "%":
+        amount_reported_millions = _millions(reported.get("@text"), reported_unit)
+        amount_usd_millions = _millions(
+            converted.get("@text"),
+            converted_attributes.get("unit"),
+        )
+
+    disclosed = value_attributes.get("disclosureStatus") == "Known"
+    has_numeric_value = any(
+        value is not None
+        for value in (amount_reported_millions, amount_usd_millions, rate_min)
+    )
+    return {
+        "deal_id": deal_id,
+        "recipient": recipient,
+        "basis": basis,
+        "term_type": term_type,
+        "source_payment_type": payment_type,
+        "payment_date": payment.get("Date"),
+        "amount_reported_millions": amount_reported_millions,
+        "reported_currency": reported_attributes.get("currency"),
+        "reported_unit": reported_unit,
+        "amount_usd_millions": amount_usd_millions,
+        "rate_min_pct": rate_min,
+        "rate_max_pct": rate_max,
+        "accuracy": value_attributes.get("accuracy"),
+        "disclosure_status": value_attributes.get("disclosureStatus"),
+        "note": payment.get("Note"),
+        "is_breakdown": is_breakdown,
+        "confidence": 1.0 if disclosed and has_numeric_value else 0.5,
+        "source_path": source_path,
+        "parser_version": FINANCE_PARSER_VERSION,
+        "source_payload": payment,
+    }
+
+
+def extract_financial_terms(payload: Any, deal_id: Optional[int] = None) -> list[dict]:
+    """Flatten Cortellis finance JSON into typed terms with source provenance."""
+    if not isinstance(payload, dict):
+        return []
+
+    terms = []
+    side_map = {
+        "PaymentsToPrincipal": "principal",
+        "PaymentsToPartner": "partner",
+    }
+    basis_map = {
+        "PaymentsPaid": "paid",
+        "PaymentsProjectedCurrent": "projected_current",
+        "PaymentsProjectedSigning": "projected_signing",
+    }
+
+    def add_payments(
+        payments: Any,
+        *,
+        recipient: str,
+        basis: str,
+        path: str,
+        is_breakdown: bool = False,
+    ) -> None:
+        for index, payment in enumerate(_as_list(payments)):
+            if not isinstance(payment, dict):
+                continue
+            payment_path = f"{path}[{index}]"
+            terms.append(_extract_payment(
+                payment,
+                deal_id=deal_id,
+                recipient=recipient,
+                basis=basis,
+                source_path=payment_path,
+                is_breakdown=is_breakdown,
+            ))
+            breakdown = (payment.get("PaymentBreakdown") or {}).get("Payment")
+            add_payments(
+                breakdown,
+                recipient=recipient,
+                basis=basis,
+                path=f"{payment_path}.PaymentBreakdown.Payment",
+                is_breakdown=True,
+            )
+
+    for side_key, recipient in side_map.items():
+        side = payload.get(side_key) or {}
+        for basis_key, basis in basis_map.items():
+            section = side.get(basis_key) or {}
+            for collection_key in ("PaymentsGeneral", "PaymentsPercentage"):
+                payments = (section.get(collection_key) or {}).get("Payment")
+                add_payments(
+                    payments,
+                    recipient=recipient,
+                    basis=basis,
+                    path=f"{side_key}.{basis_key}.{collection_key}.Payment",
+                )
+
+    return terms
+
 
 def _parse_amount(text: str) -> Optional[Dict[str, Any]]:
     """Extract an amount from text with currency detection. Returns amount in millions."""

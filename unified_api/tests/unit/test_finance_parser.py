@@ -2,6 +2,7 @@
 TDD: Finance detail parser tests.
 """
 import pytest
+from unittest.mock import MagicMock, patch
 
 
 class TestFinanceDetailParser:
@@ -146,3 +147,145 @@ class TestFinanceDetailParser:
         assert result["milestones"]["development"] is not None or \
                result["milestones"]["regulatory"] is not None or \
                result["milestones"]["commercial"] is not None
+
+
+class TestCortellisFinanceJsonParser:
+    def test_extracts_upfront_with_payment_basis_and_provenance(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        payload = {
+            "PaymentsToPrincipal": {
+                "PaymentsPaid": {
+                    "PaymentsGeneral": {
+                        "Payment": {
+                            "Date": "2025-01-02T00:00:00Z",
+                            "Type": "Upfront Payment",
+                            "Values": {
+                                "@attributes": {
+                                    "accuracy": "=",
+                                    "disclosureStatus": "Known",
+                                },
+                                "ValueReported": {
+                                    "@text": "75.00",
+                                    "@attributes": {"unit": "Million", "currency": "EUR"},
+                                },
+                                "ValueConvertedToUSD": {
+                                    "@text": "80.00",
+                                    "@attributes": {"unit": "Million"},
+                                },
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        terms = extract_financial_terms(payload, deal_id=42)
+
+        assert len(terms) == 1
+        assert terms[0]["deal_id"] == 42
+        assert terms[0]["recipient"] == "principal"
+        assert terms[0]["basis"] == "paid"
+        assert terms[0]["term_type"] == "upfront_payment"
+        assert terms[0]["amount_reported_millions"] == 75
+        assert terms[0]["reported_currency"] == "EUR"
+        assert terms[0]["amount_usd_millions"] == 80
+        assert terms[0]["confidence"] == 1
+        assert terms[0]["source_path"].startswith("PaymentsToPrincipal")
+
+    def test_extracts_milestone_breakdown_without_losing_total(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        payload = {
+            "PaymentsToPrincipal": {
+                "PaymentsProjectedSigning": {
+                    "PaymentsGeneral": {
+                        "Payment": {
+                            "Type": "Milestones",
+                            "Values": {
+                                "@attributes": {"disclosureStatus": "Known"},
+                                "ValueConvertedToUSD": {
+                                    "@text": "500",
+                                    "@attributes": {"unit": "Million"},
+                                },
+                            },
+                            "PaymentBreakdown": {
+                                "Payment": [
+                                    {"Type": "Dev/Reg Milestones", "Values": {}},
+                                    {"Type": "Sales Milestones", "Values": {}},
+                                ]
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        terms = extract_financial_terms(payload)
+
+        assert [term["term_type"] for term in terms] == [
+            "milestone_total",
+            "development_regulatory_milestone",
+            "commercial_milestone",
+        ]
+        assert terms[0]["amount_usd_millions"] == 500
+        assert terms[1]["is_breakdown"] is True
+
+    def test_percentage_term_never_uses_bogus_converted_million_value(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        payload = {
+            "PaymentsToPartner": {
+                "PaymentsProjectedCurrent": {
+                    "PaymentsPercentage": {
+                        "Payment": {
+                            "Type": "Royalty(%)",
+                            "Values": {
+                                "@attributes": {"disclosureStatus": "Known"},
+                                "ValueReported": {
+                                    "@text": "12.5",
+                                    "@attributes": {"unit": "%"},
+                                },
+                                "ValueConvertedToUSD": {
+                                    "@text": "12.5",
+                                    "@attributes": {"unit": "Million"},
+                                },
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        term = extract_financial_terms(payload)[0]
+
+        assert term["term_type"] == "royalty_rate"
+        assert term["rate_min_pct"] == 12.5
+        assert term["rate_max_pct"] == 12.5
+        assert term["amount_usd_millions"] is None
+
+    def test_non_json_payload_returns_no_structured_terms(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        assert extract_financial_terms("Upfront payment of $50 million") == []
+
+
+def test_celery_financial_extraction_runs_resumable_batch():
+    expected = {"processed": 1000, "terms_extracted": 2500, "errors": 0}
+    session = MagicMock()
+    context = MagicMock()
+    context.__enter__.return_value = session
+    with (
+        patch(
+            "unified_api.services.database.get_cortellis_session",
+            return_value=context,
+        ),
+        patch(
+            "unified_api.services.financial_terms.extract_financial_term_batch",
+            return_value=expected,
+        ) as extract,
+    ):
+        from unified_api.workers.celery_app import extract_cortellis_financial_terms
+
+        assert extract_cortellis_financial_terms.run() == expected
+        extract.assert_called_once_with(session, batch_size=1000)

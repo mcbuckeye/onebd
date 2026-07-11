@@ -149,6 +149,17 @@ and #54 meet that requirement. Cases #7, #19, #37, #42, #49, and #50 were
 downgraded until graph identity, YoY period semantics, or conversational context
 is made deterministic.
 
+The Cortellis financial source was also re-audited. `finance_detail_raw` is JSONB,
+not unstructured text: 125,345 deals contain typed paid/projected payments,
+recipient side, dates, currencies, USD conversions, disclosure status, milestone
+breakdowns, royalty percentages, notes, and accuracy metadata. The old regex-only
+enrichment route treated this payload as a string and could not populate governed
+terms. Parser v2 now flattens it into `deal_financial_terms`, preserves the source
+JSON/path and parser version, and records resumable per-deal extraction status.
+The job runs every 15 minutes in 1,000-deal batches. These metrics remain beta and
+the chat refusal stays in place until production coverage and precision are
+measured.
+
 ---
 
 ## Category 1: Quick Factual Lookups
