@@ -257,26 +257,28 @@ class EntityResolutionService:
         self.ensure_identity_schema()
         with get_cortellis_session() as session:
             rows = session.execute(text("""
-                SELECT cx.id AS xref_id, cx.edgar_company_id, cx.ticker,
+                SELECT cx.id AS xref_id, cx.cik, cx.ticker,
                        cx.match_method, cx.match_confidence, c.name AS cortellis_name
                 FROM company_xref cx
                 JOIN companies c ON c.id = cx.cortellis_id
             """)).mappings().all()
 
-        edgar_ids = [row["edgar_company_id"] for row in rows if row["edgar_company_id"]]
-        edgar_by_id = {}
-        if edgar_ids:
+        edgar_ciks = [format_cik(row["cik"]) for row in rows if row["cik"]]
+        edgar_by_cik = {}
+        if edgar_ciks:
             with get_edgar_session() as session:
                 edgar_rows = session.execute(text("""
-                    SELECT id, name, ticker FROM companies WHERE id = ANY(:ids)
-                """), {"ids": edgar_ids}).mappings().all()
-                edgar_by_id = {row["id"]: row for row in edgar_rows}
+                    SELECT cik, name, ticker FROM companies WHERE cik = ANY(:ciks)
+                """), {"ciks": edgar_ciks}).mappings().all()
+                edgar_by_cik = {
+                    format_cik(row["cik"]): row for row in edgar_rows if row["cik"]
+                }
 
         promoted = 0
         aliases_created = 0
         with get_cortellis_session() as session:
             for row in rows:
-                edgar = edgar_by_id.get(row["edgar_company_id"])
+                edgar = edgar_by_cik.get(format_cik(row["cik"])) if row["cik"] else None
                 if edgar:
                     method, confidence = classify_name_match(
                         self.normalize_company_name,

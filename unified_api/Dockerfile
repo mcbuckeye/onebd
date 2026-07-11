@@ -14,11 +14,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements first for caching
-COPY unified_api/requirements.txt ./requirements.txt
+COPY unified_api/requirements.txt unified_api/requirements.lock ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.lock
 
 # Download spaCy model for NER
 RUN python -m spacy download en_core_web_sm

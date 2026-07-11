@@ -33,4 +33,4 @@ ruff==0.15.21
 black==26.5.1
 
 # Install all project dependencies for tests
--r requirements.txt
+-r requirements.lock
