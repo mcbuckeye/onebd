@@ -81,7 +81,9 @@ and fast retrieval before adding more external data volume.
    - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
    - [x] Add provenance/review schemas for company LEIs/domains and public drug
          identifiers; external identifier population remains pending.
-   - [ ] Normalize INN/development codes and public drug/target identifiers.
+   - [x] Add conservative, resumable exact-name PubChem enrichment for CID,
+         InChIKey, connectivity SMILES, and source-verified public titles.
+   - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
    - [x] Seed normalized Cortellis display names and conservative development-code
          candidates for all drugs without treating organization suffixes as aliases.
    - [x] Store match evidence, confidence, method, review status, reviewer, and

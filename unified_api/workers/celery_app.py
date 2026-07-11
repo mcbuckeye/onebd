@@ -90,6 +90,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.enrichment.extract_financial_terms",
             "schedule": crontab(minute="*/15"),
         },
+        # Conservative exact-name PubChem enrichment; bounded to respect the
+        # public API and resumable across matched/not-found/failed states.
+        "enrich-pubchem-identifiers": {
+            "task": "unified_api.workers.tasks.enrichment.pubchem_identifiers",
+            "schedule": crontab(minute=45),
+        },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
             "task": "unified_api.workers.tasks.pageindex.batch_index_contracts",
@@ -180,6 +186,21 @@ def extract_cortellis_financial_terms():
         return result
     except Exception as e:
         logger.error("Cortellis financial term extraction failed", error=str(e))
+        return {"status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.pubchem_identifiers")
+def enrich_pubchem_identifiers():
+    """Resolve one bounded batch of Cortellis drug names against PubChem."""
+    logger.info("Starting PubChem identifier enrichment")
+    try:
+        from unified_api.services.pubchem_enrichment import enrich_pubchem_batch
+
+        result = enrich_pubchem_batch(batch_size=100)
+        logger.info("PubChem identifier enrichment complete", **result)
+        return result
+    except Exception as e:
+        logger.error("PubChem identifier enrichment failed", error=str(e))
         return {"status": "failed", "error": str(e)}
 
 
