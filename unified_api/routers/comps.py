@@ -75,6 +75,25 @@ def build_comp_filters(req: CompBuildRequest) -> tuple[list[str], dict]:
     return conditions, params
 
 
+def build_comp_dimension_selects(req: CompBuildRequest) -> tuple[str, str]:
+    """Return the requested matching dimension instead of an arbitrary linked value."""
+    indication_filter = " AND i.name ILIKE :indication" if req.indication else ""
+    modality_filter = " AND t.name ILIKE :modality" if req.modality else ""
+    indication_select = f"""(
+        SELECT i.name FROM deal_indications di
+        JOIN indications i ON i.id = di.indication_id
+        WHERE di.deal_id = d.id{indication_filter}
+        ORDER BY i.name LIMIT 1
+    ) as indication"""
+    modality_select = f"""(
+        SELECT t.name FROM deal_technologies dt
+        JOIN technologies t ON t.id = dt.technology_id
+        WHERE dt.deal_id = d.id{modality_filter}
+        ORDER BY t.name LIMIT 1
+    ) as modality"""
+    return indication_select, modality_select
+
+
 @router.post("/comps/build")
 async def build_comps(req: CompBuildRequest):
     """
@@ -83,6 +102,7 @@ async def build_comps(req: CompBuildRequest):
     with get_cortellis_session() as session:
         # Build query to find candidate deals
         conditions, params = build_comp_filters(req)
+        indication_select, modality_select = build_comp_dimension_selects(req)
 
         where = " AND ".join(conditions) if conditions else "1=1"
 
@@ -97,12 +117,8 @@ async def build_comps(req: CompBuildRequest):
                 (SELECT c.name FROM deal_companies dc
                  JOIN companies c ON c.id = dc.company_id
                  WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner,
-                (SELECT i.name FROM deal_indications di
-                 JOIN indications i ON i.id = di.indication_id
-                 WHERE di.deal_id = d.id LIMIT 1) as indication,
-                (SELECT t.name FROM deal_technologies dt
-                 JOIN technologies t ON t.id = dt.technology_id
-                 WHERE dt.deal_id = d.id LIMIT 1) as modality
+                {indication_select},
+                {modality_select}
             FROM deals d
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
             WHERE {where}

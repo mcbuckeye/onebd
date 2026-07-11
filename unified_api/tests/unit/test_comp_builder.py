@@ -84,16 +84,24 @@ class TestCompCandidateFilters:
     """Requested dimensions must constrain the SQL candidate pool."""
 
     def test_modality_is_applied_before_similarity_ranking(self):
-        from unified_api.routers.comps import CompBuildRequest, build_comp_filters
+        from unified_api.routers.comps import (
+            CompBuildRequest,
+            build_comp_dimension_selects,
+            build_comp_filters,
+        )
 
-        conditions, params = build_comp_filters(CompBuildRequest(
+        request = CompBuildRequest(
             indication="NSCLC",
             phase="Phase 2",
             modality="bispecific",
             deal_type="License",
-        ))
+        )
+        conditions, params = build_comp_filters(request)
+        indication_select, modality_select = build_comp_dimension_selects(request)
 
         where = " ".join(conditions)
         assert "deal_technologies" in where
         assert "t.name ILIKE :modality" in where
         assert params["modality"] == "%bispecific%"
+        assert "i.name ILIKE :indication" in indication_select
+        assert "t.name ILIKE :modality" in modality_select
