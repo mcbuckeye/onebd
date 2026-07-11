@@ -69,6 +69,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.alerts.check_alerts",
             "schedule": crontab(hour=8, minute=0),
         },
+        # Persist and notify only transitions (healthy -> warning/critical ->
+        # recovered), so a stale source does not page operators repeatedly.
+        "monitor-source-jobs": {
+            "task": "unified_api.workers.tasks.monitoring.source_jobs",
+            "schedule": crontab(minute="*/30"),
+        },
         # Send daily deal digest at 7:00 AM EST (12:00 UTC)
         "daily-deal-digest": {
             "task": "unified_api.workers.tasks.digest.send_daily_digest",
@@ -107,6 +113,19 @@ celery_app.autodiscover_tasks([
 # TASK DEFINITIONS
 # ============================================
 
+
+def _start_source_job(source_key: str) -> None:
+    from unified_api.services.source_monitoring import record_source_job_started
+
+    record_source_job_started(source_key)
+
+
+def _finish_source_job(source_key: str, result: dict) -> dict:
+    from unified_api.services.source_monitoring import record_source_job_finished
+
+    record_source_job_finished(source_key, result)
+    return result
+
 @celery_app.task(name="unified_api.workers.tasks.edgar.fetch_new_filings")
 def fetch_new_filings():
     """
@@ -114,32 +133,37 @@ def fetch_new_filings():
     Runs on rate-limited edgar queue (1 worker, 10 req/sec).
     """
     logger.info("Starting EDGAR filing fetch")
+    _start_source_job("edgar_recent")
     try:
         import asyncio
         from unified_api.services.edgar_ingestion import run_edgar_recent_sync
 
         result = asyncio.run(run_edgar_recent_sync())
         logger.info("EDGAR filing fetch complete", **result)
-        return result
+        return _finish_source_job("edgar_recent", result)
     except Exception as e:
         logger.error("EDGAR filing fetch failed", error=str(e))
-        return {"status": "failed", "error": str(e)}
+        return _finish_source_job("edgar_recent", {"status": "failed", "error": str(e)})
 
 
 @celery_app.task(name="unified_api.workers.tasks.edgar.backfill_filings")
 def backfill_edgar_filings():
     """Advance the bounded historical EDGAR cursor without blocking current data."""
     logger.info("Starting EDGAR historical backfill")
+    _start_source_job("edgar_backfill")
     try:
         import asyncio
         from unified_api.services.edgar_ingestion import run_edgar_sync
 
         result = asyncio.run(run_edgar_sync())
         logger.info("EDGAR historical backfill complete", **result)
-        return result
+        return _finish_source_job("edgar_backfill", result)
     except Exception as e:
         logger.error("EDGAR historical backfill failed", error=str(e))
-        return {"status": "failed", "lane": "backfill", "error": str(e)}
+        return _finish_source_job(
+            "edgar_backfill",
+            {"status": "failed", "lane": "backfill", "error": str(e)},
+        )
 
 
 @celery_app.task(name="unified_api.workers.tasks.enrichment.extract_financial_terms")
@@ -166,6 +190,7 @@ def sync_cortellis_deals():
     Falls back to full sync if no previous sync exists.
     """
     logger.info("Starting Cortellis sync")
+    _start_source_job("cortellis")
     try:
         from unified_api.config import settings
         from src.config import CortellisConfig, DatabaseConfig, OpenAIConfig, AppConfig
@@ -173,7 +198,9 @@ def sync_cortellis_deals():
 
         if not settings.cortellis_api_username or not settings.cortellis_api_password:
             logger.warning("Cortellis API credentials not configured, skipping sync")
-            return {"status": "skipped", "reason": "no credentials"}
+            return _finish_source_job(
+                "cortellis", {"status": "skipped", "reason": "no credentials"}
+            )
 
         # Build config from unified settings
         cortellis_config = CortellisConfig(
@@ -220,25 +247,38 @@ def sync_cortellis_deals():
         if sync_log.error_message:
             result["error"] = sync_log.error_message
         logger.info("Cortellis sync complete", **result)
-        return result
+        return _finish_source_job("cortellis", result)
 
     except Exception as e:
         logger.error("Cortellis sync failed", error=str(e))
-        return {"status": "failed", "error": str(e)}
+        return _finish_source_job("cortellis", {"status": "failed", "error": str(e)})
 
 
 @celery_app.task(name="unified_api.workers.tasks.graph.sync_all")
 def sync_graph():
     """Sync all data to Neo4j graph database."""
     logger.info("Starting graph sync")
+    _start_source_job("neo4j")
     try:
         from unified_api.services.graph_sync import get_graph_sync_service
         service = get_graph_sync_service()
         results = service.full_sync()
         logger.info("Graph sync complete", **results)
-        return {"status": "completed", **results}
+        return _finish_source_job("neo4j", {"status": "completed", **results})
     except Exception as e:
         logger.error("Graph sync failed", error=str(e))
+        return _finish_source_job("neo4j", {"status": "failed", "error": str(e)})
+
+
+@celery_app.task(name="unified_api.workers.tasks.monitoring.source_jobs")
+def monitor_scheduled_source_jobs():
+    """Classify source freshness and emit deduplicated alert/recovery events."""
+    try:
+        from unified_api.services.source_monitoring import monitor_source_jobs
+
+        return monitor_source_jobs()
+    except Exception as e:
+        logger.error("Source job monitoring failed", error=str(e))
         return {"status": "failed", "error": str(e)}
 
 

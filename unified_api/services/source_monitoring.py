@@ -1,0 +1,426 @@
+"""Persistent state and deduplicated alerts for scheduled source jobs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import json
+from typing import Any, Mapping
+from urllib.request import Request, urlopen
+
+from sqlalchemy import text
+import structlog
+
+from unified_api.config import settings
+from unified_api.services.database import get_cortellis_session
+
+logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class SourcePolicy:
+    label: str
+    warn_hours: float
+    critical_hours: float
+
+
+SOURCE_POLICIES = {
+    "cortellis": SourcePolicy(
+        "Cortellis Sync",
+        settings.cortellis_freshness_warn_hours,
+        settings.cortellis_freshness_critical_hours,
+    ),
+    "edgar_recent": SourcePolicy(
+        "EDGAR Recent Sync",
+        settings.edgar_freshness_warn_hours,
+        settings.edgar_freshness_critical_hours,
+    ),
+    "edgar_backfill": SourcePolicy(
+        "EDGAR Backfill Sync",
+        settings.edgar_freshness_warn_hours,
+        settings.edgar_freshness_critical_hours,
+    ),
+    "neo4j": SourcePolicy(
+        "Neo4j Graph Sync",
+        settings.graph_freshness_warn_hours,
+        settings.graph_freshness_critical_hours,
+    ),
+}
+
+
+def ensure_source_monitoring_tables(session) -> None:
+    """Create the small operational schema without coupling it to app migrations."""
+    session.execute(text("""
+        CREATE TABLE IF NOT EXISTS source_job_state (
+            source_key VARCHAR(50) PRIMARY KEY,
+            label VARCHAR(100) NOT NULL,
+            status VARCHAR(20) NOT NULL,
+            last_started_at TIMESTAMPTZ,
+            last_completed_at TIMESTAMPTZ,
+            last_success_at TIMESTAMPTZ,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_at TIMESTAMPTZ,
+            last_error TEXT,
+            alert_status VARCHAR(20) NOT NULL DEFAULT 'ok',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    session.execute(text("""
+        CREATE TABLE IF NOT EXISTS source_job_notifications (
+            id BIGSERIAL PRIMARY KEY,
+            source_key VARCHAR(50) NOT NULL,
+            event_type VARCHAR(20) NOT NULL,
+            severity VARCHAR(20) NOT NULL,
+            detail TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            delivered_at TIMESTAMPTZ,
+            delivery_error TEXT
+        )
+    """))
+    session.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_source_job_notifications_created
+        ON source_job_notifications (created_at DESC)
+    """))
+
+
+def _normalized_result_status(status: str | None) -> str:
+    value = (status or "failed").lower()
+    if value in {"completed", "complete", "success", "succeeded", "healthy"}:
+        return "completed"
+    if value in {"partial", "warning"}:
+        return "partial"
+    if value == "skipped":
+        return "skipped"
+    return "failed"
+
+
+def retry_delay(retry_count: int) -> timedelta:
+    """Exponential retry advisory, capped so operators are never left for days."""
+    minutes = min(360, 15 * (2 ** max(0, retry_count - 1)))
+    return timedelta(minutes=minutes)
+
+
+def record_source_job_started(source_key: str) -> None:
+    policy = SOURCE_POLICIES[source_key]
+    try:
+        with get_cortellis_session() as session:
+            ensure_source_monitoring_tables(session)
+            session.execute(text("""
+                INSERT INTO source_job_state (
+                    source_key, label, status, last_started_at, updated_at
+                ) VALUES (
+                    :source_key, :label, 'running', NOW(), NOW()
+                )
+                ON CONFLICT (source_key) DO UPDATE SET
+                    label = EXCLUDED.label,
+                    status = 'running',
+                    last_started_at = NOW(),
+                    updated_at = NOW()
+            """), {"source_key": source_key, "label": policy.label})
+            session.commit()
+    except Exception as exc:  # Monitoring must never prevent the source job.
+        logger.warning("Could not record source job start", source=source_key, error=str(exc))
+
+
+def record_source_job_finished(source_key: str, result: Mapping[str, Any]) -> None:
+    policy = SOURCE_POLICIES[source_key]
+    status = _normalized_result_status(str(result.get("status", "failed")))
+    error = result.get("error") or result.get("reason")
+    try:
+        with get_cortellis_session() as session:
+            ensure_source_monitoring_tables(session)
+            existing = session.execute(text("""
+                SELECT retry_count, consecutive_failures
+                FROM source_job_state
+                WHERE source_key = :source_key
+            """), {"source_key": source_key}).mappings().first() or {}
+            failed = status in {"failed", "partial"}
+            retry_count = int(existing.get("retry_count") or 0) + 1 if failed else 0
+            consecutive = (
+                int(existing.get("consecutive_failures") or 0) + 1 if failed else 0
+            )
+            next_retry = datetime.now(timezone.utc) + retry_delay(retry_count) if failed else None
+            session.execute(text("""
+                INSERT INTO source_job_state (
+                    source_key, label, status, last_started_at, last_completed_at,
+                    last_success_at, consecutive_failures, retry_count,
+                    next_retry_at, last_error, updated_at
+                ) VALUES (
+                    :source_key, :label, :status, NOW(), NOW(),
+                    CASE WHEN :status = 'completed' THEN NOW() END,
+                    :consecutive_failures, :retry_count, :next_retry_at,
+                    :last_error, NOW()
+                )
+                ON CONFLICT (source_key) DO UPDATE SET
+                    label = EXCLUDED.label,
+                    status = EXCLUDED.status,
+                    last_completed_at = NOW(),
+                    last_success_at = CASE
+                        WHEN EXCLUDED.status = 'completed' THEN NOW()
+                        ELSE source_job_state.last_success_at
+                    END,
+                    consecutive_failures = EXCLUDED.consecutive_failures,
+                    retry_count = EXCLUDED.retry_count,
+                    next_retry_at = EXCLUDED.next_retry_at,
+                    last_error = EXCLUDED.last_error,
+                    updated_at = NOW()
+            """), {
+                "source_key": source_key,
+                "label": policy.label,
+                "status": status,
+                "consecutive_failures": consecutive,
+                "retry_count": retry_count,
+                "next_retry_at": next_retry,
+                "last_error": str(error)[:4000] if error else None,
+            })
+            session.commit()
+    except Exception as exc:
+        logger.warning("Could not record source job result", source=source_key, error=str(exc))
+
+
+def classify_source_job(
+    row: Mapping[str, Any],
+    policy: SourcePolicy,
+    *,
+    now: datetime | None = None,
+) -> tuple[str, str]:
+    """Return severity and an operator-readable reason for a source state row."""
+    now = now or datetime.now(timezone.utc)
+    status = str(row.get("status") or "unknown").lower()
+    last_success = row.get("last_success_at")
+    if isinstance(last_success, str):
+        last_success = datetime.fromisoformat(last_success.replace("Z", "+00:00"))
+    if last_success is not None and last_success.tzinfo is None:
+        last_success = last_success.replace(tzinfo=timezone.utc)
+
+    if status == "failed":
+        return "critical", f"last run failed: {row.get('last_error') or 'unknown error'}"
+    if status == "partial":
+        return "warning", f"last run was partial: {row.get('last_error') or 'incomplete result'}"
+    if last_success is None:
+        if status == "running":
+            return "ok", "first observed run is in progress"
+        return "critical", "no successful run has been recorded"
+
+    age_hours = (now - last_success).total_seconds() / 3600
+    if age_hours >= policy.critical_hours:
+        return "critical", f"last successful run was {age_hours:.1f}h ago"
+    if age_hours >= policy.warn_hours:
+        return "warning", f"last successful run was {age_hours:.1f}h ago"
+    return "ok", f"last successful run was {age_hours:.1f}h ago"
+
+
+def notification_transition(previous: str | None, current: str) -> str | None:
+    """Map state changes to one alert/recovery event, suppressing duplicates."""
+    previous = previous or "ok"
+    if current in {"warning", "critical"} and current != previous:
+        return "alert"
+    if current == "ok" and previous in {"warning", "critical"}:
+        return "recovery"
+    return None
+
+
+def _deliver_notification(payload: Mapping[str, Any]) -> tuple[bool, str | None]:
+    delivered = False
+    errors: list[str] = []
+    if settings.source_health_webhook_url:
+        try:
+            request = Request(
+                settings.source_health_webhook_url,
+                data=json.dumps(dict(payload)).encode(),
+                headers={"Content-Type": "application/json", "User-Agent": "OneBD-Source-Monitor/1.0"},
+                method="POST",
+            )
+            with urlopen(request, timeout=10) as response:
+                delivered = 200 <= response.status < 300
+        except Exception as exc:
+            errors.append(f"webhook: {exc}")
+
+    if settings.source_health_alert_email:
+        try:
+            from unified_api.services.email_digest import send_digest_email
+
+            subject = f"OneBD source {payload['event_type']}: {payload['label']}"
+            html = (
+                f"<h2>{subject}</h2><p>Severity: {payload['severity']}</p>"
+                f"<p>{payload['detail']}</p><p>{payload['observed_at']}</p>"
+            )
+            delivered = send_digest_email(
+                settings.source_health_alert_email, subject, html
+            ) or delivered
+        except Exception as exc:
+            errors.append(f"email: {exc}")
+
+    if not settings.source_health_webhook_url and not settings.source_health_alert_email:
+        errors.append("no delivery channel configured")
+    return delivered, "; ".join(errors) or None
+
+
+def _bootstrap_legacy_source_states(session) -> None:
+    """Seed the common table from trustworthy pre-existing sync history."""
+    existing = {
+        row[0] for row in session.execute(text(
+            "SELECT source_key FROM source_job_state"
+        )).all()
+    }
+    if "cortellis" not in existing and session.execute(text(
+        "SELECT to_regclass('public.sync_log')"
+    )).scalar():
+        latest = session.execute(text("""
+            SELECT status, started_at, completed_at, error_message
+            FROM sync_log ORDER BY started_at DESC LIMIT 1
+        """)).mappings().first()
+        if latest:
+            last_success = session.execute(text("""
+                SELECT MAX(completed_at) FROM sync_log WHERE status = 'completed'
+            """)).scalar()
+            session.execute(text("""
+                INSERT INTO source_job_state (
+                    source_key, label, status, last_started_at,
+                    last_completed_at, last_success_at, last_error, updated_at
+                ) VALUES (
+                    'cortellis', :label, :status, :started_at,
+                    :completed_at, :last_success_at, :last_error, NOW()
+                ) ON CONFLICT (source_key) DO NOTHING
+            """), {
+                "label": SOURCE_POLICIES["cortellis"].label,
+                "status": _normalized_result_status(latest["status"]),
+                "started_at": latest["started_at"],
+                "completed_at": latest["completed_at"],
+                "last_success_at": last_success,
+                "last_error": latest["error_message"],
+            })
+
+    missing_edgar = {"edgar_recent", "edgar_backfill"} - existing
+    if not missing_edgar:
+        return
+    try:
+        from unified_api.services.database import get_edgar_source_session
+
+        with get_edgar_source_session() as edgar:
+            has_runs = bool(edgar.execute(text(
+                "SELECT to_regclass('public.edgar_sync_runs')"
+            )).scalar())
+            for source_key, table_name, lane in (
+                ("edgar_recent", "edgar_recent_sync_state", "recent"),
+                ("edgar_backfill", "edgar_sync_state", "backfill"),
+            ):
+                if source_key not in missing_edgar:
+                    continue
+                if not edgar.execute(text(
+                    "SELECT to_regclass(:table_name)"
+                ), {"table_name": f"public.{table_name}"}).scalar():
+                    continue
+                state = edgar.execute(text(
+                    f"SELECT * FROM {table_name} WHERE id = 1"
+                )).mappings().first()
+                if not state:
+                    continue
+                last_success = None
+                if has_runs:
+                    last_success = edgar.execute(text("""
+                        SELECT MAX(completed_at)
+                        FROM edgar_sync_runs
+                        WHERE lane = :lane AND status = 'completed'
+                    """), {"lane": lane}).scalar()
+                if last_success is None and state.get("status") == "completed":
+                    last_success = state.get("completed_at") or state.get("last_run_at")
+                session.execute(text("""
+                    INSERT INTO source_job_state (
+                        source_key, label, status, last_started_at,
+                        last_completed_at, last_success_at, last_error, updated_at
+                    ) VALUES (
+                        :source_key, :label, :status, :started_at,
+                        :completed_at, :last_success_at, :last_error, NOW()
+                    ) ON CONFLICT (source_key) DO NOTHING
+                """), {
+                    "source_key": source_key,
+                    "label": SOURCE_POLICIES[source_key].label,
+                    "status": _normalized_result_status(state.get("status")),
+                    "started_at": state.get("started_at") or state.get("last_run_at"),
+                    "completed_at": state.get("completed_at"),
+                    "last_success_at": last_success,
+                    "last_error": state.get("last_error") or state.get("error_message"),
+                })
+    except Exception as exc:
+        logger.warning("Could not bootstrap EDGAR monitoring state", error=str(exc))
+
+
+def monitor_source_jobs() -> dict[str, Any]:
+    """Classify source jobs and persist/deliver only state transitions."""
+    now = datetime.now(timezone.utc)
+    pending: list[dict[str, Any]] = []
+    states: list[dict[str, Any]] = []
+    with get_cortellis_session() as session:
+        ensure_source_monitoring_tables(session)
+        _bootstrap_legacy_source_states(session)
+        rows = session.execute(text("""
+            SELECT * FROM source_job_state ORDER BY source_key
+        """)).mappings().all()
+        for raw in rows:
+            row = dict(raw)
+            policy = SOURCE_POLICIES.get(row["source_key"])
+            if policy is None:
+                continue
+            severity, detail = classify_source_job(row, policy, now=now)
+            event_type = notification_transition(row.get("alert_status"), severity)
+            states.append({"source": row["source_key"], "severity": severity, "detail": detail})
+            if event_type:
+                event_detail = detail if event_type == "alert" else f"Recovered: {detail}"
+                event_id = session.execute(text("""
+                    INSERT INTO source_job_notifications (
+                        source_key, event_type, severity, detail
+                    ) VALUES (:source_key, :event_type, :severity, :detail)
+                    RETURNING id
+                """), {
+                    "source_key": row["source_key"],
+                    "event_type": event_type,
+                    "severity": severity,
+                    "detail": event_detail,
+                }).scalar_one()
+                session.execute(text("""
+                    UPDATE source_job_state
+                    SET alert_status = :severity, updated_at = NOW()
+                    WHERE source_key = :source_key
+                """), {"severity": severity, "source_key": row["source_key"]})
+                pending.append({
+                    "id": event_id,
+                    "source": row["source_key"],
+                    "label": policy.label,
+                    "event_type": event_type,
+                    "severity": severity,
+                    "detail": event_detail,
+                    "observed_at": now.isoformat(),
+                })
+        session.commit()
+
+    for payload in pending:
+        delivered, delivery_error = _deliver_notification(payload)
+        with get_cortellis_session() as session:
+            session.execute(text("""
+                UPDATE source_job_notifications
+                SET delivered_at = CASE WHEN :delivered THEN NOW() END,
+                    delivery_error = :delivery_error
+                WHERE id = :id
+            """), {
+                "delivered": delivered,
+                "delivery_error": delivery_error,
+                "id": payload["id"],
+            })
+            session.commit()
+        log = logger.info if delivered else logger.warning
+        log("Source health notification", **payload, delivery_error=delivery_error)
+
+    return {"status": "completed", "sources": states, "notifications": len(pending)}
+
+
+def read_source_job_states(session) -> list[dict[str, Any]]:
+    ensure_source_monitoring_tables(session)
+    return [dict(row) for row in session.execute(text("""
+        SELECT source_key, label, status, last_started_at, last_completed_at,
+               last_success_at, consecutive_failures, retry_count,
+               next_retry_at, last_error, alert_status, updated_at
+        FROM source_job_state
+        ORDER BY source_key
+    """)).mappings().all()]
