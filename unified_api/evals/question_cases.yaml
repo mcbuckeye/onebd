@@ -1,5 +1,115 @@
 version: 1
 dataset_as_of: 2026-07-11
+truth_queries:
+  company_year_count: &company_year_count |
+    SELECT COUNT(DISTINCT d.id) AS deal_count
+    FROM deals d
+    JOIN deal_companies dc ON dc.deal_id = d.id
+    WHERE dc.company_id = 18767
+      AND d.date_start >= DATE '2024-01-01'
+      AND d.date_start < DATE '2025-01-01'
+  current_year_top_acquirers: &current_year_top_acquirers |
+    SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count
+    FROM deals d
+    JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner'
+    JOIN companies c ON c.id = dc.company_id
+    WHERE d.date_start >= DATE_TRUNC('year', CURRENT_DATE)
+    GROUP BY c.id, c.name
+    ORDER BY deal_count DESC, c.id
+    LIMIT 5
+  oncology_average: &oncology_average |
+    SELECT AVG(f.total_projected_current_amount) AS average_deal_size_usd_millions,
+           COUNT(*) AS disclosed_deal_count
+    FROM deals d
+    JOIN therapy_areas ta ON ta.id = d.therapy_area_id
+    JOIN deal_finance_summary f ON f.deal_id = d.id
+    WHERE ta.name = 'Cancer'
+      AND f.total_projected_current_amount IS NOT NULL
+      AND f.total_projected_current_currency = 'USD'
+      AND f.total_projected_current_unit = 'Million'
+  oncology_ma_range: &oncology_ma_range |
+    SELECT MIN(f.total_projected_current_amount) AS min_value_usd_millions,
+           MAX(f.total_projected_current_amount) AS max_value_usd_millions,
+           AVG(f.total_projected_current_amount) AS average_value_usd_millions,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY f.total_projected_current_amount) AS median_value_usd_millions,
+           COUNT(*) AS disclosed_deal_count
+    FROM deals d
+    JOIN therapy_areas ta ON ta.id = d.therapy_area_id
+    JOIN deal_finance_summary f ON f.deal_id = d.id
+    WHERE ta.name = 'Cancer'
+      AND d.agreement_type = 'Company - M&A (in whole or part)'
+      AND d.date_start >= DATE '2020-01-01'
+      AND d.date_start < DATE '2026-01-01'
+      AND f.total_projected_current_amount IS NOT NULL
+      AND f.total_projected_current_currency = 'USD'
+      AND f.total_projected_current_unit = 'Million'
+  five_year_value_trend: &five_year_value_trend |
+    SELECT EXTRACT(YEAR FROM d.date_start)::int AS year,
+           COUNT(*) AS deal_count,
+           COUNT(f.total_projected_current_amount) AS disclosed_deal_count,
+           AVG(f.total_projected_current_amount) AS average_value_usd_millions,
+           SUM(f.total_projected_current_amount) AS total_value_usd_millions
+    FROM deals d
+    LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+      AND f.total_projected_current_currency = 'USD'
+      AND f.total_projected_current_unit = 'Million'
+    WHERE d.date_start >= CURRENT_DATE - INTERVAL '5 years'
+    GROUP BY EXTRACT(YEAR FROM d.date_start)::int
+    ORDER BY year
+  deal_type_split_2024: &deal_type_split_2024 |
+    WITH classified AS (
+      SELECT CASE
+        WHEN d.agreement_type = 'Company - M&A (in whole or part)' THEN 'M&A'
+        WHEN d.agreement_type ILIKE '%License%' THEN 'Licensing'
+      END AS category
+      FROM deals d
+      WHERE d.date_start >= DATE '2024-01-01'
+        AND d.date_start < DATE '2025-01-01'
+    ), counts AS (
+      SELECT category, COUNT(*) AS deal_count
+      FROM classified
+      WHERE category IS NOT NULL
+      GROUP BY category
+    )
+    SELECT category, deal_count,
+           ROUND(100.0 * deal_count / SUM(deal_count) OVER (), 2) AS percentage
+    FROM counts
+    ORDER BY category
+  oncology_acquirers: &oncology_acquirers |
+    SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count
+    FROM deals d
+    JOIN therapy_areas ta ON ta.id = d.therapy_area_id AND ta.name = 'Cancer'
+    JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner'
+    JOIN companies c ON c.id = dc.company_id
+    GROUP BY c.id, c.name
+    ORDER BY deal_count DESC, c.id
+    LIMIT 20
+  largest_deals: &largest_deals |
+    SELECT d.id, d.title, d.status, d.agreement_type, d.date_start,
+           f.total_projected_current_amount AS total_value_usd_millions
+    FROM deals d
+    JOIN deal_finance_summary f ON f.deal_id = d.id
+    WHERE f.total_projected_current_amount IS NOT NULL
+      AND f.total_projected_current_currency = 'USD'
+      AND f.total_projected_current_unit = 'Million'
+    ORDER BY f.total_projected_current_amount DESC, d.id
+    LIMIT 20
+  therapy_area_activity: &therapy_area_activity |
+    SELECT ta.name AS therapy_area, COUNT(DISTINCT d.id) AS deal_count
+    FROM deals d
+    JOIN therapy_areas ta ON ta.id = d.therapy_area_id
+    WHERE ta.name NOT IN ('Not Applicable', 'Unknown')
+    GROUP BY ta.name
+    ORDER BY deal_count DESC, ta.name
+    LIMIT 20
+  territory_activity: &territory_activity |
+    SELECT t.id AS territory_id, t.name AS territory_name,
+           COUNT(DISTINCT dt.deal_id) AS deal_count
+    FROM deal_territories dt
+    JOIN territories t ON t.id = dt.territory_id
+    GROUP BY t.id, t.name
+    ORDER BY deal_count DESC, t.id
+    LIMIT 20
 cases:
   - id: 1
     tier: regression
@@ -24,6 +134,13 @@ cases:
       - type: equals
         path: confidence.evidence_status
         value: grounded
+    truth:
+      source: cortellis
+      query: *company_year_count
+      assertions:
+        - type: equals
+          response_path: data.0.deal_count
+          truth_path: rows.0.deal_count
 
   - id: 14
     tier: regression
@@ -135,6 +252,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *current_year_top_acquirers
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [id, name, deal_count]
 
   - id: 4
     tier: catalog
@@ -192,7 +317,7 @@ cases:
 
   - id: 7
     tier: catalog
-    rating: strong
+    rating: needs_work
     question: 'Is there a deal between Pfizer and Seagen?'
     request:
       method: POST
@@ -261,6 +386,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *oncology_average
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [average_deal_size_usd_millions, disclosed_deal_count]
 
   - id: 11
     tier: catalog
@@ -297,6 +430,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *oncology_ma_range
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [min_value_usd_millions, max_value_usd_millions, average_value_usd_millions, median_value_usd_millions, disclosed_deal_count]
 
   - id: 13
     tier: catalog
@@ -315,6 +456,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *five_year_value_trend
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [year, deal_count, disclosed_deal_count, average_value_usd_millions, total_value_usd_millions]
 
   - id: 15
     tier: catalog
@@ -387,10 +536,18 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *deal_type_split_2024
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [category, deal_count, percentage]
 
   - id: 19
     tier: catalog
-    rating: strong
+    rating: partial
     question: 'YoY deal-volume growth by therapy area.'
     request:
       method: POST
@@ -621,6 +778,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *oncology_acquirers
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [id, name, deal_count]
 
   - id: 33
     tier: catalog
@@ -678,7 +843,7 @@ cases:
 
   - id: 37
     tier: catalog
-    rating: strong
+    rating: needs_work
     question: 'Show Pfizer''s partnership network.'
     request:
       method: POST
@@ -768,7 +933,7 @@ cases:
 
   - id: 42
     tier: catalog
-    rating: strong
+    rating: partial
     question: 'What territories are available for Drug Y?'
     request:
       method: POST
@@ -894,7 +1059,7 @@ cases:
 
   - id: 49
     tier: catalog
-    rating: strong
+    rating: partial
     question: 'Timeline of all deals for this target company.'
     request:
       method: POST
@@ -912,7 +1077,7 @@ cases:
 
   - id: 50
     tier: catalog
-    rating: strong
+    rating: partial
     question: 'Who else licensed this company''s technology?'
     request:
       method: POST
@@ -963,6 +1128,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *largest_deals
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [id, title, status, agreement_type, date_start, total_value_usd_millions]
 
   - id: 53
     tier: catalog
@@ -981,6 +1154,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *therapy_area_activity
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [therapy_area, deal_count]
 
   - id: 54
     tier: catalog
@@ -999,6 +1180,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *territory_activity
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [territory_id, territory_name, deal_count]
 
   - id: 55
     tier: catalog

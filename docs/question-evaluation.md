@@ -6,9 +6,10 @@
 
 **Verified remediation:** through commit `4d5bdea`, deployed 2026-07-11
 
-**Status:** All 65 questions are versioned and executable. Five are blocking,
-deterministic production regressions; 60 are catalog probes whose numerical or
-evidence truth assertions still need to be specified.
+**Status:** All 65 questions are versioned and executable. Five are blocking
+production regressions. Ten Strong-rated cases now require direct, read-only
+database truth comparisons; remaining catalog cases still need numerical truth
+or evidence-scored narrative rubrics.
 
 ## Purpose
 
@@ -127,6 +128,27 @@ truth assertions.
 - The five blocking production regressions pass on the final deployment, including
   canonical Pfizer count provenance and evidence-status assertions.
 
+## Deterministic Truth Expansion
+
+Production probing after the initial sprint found that several endpoint-based
+ratings were too optimistic: top acquirers returned no rows, the oncology average
+used a taxonomy term that does not exist, geography grouped on an almost entirely
+empty company-location field, and “top 20” exposed only ten records. These are now
+governed SQL patterns using the actual Cortellis taxonomy and fields:
+
+- `Cancer` is the source taxonomy value for oncology.
+- M&A and licensing are classified from `agreement_type`; `deal_type` is empty in
+  the current Cortellis database.
+- Financial comparisons are restricted to USD/Million records.
+- Geography uses deal territory rights, not sparsely populated company HQ text.
+- Chat v2 exposes up to 20 rows so a top-20 request is not silently truncated.
+
+The evaluation schema now rejects any Strong-rated case without a versioned,
+read-only database truth query. Cases #1, #3, #10, #12, #13, #18, #32, #52, #53,
+and #54 meet that requirement. Cases #7, #19, #37, #42, #49, and #50 were
+downgraded until graph identity, YoY period semantics, or conversational context
+is made deterministic.
+
 ---
 
 ## Category 1: Quick Factual Lookups
@@ -141,12 +163,12 @@ truth assertions.
 | 4 | How many ADC deals have been done? | 🟡 | Queryable, but ADC synonym/technology normalization and end-to-end chat accuracy are unverified. |
 | 5 | What is BeiGene's total deal count? | 🟡 | Queryable after resolving BeiGene/BeOne and duplicate company entities. |
 | 6 | When was the last oncology M&A deal over $1B? | 🟡 | Queryable, but generated multi-table SQL and financial units need golden-answer validation. |
-| 7 | Is there a deal between Pfizer and Seagen? | ✅ | Graph/SQL relationship lookup exists when canonical company IDs are resolved. |
+| 7 | Is there a deal between Pfizer and Seagen? | 🔧 | The graph chat path does not yet bind both canonical IDs deterministically. |
 | 8 | What phase is drug X in? | 🟡 | Phase exists, but drug aliases, multiple assets, phase provenance, and “current” semantics need resolution. |
 | 9 | How many deals closed last week? | 🟡 | Relative dates, timezone, and closed-vs-announced field selection are not deterministic. |
 | 10 | What is the average deal size in oncology? | ✅ | Analytics can calculate it with a disclosure caveat; null and unit handling must remain explicit. |
 
-**Provisional score: 4 Strong, 6 Partial**
+**Provisional score: 3 Strong, 6 Partial, 1 Needs Work**
 
 ---
 
@@ -162,10 +184,10 @@ truth assertions.
 | 16 | Typical royalty rates for oncology bispecifics? | 🔧 | Contract retrieval exists, but structured royalty extraction is not complete at scale. |
 | 17 | Deals with disclosed upfront over $100M. | 🔧 | No governed structured upfront column exists; the platform now refuses instead of treating projected-at-signing or total value as upfront. |
 | 18 | Percentage of 2024 deals that were M&A vs licensing. | ✅ | Agreement-type distribution endpoint supports the calculation. |
-| 19 | YoY deal-volume growth by therapy area. | ✅ | Dedicated YoY analytics endpoint exists. |
+| 19 | YoY deal-volume growth by therapy area. | 🟡 | Endpoint exists, but the requested comparison period is underspecified and chat output lacks a truth assertion. |
 | 20 | Largest deal in each major therapy area. | 🟡 | Straightforward SQL, but no demonstrated product workflow/golden result yet. |
 
-**Provisional score: 4 Strong, 3 Partial, 3 Needs Work**
+**Provisional score: 3 Strong, 4 Partial, 3 Needs Work**
 
 ---
 
@@ -198,12 +220,12 @@ truth assertions.
 | 34 | Alert me when a competitor does an ADC deal. | 🟡 | Saved-search alerts, Celery checks, notifications, and email exist; configuration UX/validation remains limited. |
 | 35 | What is Roche's oncology strategy from its deal pattern? | 🔧 | Empty evidence now returns a grounded limitation, but a source-backed strategy workflow is not implemented. |
 | 36 | Which companies just entered the bispecific space? | 🔧 | Query logic is feasible but no tested new-entrant workflow exists. |
-| 37 | Show Pfizer's partnership network. | ✅ | Graph network page and endpoint exist with canonical ID resolution. |
+| 37 | Show Pfizer's partnership network. | 🔧 | The direct ID endpoint works, but chat currently extracts the company name heuristically rather than binding canonical ID 18767. |
 | 38 | How does AbbVie's deal structure differ from Gilead's? | 🟡 | Distributions can be retrieved; grounded comparison synthesis is not proven. |
 | 39 | Are competitors building ADC portfolios faster than us? | ❌ | “Us,” portfolio boundaries, and velocity metric are not defined. |
 | 40 | Weekly competitive briefing for oncology. | 🟡 | Weekly personalized email digests now exist; competitor-focused narrative and delivery QA remain incomplete. |
 
-**Provisional score: 2 Strong, 5 Partial, 2 Needs Work, 1 Cannot**
+**Provisional score: 1 Strong, 5 Partial, 3 Needs Work, 1 Cannot**
 
 ---
 
@@ -212,17 +234,17 @@ truth assertions.
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
 | 41 | Full DD on Company X. | 🟡 | Overview, deals, drugs, partners, financials, and basic risks are populated; four sections are empty. |
-| 42 | What territories are available for Drug Y? | ✅ | Territory-rights endpoint and UI report committed/terminated records. |
+| 42 | What territories are available for Drug Y? | 🟡 | Territory-rights endpoint works for a concrete drug ID; the placeholder question has no resolvable asset. |
 | 43 | Contracts mentioning royalty rates for this drug. | 🟡 | 25,978 contracts/897,130 chunks are searchable; exact drug scoping and structured extraction need validation. |
 | 44 | Risk flags for this acquisition target. | 🟡 | Basic heuristic flags exist, but litigation, filings, contracts, clinical, and financial-risk evidence are absent. |
 | 45 | Export a comp set with deal values to Excel. | 🔧 | Comp PowerPoint export is shipped; comp-specific Excel export is not. |
 | 46 | What SEC filings relate to this deal? | 🟡 | 66,980 candidate links exist, but only 692 CIK mappings and date-proximity matching needs precision review. |
 | 47 | Milestone structure for comparable deals. | 🔧 | No milestone-specific comp view or governed extraction table. |
 | 48 | IP landscape for KRAS inhibitors. | ❌ | Limited deal-linked patent metadata exists, but not claims/families/status/assignee coverage for an IP landscape. |
-| 49 | Timeline of all deals for this target company. | ✅ | Company timeline is directly supported after canonical entity selection. |
-| 50 | Who else licensed this company's technology? | ✅ | Partner graph and deal history support the lookup. |
+| 49 | Timeline of all deals for this target company. | 🟡 | Company timeline is supported after an explicit entity selection; the standalone placeholder has no target context. |
+| 50 | Who else licensed this company's technology? | 🟡 | Partner history is available after an explicit company selection; conversational referent handling is not deterministic. |
 
-**Provisional score: 3 Strong, 4 Partial, 2 Needs Work, 1 Cannot**
+**Provisional score: 7 Partial, 2 Needs Work, 1 Cannot**
 
 ---
 

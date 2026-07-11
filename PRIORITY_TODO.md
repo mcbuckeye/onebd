@@ -101,7 +101,11 @@ and fast retrieval before adding more external data volume.
 - [x] Publish governed definitions for supported and unsupported financial metrics.
 - [x] Return source IDs/query provenance and evidence status from Chat v2.
 - [x] Validate the full catalog and regression harness in CI.
-- [ ] Replace each catalog probe's basic response assertion with deterministic truth.
+- [x] Require every Strong-rated case to compare the deployed response with a
+      read-only database truth query. Ten cases now meet this standard; six
+      optimistic/context-dependent ratings were downgraded pending real proof.
+- [ ] Replace each remaining catalog probe's basic response assertion with
+      deterministic truth or an evidence-scored narrative rubric.
 
 ## Implementation Status vs PRD
 

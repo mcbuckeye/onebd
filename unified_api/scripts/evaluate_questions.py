@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
+import re
 from typing import Any
 
 import httpx
@@ -13,6 +16,7 @@ import yaml
 DEFAULT_CASES = Path(__file__).parents[1] / "evals" / "question_cases.yaml"
 VALID_TIERS = {"regression", "catalog"}
 VALID_RATINGS = {"strong", "partial", "needs_work", "cannot"}
+VALID_TRUTH_SOURCES = {"cortellis", "edgar"}
 
 
 def get_path(payload: Any, path: str) -> Any:
@@ -57,7 +61,43 @@ def evaluate_assertion(payload: Any, assertion: dict) -> tuple[bool, str]:
     return passed, f"{assertion['path']} {kind} {expected!r}; actual={actual!r}"
 
 
-def run_case(client: httpx.Client, case: dict) -> list[str]:
+def _json_value(value: Any) -> Any:
+    """Normalize database values to the representation returned by FastAPI."""
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def evaluate_truth_assertion(
+    payload: Any,
+    truth_payload: dict,
+    assertion: dict,
+) -> tuple[bool, str]:
+    """Compare an API response value with independently queried database truth."""
+    actual = _json_value(get_path(payload, assertion["response_path"]))
+    expected = _json_value(get_path(truth_payload, assertion["truth_path"]))
+    kind = assertion["type"]
+
+    if kind == "equals":
+        passed = actual == expected
+    elif kind == "rows_equal":
+        fields = assertion["fields"]
+        actual = [{field: row.get(field) for field in fields} for row in actual]
+        expected = [{field: row.get(field) for field in fields} for row in expected]
+        passed = actual == expected
+    else:
+        raise ValueError(f"Unknown truth assertion type: {kind}")
+
+    return passed, f"database truth {kind}; expected={expected!r}; actual={actual!r}"
+
+
+def run_case(client: httpx.Client, case: dict, *, with_truth: bool = False) -> list[str]:
     """Execute a case and return assertion failure messages."""
     request = case["request"]
     response = client.request(
@@ -77,7 +117,53 @@ def run_case(client: httpx.Client, case: dict) -> list[str]:
             continue
         if not passed:
             failures.append(detail)
+
+    if with_truth and case.get("truth"):
+        truth = case["truth"]
+        from sqlalchemy import text
+        from unified_api.services.database import (
+            get_cortellis_session,
+            get_edgar_source_session,
+        )
+
+        session_context = (
+            get_cortellis_session
+            if truth["source"] == "cortellis"
+            else get_edgar_source_session
+        )
+        with session_context() as session:
+            rows = session.execute(
+                text(truth["query"]),
+                truth.get("params") or {},
+            ).mappings().all()
+        truth_payload = {"rows": [dict(row) for row in rows]}
+        for assertion in truth["assertions"]:
+            try:
+                passed, detail = evaluate_truth_assertion(
+                    payload,
+                    truth_payload,
+                    assertion,
+                )
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                failures.append(f"truth assertion error: {exc}")
+                continue
+            if not passed:
+                failures.append(detail)
     return failures
+
+
+def _validate_read_only_query(query: str) -> bool:
+    """Allow one SELECT/CTE statement and reject data-changing SQL."""
+    normalized = query.strip().rstrip(";").strip()
+    if not re.match(r"^(SELECT|WITH)\b", normalized, flags=re.IGNORECASE):
+        return False
+    if ";" in normalized:
+        return False
+    return not re.search(
+        r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|CALL|COPY)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
 
 
 def validate_suite(suite: dict) -> list[str]:
@@ -102,6 +188,25 @@ def validate_suite(suite: dict) -> list[str]:
             errors.append(f"{label}: executable request method/path is required")
         if not case.get("assertions"):
             errors.append(f"{label}: at least one assertion is required")
+        truth = case.get("truth")
+        if case.get("rating") == "strong" and not truth:
+            errors.append(f"{label}: strong cases require database truth assertions")
+        if truth:
+            if truth.get("source") not in VALID_TRUTH_SOURCES:
+                errors.append(
+                    f"{label}: truth source must be one of {sorted(VALID_TRUTH_SOURCES)}"
+                )
+            if not _validate_read_only_query(truth.get("query") or ""):
+                errors.append(f"{label}: truth query must be one read-only SELECT/CTE")
+            if not truth.get("assertions"):
+                errors.append(f"{label}: truth assertions are required")
+            for assertion in truth.get("assertions") or []:
+                if assertion.get("type") not in {"equals", "rows_equal"}:
+                    errors.append(f"{label}: invalid truth assertion type")
+                if not assertion.get("response_path") or not assertion.get("truth_path"):
+                    errors.append(f"{label}: truth response_path/truth_path are required")
+                if assertion.get("type") == "rows_equal" and not assertion.get("fields"):
+                    errors.append(f"{label}: rows_equal requires fields")
 
     regression_count = sum(case.get("tier") == "regression" for case in cases)
     if regression_count < 5:
@@ -120,6 +225,11 @@ def main() -> int:
         default="regression",
     )
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument(
+        "--with-truth",
+        action="store_true",
+        help="Execute direct read-only database truth comparisons for selected cases",
+    )
     args = parser.parse_args()
 
     suite = yaml.safe_load(args.cases.read_text())
@@ -139,7 +249,7 @@ def main() -> int:
     failed = 0
     with httpx.Client(base_url=args.base_url, timeout=args.timeout) as client:
         for case in selected:
-            failures = run_case(client, case)
+            failures = run_case(client, case, with_truth=args.with_truth)
             label = f"#{case['id']} {case['question']}"
             if failures:
                 failed += 1
