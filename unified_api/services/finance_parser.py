@@ -10,7 +10,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-FINANCE_PARSER_VERSION = 2
+FINANCE_PARSER_VERSION = 3
 
 
 def _as_list(value: Any) -> list:
@@ -31,11 +31,23 @@ def _millions(value: Any, unit: Optional[str]) -> Optional[float]:
     if number is None:
         return None
     normalized = (unit or "").lower()
-    if normalized in {"billion", "bn"}:
+    if normalized in {"b", "billion", "bn"}:
         return number * 1000
+    if normalized in {"t", "trillion", "tn"}:
+        return number * 1_000_000
     if normalized in {"thousand", "k"}:
         return number / 1000
     return number
+
+
+def _rate_bounds(value: float, accuracy: Optional[str]) -> tuple[Optional[float], Optional[float]]:
+    """Translate Cortellis bound markers into an honest percentage interval."""
+    normalized = (accuracy or "").strip()
+    if normalized in {"=<", "<="}:
+        return None, value
+    if normalized in {">=", "=>"}:
+        return value, None
+    return value, value
 
 
 def _term_type(payment_type: Optional[str], *, is_breakdown: bool) -> str:
@@ -83,14 +95,16 @@ def _extract_payment(
     reported_value = _number(reported.get("@text"))
 
     rate_min = rate_max = None
-    if term_type in {"royalty_rate", "transfer_price_rate"}:
-        if reported_unit == "%" and reported_value is not None:
-            rate_min = rate_max = reported_value
-        else:
-            parsed_rates = _parse_royalty_rates(payment.get("Note") or "")
-            if parsed_rates:
-                rate_min = parsed_rates["min_rate"]
-                rate_max = parsed_rates["max_rate"]
+    if reported_unit == "%" and reported_value is not None:
+        rate_min, rate_max = _rate_bounds(
+            reported_value,
+            value_attributes.get("accuracy"),
+        )
+    elif term_type in {"royalty_rate", "transfer_price_rate"}:
+        parsed_rates = _parse_royalty_rates(payment.get("Note") or "")
+        if parsed_rates:
+            rate_min = parsed_rates["min_rate"]
+            rate_max = parsed_rates["max_rate"]
 
     amount_reported_millions = None
     amount_usd_millions = None
@@ -104,7 +118,12 @@ def _extract_payment(
     disclosed = value_attributes.get("disclosureStatus") == "Known"
     has_numeric_value = any(
         value is not None
-        for value in (amount_reported_millions, amount_usd_millions, rate_min)
+        for value in (
+            amount_reported_millions,
+            amount_usd_millions,
+            rate_min,
+            rate_max,
+        )
     )
     return {
         "deal_id": deal_id,

@@ -1,6 +1,7 @@
 """Cortellis API client for fetching deal data."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from typing import Optional, List, Dict, Any, Iterator
 from dataclasses import dataclass
@@ -8,7 +9,6 @@ from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 
 import httpx
-from requests.auth import HTTPDigestAuth
 
 from .config import CortellisConfig
 
@@ -176,7 +176,13 @@ class CortellisClient:
             deal_ids=deal_ids,
         )
 
-    def get_all_deal_ids(self, query: str = "*") -> Iterator[int]:
+    def get_all_deal_ids(
+        self,
+        query: str = "*",
+        *,
+        workers: int = 1,
+        initial_result: Optional[SearchResult] = None,
+    ) -> Iterator[int]:
         """
         Iterate through all deal IDs matching a query.
 
@@ -186,20 +192,40 @@ class CortellisClient:
         Yields:
             Deal IDs
         """
-        offset = 0
         hits = 100
+        first = initial_result or self.search_deals(query=query, offset=0, hits=hits)
+        logger.info(
+            f"Fetched deals 0 to {len(first.deal_ids)} of {first.total_results}"
+        )
+        yield from first.deal_ids
 
-        while True:
+        offsets = list(range(hits, first.total_results, hits))
+        workers = max(1, min(int(workers), 16))
+        if workers > 1 and offsets:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        self.search_deals,
+                        query=query,
+                        offset=offset,
+                        hits=hits,
+                    ): offset
+                    for offset in offsets
+                }
+                for future in as_completed(futures):
+                    offset = futures[future]
+                    result = future.result()
+                    logger.info(
+                        f"Fetched deals {offset} to "
+                        f"{offset + len(result.deal_ids)} of {result.total_results}"
+                    )
+                    yield from result.deal_ids
+            return
+
+        for offset in offsets:
             result = self.search_deals(query=query, offset=offset, hits=hits)
             logger.info(f"Fetched deals {offset} to {offset + len(result.deal_ids)} of {result.total_results}")
-
-            for deal_id in result.deal_ids:
-                yield deal_id
-
-            if offset + len(result.deal_ids) >= result.total_results:
-                break
-
-            offset += hits
+            yield from result.deal_ids
             time.sleep(0.5)  # Rate limiting
 
     def get_deal_record(self, deal_id: int, fmt: str = "xml") -> DealRecord:

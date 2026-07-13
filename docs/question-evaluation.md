@@ -164,8 +164,10 @@ not unstructured text: 125,345 deals contain typed paid/projected payments,
 recipient side, dates, currencies, USD conversions, disclosure status, milestone
 breakdowns, royalty percentages, notes, and accuracy metadata. The old regex-only
 enrichment route treated this payload as a string and could not populate governed
-terms. Parser v2 now flattens it into `deal_financial_terms`, preserves the source
-JSON/path and parser version, and records resumable per-deal extraction status.
+terms. The structured parser flattens it into `deal_financial_terms`, preserves
+the source JSON/path and parser version, and records resumable per-deal extraction status.
+Parser v3 corrects Cortellis `B`/`T` unit scaling and captures bounded percentage
+terms beyond royalties, with a production population/sample validation gate.
 The job runs every 15 minutes in 1,000-deal batches. These metrics remain beta and
 the chat refusal stays in place until production coverage and precision are
 measured.

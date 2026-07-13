@@ -121,6 +121,9 @@ and fast retrieval before adding more external data volume.
           provenance-preserving beta table with resumable scheduled extraction.
     - [ ] Validate extracted term precision/coverage before enabling governed
           aggregate answers; add contract-derived scale-clause extraction.
+          Parser-v2 audit found 1,818 `B`/`T` values scaled incorrectly and 2,343
+          known percentage terms without bounds. Parser v3 and a deterministic
+          population/sample validation gate are being deployed before release.
     - [ ] Deal-to-trial and deal-to-regulatory-event timelines.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.

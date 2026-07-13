@@ -92,6 +92,31 @@ def test_catalog_coverage_rejects_an_incomplete_api_scan():
     assert coverage["scan_complete"] is False
 
 
+def test_parallel_catalog_scan_fetches_every_page_once():
+    client = CortellisClient(CortellisConfig("user", "password", "https://example.test"))
+    initial = SearchResult(250, 0, 100, list(range(100)))
+
+    def page(*, query, offset, hits):
+        assert query == "*"
+        assert hits == 100
+        end = min(offset + hits, 250)
+        return SearchResult(250, offset, end - offset, list(range(offset, end)))
+
+    client.search_deals = Mock(side_effect=page)
+
+    deal_ids = list(client.get_all_deal_ids(
+        "*",
+        workers=4,
+        initial_result=initial,
+    ))
+
+    assert sorted(deal_ids) == list(range(250))
+    assert {call.kwargs["offset"] for call in client.search_deals.call_args_list} == {
+        100,
+        200,
+    }
+
+
 @pytest.mark.parametrize(
     ("watermark", "now", "source_total", "reason"),
     [

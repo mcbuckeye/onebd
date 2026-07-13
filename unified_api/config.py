@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     cortellis_api_password: str = ""
     cortellis_base_url: str = "https://api.cortellis.com/api-ws/ws/rs"
     cortellis_sync_overlap_days: int = 2
+    cortellis_catalog_scan_workers: int = 8
     cortellis_freshness_warn_hours: int = 36
     cortellis_freshness_critical_hours: int = 72
 
