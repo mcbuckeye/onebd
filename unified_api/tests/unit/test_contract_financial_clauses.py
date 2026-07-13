@@ -436,6 +436,28 @@ def test_payment_bounds_do_not_mix_us_and_canadian_dollar_amounts():
     assert milestone["amount_max_millions"] == 21.5
 
 
+def test_review_key_changes_when_the_extracted_assertion_changes():
+    from unified_api.services.contract_financial_clauses import (
+        _clause_review_key,
+    )
+
+    reviewed = {
+        "clause_type": "upfront_payment",
+        "source_hash": "same-source",
+        "rate_min_pct": None,
+        "rate_max_pct": None,
+        "amount_min_millions": 15,
+        "amount_max_millions": 60,
+        "currency": "USD",
+        "is_tiered": False,
+    }
+    unchanged = dict(reviewed)
+    corrected = {**reviewed, "amount_max_millions": 15}
+
+    assert _clause_review_key(unchanged) == _clause_review_key(reviewed)
+    assert _clause_review_key(corrected) != _clause_review_key(reviewed)
+
+
 def test_contract_clause_batch_returns_busy_when_lock_is_held():
     from unified_api.services.contract_financial_clauses import (
         CONTRACT_CLAUSE_PARSER_VERSION,
