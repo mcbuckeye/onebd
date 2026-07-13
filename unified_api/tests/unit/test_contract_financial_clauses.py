@@ -349,6 +349,16 @@ def test_royalty_rate_excludes_allocation_covenant_and_equity_percentages():
     for contract in false_rate_clauses:
         assert extract_contract_financial_clauses(contract) == []
 
+    actual_example = """
+    <para>The royalty rate shall be 20% - (10% x M/12). For example, if
+    Closing occurs on April 1, the royalty rate would be 17.5%.</para>
+    """
+    assert any(
+        clause["rate_min_pct"] == 17.5
+        and clause["rate_max_pct"] == 17.5
+        for clause in extract_contract_financial_clauses(actual_example)
+    )
+
 
 def test_milestone_bounds_exclude_expense_funding_reserve_advance_and_escrow():
     from unified_api.services.contract_financial_clauses import (
@@ -641,6 +651,129 @@ def test_milestone_bounds_exclude_adjacent_transaction_and_threshold_values():
                 milestones[0]["amount_min_millions"],
                 milestones[0]["amount_max_millions"],
             ) == expected
+
+
+def test_v5_royalty_rate_excludes_examples_bases_and_operational_percentages():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """<para>Royalty rates range up to twenty percent. Development
+        expenditure is thirty percent (30%) of Co-Development costs.</para>""",
+        """<para>For example, if the royalty payable is 25%, each party bears
+        25% of the damages and litigation expenses.</para>""",
+        """<para>A stockholder owning fifty percent (50%) of the outstanding
+        voting stock triggers an auction. If that stockholder later passes the
+        fifty percent (50%) threshold, the price may include a royalty.</para>""",
+        """<para>In no event shall the Royalty exceed fifty percent (50%) of
+        the amount collected under the sublicense.</para>""",
+        """<para>The company posted net sales while spending 21% of net sales
+        on research and development. Products may earn tiered royalties.</para>""",
+        """<para>Licensee shall pay a royalty on one hundred percent (100%) of
+        the Net Sales for the applicable royalty period.</para>""",
+        """<para>Tekmira shall pay 100% of all royalties, license fees,
+        milestones and similar payments owed under third-party licenses.</para>""",
+        """<para>If an examination determines that Licensee underpaid the
+        royalties by more than five percent (5%), it bears the cost of such
+        examination.</para>""",
+    ]
+
+    for contract in false_rate_clauses:
+        assert extract_contract_financial_clauses(contract) == []
+
+
+def test_v5_upfront_excludes_package_financing_credit_and_hypothetical_amounts():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    no_upfront_clauses = [
+        """<para>Marina could receive up to $14 million for each target in
+        total upfront, clinical and commercialization milestone payments.</para>""",
+        """<para>Company funds the upfront license fee and development costs
+        with $10 million in venture debt financing.</para>""",
+        """<para>If, for example, Licensee must pay an upfront fee of $1
+        million to a third party, royalties are reduced until $500,000 has
+        been recouped.</para>""",
+        """<para>Initial payment is USD 1,000,000, of which USD 250,000 is
+        creditable against future royalties and sublicense up front
+        payments.</para>""",
+    ]
+    for contract in no_upfront_clauses:
+        assert all(
+            clause["clause_type"] != "upfront_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+    package = """
+    <para>Company may receive up to $975 million, inclusive of an upfront
+    payment of $150 million as well as development and regulatory milestone
+    payments.</para>
+    """
+    upfront = next(
+        clause for clause in extract_contract_financial_clauses(package)
+        if clause["clause_type"] == "upfront_payment"
+    )
+    assert upfront["amount_min_millions"] == 150
+    assert upfront["amount_max_millions"] == 150
+
+    safety = """
+    <para>Purchaser shall make a $250,000 payment in Shares at Closing (the
+    Upfront Payment). In addition, Purchaser shall make a $100,000 payment
+    after receiving human safety data (the Safety Data Payment).</para>
+    """
+    upfront = next(
+        clause for clause in extract_contract_financial_clauses(safety)
+        if clause["clause_type"] == "upfront_payment"
+    )
+    assert upfront["amount_min_millions"] == 0.25
+    assert upfront["amount_max_millions"] == 0.25
+
+    non_creditable = """
+    <para>Upfront Payment: Licensee shall pay $3 million on the Effective
+    Date. This payment is non-refundable and non-creditable against future
+    earned royalties.</para>
+    """
+    upfront = next(
+        clause for clause in extract_contract_financial_clauses(non_creditable)
+        if clause["clause_type"] == "upfront_payment"
+    )
+    assert upfront["amount_min_millions"] == 3
+    assert upfront["amount_max_millions"] == 3
+
+
+def test_v5_milestone_excludes_financing_research_purchase_and_indemnity_values():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    equity = """
+    <para>Buyer has paid a $500,000 milestone payment after receiving equity
+    financing in the minimum amount of $5 million.</para>
+    """
+    milestone = next(
+        clause for clause in extract_contract_financial_clauses(equity)
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 0.5
+    assert milestone["amount_max_millions"] == 0.5
+
+    false_milestone_clauses = [
+        """<para>ARTICLE 6 FEES, MILESTONES AND ROYALTIES. Section 6.1
+        Research Fees. Licensee shall pay a $4 million ADC Access Fee.</para>""",
+        """<para>The milestone and royalty payments are excused if the
+        investor commitment of at least US$25 million cannot be confirmed.</para>""",
+        """<para>ARTICLE 3 PURCHASE PRICE; MILESTONE PAYMENTS. The Purchase
+        Price is $2 million, of which $50,000 is allocated to patents.</para>""",
+        """<para>If the First Milestone has not occurred, offsets apply to the
+        note. Maximum cash indemnification payments are $1.75 million.</para>""",
+    ]
+    for contract in false_milestone_clauses:
+        assert all(
+            clause["clause_type"] != "milestone_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
 
 
 def test_review_key_changes_when_the_extracted_assertion_changes():
