@@ -932,6 +932,132 @@ def test_v6_milestone_excludes_thresholds_fees_reductions_and_annual_payments():
     assert milestone["amount_max_millions"] == 1.75
 
 
+def test_v7_royalty_excludes_burdens_multipliers_allocations_and_cost_shares():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """<para>Total royalty payments may exceed 10%, but the actual
+        royalty due under this Agreement is redacted.</para>""",
+        """<para>Only fifty percent (50%) of the corresponding milestone
+        payment is payable. Licensed Product royalties are redacted.</para>""",
+        """<para>The royalty rate shall be 75% of the rate otherwise
+        applicable, and later 50% of that otherwise applicable rate.</para>""",
+        """<para>Reduced royalty rates apply to 20% of Aggregate Product Net
+        Sales and unreduced rates apply to the remaining 80%.</para>""",
+        """<para>The aggregate royalty rate shall not be less than 50% of the
+        Patent Royalty rates set forth elsewhere.</para>""",
+        """<para>Assuming that the University is receiving a royalty rate of
+        5% of Net Sales, the third party receives its policy share.</para>""",
+        """<para>The formula subtracts royalties payable to third parties,
+        7% of the ASP representing variable selling costs, and manufacturing
+        costs.</para>""",
+        """<para>GSK will pay one hundred percent (100%) of the amounts payable
+        to such Third Party for a sublicense. Royalties are separately redacted.
+        </para>""",
+        """<para>The parties share 50% of U.S. profits and receive
+        double-digit royalties on ex-U.S. sales.</para>""",
+        """<para>Unit sales volumes reduced by 25% or 50% trigger redacted
+        royalty-rate adjustments.</para>""",
+    ]
+    for contract in false_rate_clauses:
+        assert all(
+            clause["clause_type"] != "royalty_rate"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+    mixed = """
+    <para>Licensee shall pay royalties of 5% and 4% of Net Sales. Total royalty
+    payments are not expected to exceed 10%.</para>
+    """
+    royalty = next(
+        clause for clause in extract_contract_financial_clauses(mixed)
+        if clause["clause_type"] == "royalty_rate"
+    )
+    assert royalty["rate_min_pct"] == 4
+    assert royalty["rate_max_pct"] == 5
+
+
+def test_v7_upfront_excludes_loans_expense_advances_thresholds_and_debt_fees():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    mixed_cases = [
+        (
+            """<para>The initial payment consists of a cash upfront payment
+            of $2 million and two loans for an aggregate of $8 million.</para>""",
+            2,
+        ),
+        (
+            """<para>Amgen will pay an initial license fee of €6 million and
+            an advance payment of Collaboration Expenses in an amount equal to
+            Four Million Euros (€4 million).</para>""",
+            6,
+        ),
+    ]
+    for contract, expected in mixed_cases:
+        upfront = next(
+            clause for clause in extract_contract_financial_clauses(contract)
+            if clause["clause_type"] == "upfront_payment"
+        )
+        assert upfront["amount_min_millions"] == expected
+        assert upfront["amount_max_millions"] == expected
+
+    false_upfront_clauses = [
+        """<para>An up front payment equal to or in excess of $20 million
+        triggers distribution of merger consideration.</para>""",
+        """<para>One half of the Term Loan Commitment Fee, $50,000, is a
+        non-refundable up-front fee for the Credit Extensions.</para>""",
+        """<para>Licensor receives 45% of amounts in excess of $2.7 million
+        received in either up-front, milestone, or similar payments.</para>""",
+    ]
+    for contract in false_upfront_clauses:
+        assert all(
+            clause["clause_type"] != "upfront_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
+def test_v7_milestone_excludes_earnouts_packages_options_and_adjustment_caps():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    mixed = """
+    <para>Other than the €70 million milestone payment and one earnout payment
+    estimated to be €1 million, no other milestone or earnout is due.</para>
+    """
+    milestone = next(
+        clause for clause in extract_contract_financial_clauses(mixed)
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 70
+    assert milestone["amount_max_millions"] == 70
+
+    false_milestone_clauses = [
+        """<para>Subject to achievement of the milestones, the maximum
+        aggregate consideration payable is $22.5 million.</para>""",
+        """<para>Additional sales-based milestone payments and additional
+        option payments total approximately €70 million.</para>""",
+        """<para>The milestone payment will be increased by 25% of cash up to
+        a maximum increase in the milestone payment of $500,000.</para>""",
+        """<para>The party has expended $100,000 on development. The
+        aggregate of such payments shall not exceed $2 million. Milestone
+        payments may also become due.</para>""",
+        """<para>License Fees: a second license fee of $7.5 million is due on
+        the anniversary. Milestone Payments follow in Section 4.2.</para>""",
+        """<para>Milestone Payments: Within 60 days, a non-refundable license
+        fee of\nEffective Date US$500,000 is due.</para>""",
+    ]
+    for contract in false_milestone_clauses:
+        assert all(
+            clause["clause_type"] != "milestone_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
 def test_review_key_changes_when_the_extracted_assertion_changes():
     from unified_api.services.contract_financial_clauses import (
         _clause_review_key,

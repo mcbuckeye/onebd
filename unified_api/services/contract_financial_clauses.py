@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 6
+CONTRACT_CLAUSE_PARSER_VERSION = 7
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -371,7 +371,13 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
                 r"(?:(?:net\s+)?sale\s+proceeds|"
                 r"deferred\s+compensation|royalties|the\s+royalty|all\s+"
                 r"research\s+and\s+development\s+funding|the\s+amounts\s+"
-                r"described|the\s+net\s+sales)|for\s+net\s+sales|"
+                r"described|the\s+net\s+sales|the\s+corresponding\s+"
+                r"milestone\s+payment|u\.?s\.?\s+profits?|the\s+asp|"
+                r"(?:aggregate\s+product\s+)?net\s+sales|"
+                r"(?:the\s+)?(?:patent\s+)?royalty\s+rates?|"
+                r"(?:the\s+)?rate\s+otherwise\s+applicable|"
+                r"(?:the\s+)?amounts?\s+payable\s+to\s+(?:a\s+)?"
+                r"third\s+part(?:y|ies))|for\s+net\s+sales|"
                 r"on\s+a\s+country|"
                 r"by.{0,100}(?:net\s+)?sale\s+proceeds)",
                 after,
@@ -379,6 +385,85 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             )
         position_specific_false_rate = bool(
             (false_rate_before and false_rate_after)
+            or re.search(
+                r"\btotal\s+royalty\s+payments?.{0,100}"
+                r"(?:exceed|threshold).{0,30}$|"
+                r"\bdiminution\s+of\s+(?:unit\s+)?sales\s+volumes?"
+                r".{0,100}(?:equal\s+to|reduced\s+by).{0,50}$|"
+                r"\bunreduced\s+royalty\s+rates?.{0,120}"
+                r"(?:apply\s+to\s+the\s+remaining|remaining).{0,30}$",
+                before,
+                re.IGNORECASE | re.DOTALL,
+            )
+            or re.match(
+                r"\s*\)?\s*of\s+u\.?s\.?\s+profits?\b",
+                after,
+                re.IGNORECASE,
+            )
+            or (
+                re.search(
+                    r"\bonly(?:\s+[a-z]+){0,4}\s+percent\s*\(\s*$",
+                    before,
+                    re.IGNORECASE,
+                )
+                and re.match(
+                    r"\s*\)?\s*of\s+(?:the\s+)?corresponding\s+"
+                    r"milestone\s+payment",
+                    after,
+                    re.IGNORECASE,
+                )
+            )
+            or (
+                re.search(
+                    r"\b(?:pay|pays|paying)\s+(?:one\s+hundred\s+percent\s*"
+                    r"\(\s*|100\s*%\s*)$",
+                    before,
+                    re.IGNORECASE,
+                )
+                and re.match(
+                    r"\s*\)?\s*of\s+(?:the\s+)?amounts?\s+payable\s+to\s+"
+                    r"(?:(?:a|the|such)\s+)?third\s+part(?:y|ies)",
+                    after,
+                    re.IGNORECASE,
+                )
+            )
+            or (
+                re.search(
+                    r"\broyalty\s+rate\s+shall\s+be.{0,30}$",
+                    before,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                and re.match(
+                    r"\s*\)?\s*of\s+(?:the\s+)?rate\s+otherwise\s+"
+                    r"applicable",
+                    after,
+                    re.IGNORECASE,
+                )
+            )
+            or re.match(
+                r"\s*\)?\s*of\s+the\s+asp.{0,100}"
+                r"variable\s+selling\s+costs?",
+                after,
+                re.IGNORECASE | re.DOTALL,
+            )
+            or (
+                re.search(
+                    r"\btotal\s+royalty\s+payments?.{0,100}"
+                    r"(?:exceed|threshold).{0,30}$|"
+                    r"\b(?:unit\s+)?sales\s+volumes?.{0,120}"
+                    r"(?:reduced|diminution).{0,80}$|"
+                    r"\b(?:reduced|unreduced)\s+royalty\s+rates?.{0,120}"
+                    r"(?:apply\s+to|remaining).{0,80}$|"
+                    r"\baggregate\s+royalty\s+rate.{0,100}less\s+than.{0,30}$|"
+                    r"\bassuming.{0,140}receiv(?:e|ing).{0,60}"
+                    r"royalty\s+rate\s+of.{0,30}$|"
+                    r"\b(?:pay|pays|paying)\s+(?:one\s+hundred\s+percent|"
+                    r"100\s*%).{0,40}$",
+                    before,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                and false_rate_after
+            )
             or (
                 re.search(
                     r"\breceive\b.{0,100}(?:percent\s*\()?\s*$",
@@ -812,6 +897,22 @@ def _payment_monetary_values(
                 max(0, relative_start - 500):
                 min(len(excerpt), relative_end + 650)
             ]
+            if re.search(
+                r"\b(?:term\s+loan\s+commitment|credit\s+extensions?)\b",
+                value_scope,
+                re.IGNORECASE,
+            ):
+                continue
+            if re.search(
+                r"\b(?:loans?\s+for\s+(?:an\s+)?aggregate\s+of|"
+                r"collaboration\s+expenses\s+in\s+an\s+amount\s+equal\s+to|"
+                r"collaboration\s+expenses.{0,100}\(\s*|"
+                r"equal\s+to\s+or\s+in\s+excess\s+of|"
+                r"amounts?\s+in\s+excess\s+of)\s*$",
+                value_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
             if _UPFRONT_PACKAGE_TOTAL.search(value_after):
                 continue
             if re.search(
@@ -980,6 +1081,39 @@ def _payment_monetary_values(
                 max(0, relative_start - 600):
                 min(len(excerpt), relative_end + 600)
             ]
+            if re.search(
+                r"\b(?:earnout\s+payments?|maximum\s+aggregate\s+"
+                r"consideration|maximum\s+increase\s+in\s+the\s+milestone\s+"
+                r"payment|(?:has|have|had)\s+expended|aggregate\s+of\s+such\s+"
+                r"payments\s+shall\s+not\s+exceed|effective\s+date.{0,80}"
+                r"non[ -]?refundable\s+license\s+fee\s+of|"
+                r"non[ -]?refundable\s+license\s+fee\s+of.{0,100}"
+                r"effective\s+date|license\s+fee\s+in\s+the\s+amount\s+of)"
+                r"\b.{0,120}$",
+                value_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if re.search(
+                r"\bmilestone\s+payments?\b.{0,100}\boption\s+payments?\b"
+                r".{0,100}\btotal(?:ing)?\b|"
+                r"\boption\s+payments?\b.{0,100}\btotal(?:ing)?\b",
+                value_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if closest_anchor.start() >= relative_end:
+                license_fee_matches = list(re.finditer(
+                    r"\blicense\s+fees?\b",
+                    value_before,
+                    re.IGNORECASE,
+                ))
+                if license_fee_matches:
+                    after_license_fee = value_before[
+                        license_fee_matches[-1].end():
+                    ]
+                    if not _SENTENCE_BOUNDARY.search(after_license_fee):
+                        continue
             if (
                 re.search(
                     r"\bannual\s+net\s+sales\b", table_scope, re.IGNORECASE
