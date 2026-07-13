@@ -84,7 +84,9 @@ async def chat(request: ChatRequest):
             mode = "sql"
         elif intent in ["contract_search"]:
             mode = "rag"
-        elif intent in ["relationship", "company_compare"]:
+        elif intent in ["relationship", "company_compare"] and not _is_deal_pattern_query(
+            request.message
+        ):
             mode = "graph"
         else:
             mode = "sql"  # Default to SQL for general queries
@@ -235,6 +237,12 @@ def _missing_resolved_entity_ids(sql_query: str, resolved_entities: List[dict]) 
     return missing
 
 
+def _is_deal_pattern_query(message: str) -> bool:
+    """Keep strategy-from-deals questions on governed relational data."""
+    normalized = message.lower()
+    return "strategy" in normalized and "deal pattern" in normalized
+
+
 def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional[str]:
     """Build deterministic SQL for supported, high-value question patterns."""
     resolved = [
@@ -379,6 +387,28 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
 
     if (
         len(resolved) == 1
+        and _is_deal_pattern_query(message)
+        and "oncology" in normalized
+    ):
+        company_id = int(resolved[0]["company_id"])
+        return (
+            "SELECT COALESCE(d.agreement_type, 'Unknown') AS agreement_type, "
+            "COUNT(DISTINCT d.id) AS deal_count, "
+            "MIN(d.date_start) AS first_deal_date, "
+            "MAX(d.date_start) AS latest_deal_date, "
+            "COUNT(f.total_projected_current_amount) AS disclosed_value_count "
+            "FROM deals d "
+            "JOIN therapy_areas ta ON ta.id = d.therapy_area_id AND ta.name = 'Cancer' "
+            "JOIN deal_companies dc ON dc.deal_id = d.id "
+            "LEFT JOIN deal_finance_summary f ON f.deal_id = d.id "
+            f"WHERE dc.company_id = {company_id} "
+            "GROUP BY COALESCE(d.agreement_type, 'Unknown') "
+            "ORDER BY deal_count DESC, agreement_type "
+            "LIMIT 20"
+        )
+
+    if (
+        len(resolved) == 1
         and year_match
         and "deal" in normalized
         and re.search(r"\bhow many\b|\bcount\b|\bnumber of\b", normalized)
@@ -475,6 +505,7 @@ async def _handle_rag_query(message: str) -> ChatResponse:
 async def _handle_graph_query(message: str, llm_service) -> ChatResponse:
     """Handle graph-based relationship queries."""
     from unified_api.services.graph_sync import get_graph_sync_service
+    from unified_api.services.governed_metrics import build_citations
 
     # For now, handle common graph query patterns
     message_lower = message.lower()
@@ -549,7 +580,7 @@ async def _handle_graph_query(message: str, llm_service) -> ChatResponse:
             response=response_text,
             mode_used="graph",
             data=data,
-            citations=[],
+            citations=build_citations("graph", data, query=message),
         )
 
     except Exception as e:
@@ -618,7 +649,9 @@ async def chat_v2(request: ChatRequest):
         mode = "rag"
         data = [r.model_dump() for r in (raw_response.search_results or [])]
         sql_query = None
-    elif intent in ["relationship", "company_compare"]:
+    elif intent in ["relationship", "company_compare"] and not _is_deal_pattern_query(
+        request.message
+    ):
         raw_response = await _handle_graph_query(request.message, llm_service)
         mode = "graph"
         data = raw_response.data or []
