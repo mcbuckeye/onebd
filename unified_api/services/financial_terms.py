@@ -100,6 +100,19 @@ def extract_financial_term_batch(
     force: bool = False,
 ) -> dict:
     """Extract one resumable batch and return counts plus reviewable samples."""
+    lock_acquired = session.execute(text(
+        "SELECT pg_try_advisory_xact_lock(hashtext('onebd_financial_term_extraction'))"
+    )).scalar()
+    if not lock_acquired:
+        return {
+            "status": "busy",
+            "processed": 0,
+            "terms_extracted": 0,
+            "errors": 0,
+            "dry_run": dry_run,
+            "parser_version": FINANCE_PARSER_VERSION,
+            "sample": [],
+        }
     ensure_financial_term_schema(session)
     deals = session.execute(text("""
         SELECT f.deal_id, f.finance_detail_raw,
@@ -116,7 +129,6 @@ def extract_financial_term_batch(
         )
         ORDER BY f.deal_id
         LIMIT :batch_size
-        FOR UPDATE OF f SKIP LOCKED
     """), {
         "force": force,
         "parser_version": FINANCE_PARSER_VERSION,
@@ -132,54 +144,59 @@ def extract_financial_term_batch(
         payload = deal["finance_detail_raw"]
         source_hash = deal["source_hash"]
         try:
-            terms = extract_financial_terms(payload, deal_id=deal_id)
-            if not dry_run:
-                session.execute(text(
-                    "DELETE FROM deal_financial_terms WHERE deal_id = :deal_id"
-                ), {"deal_id": deal_id})
-                for term in terms:
+            with session.begin_nested():
+                terms = extract_financial_terms(payload, deal_id=deal_id)
+                if not dry_run:
+                    session.execute(text(
+                        "DELETE FROM deal_financial_terms WHERE deal_id = :deal_id"
+                    ), {"deal_id": deal_id})
+                    for term in terms:
+                        session.execute(text("""
+                            INSERT INTO deal_financial_terms (
+                                deal_id, recipient, basis, term_type, source_payment_type,
+                                payment_date, amount_reported_millions, reported_currency,
+                                reported_unit, amount_usd_millions, rate_min_pct,
+                                rate_max_pct, accuracy, disclosure_status, note,
+                                is_breakdown, confidence, source_path, source_hash,
+                                parser_version, source_payload
+                            ) VALUES (
+                                :deal_id, :recipient, :basis, :term_type, :source_payment_type,
+                                :payment_date, :amount_reported_millions, :reported_currency,
+                                :reported_unit, :amount_usd_millions, :rate_min_pct,
+                                :rate_max_pct, :accuracy, :disclosure_status, :note,
+                                :is_breakdown, :confidence, :source_path, :source_hash,
+                                :parser_version, CAST(:source_payload AS JSONB)
+                            )
+                        """), {
+                            **{
+                                key: value
+                                for key, value in term.items()
+                                if key != "source_payload"
+                            },
+                            "source_hash": source_hash,
+                            "source_payload": json.dumps(term["source_payload"]),
+                        })
                     session.execute(text("""
-                        INSERT INTO deal_financial_terms (
-                            deal_id, recipient, basis, term_type, source_payment_type,
-                            payment_date, amount_reported_millions, reported_currency,
-                            reported_unit, amount_usd_millions, rate_min_pct,
-                            rate_max_pct, accuracy, disclosure_status, note,
-                            is_breakdown, confidence, source_path, source_hash,
-                            parser_version, source_payload
+                        INSERT INTO deal_financial_term_extractions (
+                            deal_id, source_hash, parser_version, status,
+                            terms_extracted, error_message, extracted_at
                         ) VALUES (
-                            :deal_id, :recipient, :basis, :term_type, :source_payment_type,
-                            :payment_date, :amount_reported_millions, :reported_currency,
-                            :reported_unit, :amount_usd_millions, :rate_min_pct,
-                            :rate_max_pct, :accuracy, :disclosure_status, :note,
-                            :is_breakdown, :confidence, :source_path, :source_hash,
-                            :parser_version, CAST(:source_payload AS JSONB)
+                            :deal_id, :source_hash, :parser_version, 'completed',
+                            :terms_extracted, NULL, NOW()
                         )
+                        ON CONFLICT (deal_id) DO UPDATE SET
+                            source_hash = EXCLUDED.source_hash,
+                            parser_version = EXCLUDED.parser_version,
+                            status = EXCLUDED.status,
+                            terms_extracted = EXCLUDED.terms_extracted,
+                            error_message = NULL,
+                            extracted_at = NOW()
                     """), {
-                        **{key: value for key, value in term.items() if key != "source_payload"},
+                        "deal_id": deal_id,
                         "source_hash": source_hash,
-                        "source_payload": json.dumps(term["source_payload"]),
+                        "parser_version": FINANCE_PARSER_VERSION,
+                        "terms_extracted": len(terms),
                     })
-                session.execute(text("""
-                    INSERT INTO deal_financial_term_extractions (
-                        deal_id, source_hash, parser_version, status,
-                        terms_extracted, error_message, extracted_at
-                    ) VALUES (
-                        :deal_id, :source_hash, :parser_version, 'completed',
-                        :terms_extracted, NULL, NOW()
-                    )
-                    ON CONFLICT (deal_id) DO UPDATE SET
-                        source_hash = EXCLUDED.source_hash,
-                        parser_version = EXCLUDED.parser_version,
-                        status = EXCLUDED.status,
-                        terms_extracted = EXCLUDED.terms_extracted,
-                        error_message = NULL,
-                        extracted_at = NOW()
-                """), {
-                    "deal_id": deal_id,
-                    "source_hash": source_hash,
-                    "parser_version": FINANCE_PARSER_VERSION,
-                    "terms_extracted": len(terms),
-                })
             processed += 1
             terms_extracted += len(terms)
             if len(samples) < 5:
@@ -187,24 +204,25 @@ def extract_financial_term_batch(
         except Exception as exc:
             errors += 1
             if not dry_run:
-                session.execute(text("""
-                    INSERT INTO deal_financial_term_extractions (
-                        deal_id, source_hash, parser_version, status,
-                        terms_extracted, error_message, extracted_at
-                    ) VALUES (
-                        :deal_id, :source_hash, :parser_version, 'failed', 0, :error, NOW()
-                    )
-                    ON CONFLICT (deal_id) DO UPDATE SET
-                        source_hash = EXCLUDED.source_hash,
-                        parser_version = EXCLUDED.parser_version,
-                        status = 'failed', terms_extracted = 0,
-                        error_message = EXCLUDED.error_message, extracted_at = NOW()
-                """), {
-                    "deal_id": deal_id,
-                    "source_hash": source_hash,
-                    "parser_version": FINANCE_PARSER_VERSION,
-                    "error": str(exc)[:1000],
-                })
+                with session.begin_nested():
+                    session.execute(text("""
+                        INSERT INTO deal_financial_term_extractions (
+                            deal_id, source_hash, parser_version, status,
+                            terms_extracted, error_message, extracted_at
+                        ) VALUES (
+                            :deal_id, :source_hash, :parser_version, 'failed', 0, :error, NOW()
+                        )
+                        ON CONFLICT (deal_id) DO UPDATE SET
+                            source_hash = EXCLUDED.source_hash,
+                            parser_version = EXCLUDED.parser_version,
+                            status = 'failed', terms_extracted = 0,
+                            error_message = EXCLUDED.error_message, extracted_at = NOW()
+                    """), {
+                        "deal_id": deal_id,
+                        "source_hash": source_hash,
+                        "parser_version": FINANCE_PARSER_VERSION,
+                        "error": str(exc)[:1000],
+                    })
 
     return {
         "processed": processed,

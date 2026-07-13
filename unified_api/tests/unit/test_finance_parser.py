@@ -413,3 +413,96 @@ def test_celery_financial_extraction_runs_resumable_batch():
 
         assert extract_cortellis_financial_terms.run() == expected
         extract.assert_called_once_with(session, batch_size=1000)
+
+
+def test_financial_extraction_returns_busy_when_another_batch_holds_lock():
+    from unified_api.services.financial_terms import extract_financial_term_batch
+
+    session = MagicMock()
+    session.execute.return_value.scalar.return_value = False
+
+    result = extract_financial_term_batch(session, batch_size=1000)
+
+    assert result == {
+        "status": "busy",
+        "processed": 0,
+        "terms_extracted": 0,
+        "errors": 0,
+        "dry_run": False,
+        "parser_version": 3,
+        "sample": [],
+    }
+    session.execute.assert_called_once()
+
+
+def test_celery_financial_rebuild_commits_each_resumable_batch():
+    batches = [
+        {"processed": 1000, "terms_extracted": 2500, "errors": 0},
+        {"processed": 7, "terms_extracted": 14, "errors": 1},
+        {"processed": 0, "terms_extracted": 0, "errors": 0},
+    ]
+    session = MagicMock()
+    context = MagicMock()
+    context.__enter__.return_value = session
+    with (
+        patch(
+            "unified_api.services.database.get_cortellis_session",
+            return_value=context,
+        ),
+        patch(
+            "unified_api.services.financial_terms.extract_financial_term_batch",
+            side_effect=batches,
+        ) as extract,
+    ):
+        from unified_api.workers.celery_app import rebuild_cortellis_financial_terms
+
+        assert rebuild_cortellis_financial_terms.run() == {
+            "status": "completed",
+            "batches": 3,
+            "processed": 1007,
+            "terms_extracted": 2514,
+            "errors": 1,
+            "busy_retries": 0,
+        }
+        assert extract.call_count == 3
+        assert session.commit.call_count == 3
+
+
+def test_celery_financial_rebuild_retries_busy_lock():
+    batches = [
+        {
+            "status": "busy",
+            "processed": 0,
+            "terms_extracted": 0,
+            "errors": 0,
+        },
+        {"processed": 0, "terms_extracted": 0, "errors": 0},
+    ]
+    session = MagicMock()
+    context = MagicMock()
+    context.__enter__.return_value = session
+    with (
+        patch(
+            "unified_api.services.database.get_cortellis_session",
+            return_value=context,
+        ),
+        patch(
+            "unified_api.services.financial_terms.extract_financial_term_batch",
+            side_effect=batches,
+        ),
+        patch("time.sleep") as sleep,
+    ):
+        from unified_api.workers.celery_app import rebuild_cortellis_financial_terms
+
+        result = rebuild_cortellis_financial_terms.run()
+
+    assert result == {
+        "status": "completed",
+        "batches": 1,
+        "processed": 0,
+        "terms_extracted": 0,
+        "errors": 0,
+        "busy_retries": 0,
+    }
+    session.rollback.assert_called_once_with()
+    sleep.assert_called_once_with(0.25)
