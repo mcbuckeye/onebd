@@ -3,10 +3,12 @@
 from datetime import datetime, timedelta, timezone
 
 from unified_api.services.source_monitoring import (
+    _source_counts,
     SourcePolicy,
     classify_source_job,
     notification_transition,
     retry_delay,
+    source_job_payload,
 )
 
 
@@ -71,3 +73,38 @@ def test_retry_advisory_uses_capped_exponential_backoff():
     assert retry_delay(1) == timedelta(minutes=15)
     assert retry_delay(3) == timedelta(minutes=60)
     assert retry_delay(20) == timedelta(hours=6)
+
+
+def test_common_edgar_counts_have_stable_vocabulary():
+    counts = _source_counts("edgar_backfill", {
+        "filings_seen": 12,
+        "filings_fetched": 5,
+        "documents_created": 8,
+        "chunks_created": 90,
+    })
+
+    assert counts == {
+        "records_seen": 12,
+        "records_processed": 5,
+        "records_created": 5,
+        "records_updated": None,
+        "documents_created": 8,
+        "chunks_created": 90,
+        "relationships_processed": None,
+    }
+
+
+def test_common_source_payload_reports_cursor_lag_duration_and_counts():
+    payload = source_job_payload({
+        "source_key": "edgar_backfill",
+        "source_cursor": "2026-07-10",
+        "source_data_at": datetime(2026, 7, 10, tzinfo=timezone.utc),
+        "duration_seconds": 42.5,
+        "counts": {"records_processed": 10},
+    }, now=NOW)
+
+    assert payload["payload_version"] == 1
+    assert payload["cursor"] == "2026-07-10"
+    assert payload["source_lag_seconds"] == 86400 + 18 * 3600
+    assert payload["duration_seconds"] == 42.5
+    assert payload["counts"] == {"records_processed": 10}

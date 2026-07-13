@@ -531,6 +531,7 @@ class EDGARIngestionService:
         embedded_chunks = 0
         status = "completed"
         error = None
+        stop_reason = None
         advance_backfill = lane == "backfill"
         completed_cursor = cursor
         if advance_backfill:
@@ -589,9 +590,14 @@ class EDGARIngestionService:
                         embedded_chunks += result["embedded"]
 
                 if date_failed or limit_reached:
-                    status = "partial"
                     if limit_reached:
-                        error = f"Per-run filing limit ({max_filings}) reached"
+                        # Reaching the configured bound is the successful end of
+                        # this resumable unit of work, not a source failure.  The
+                        # cursor intentionally remains on the preceding fully
+                        # consumed day so the next run resumes the unfinished day.
+                        stop_reason = "filing_limit"
+                    else:
+                        status = "partial"
                     break
 
                 if advance_backfill:
@@ -627,8 +633,12 @@ class EDGARIngestionService:
             "lane": lane,
             "window_start": str(window.start),
             "window_end": str(window.end),
+            "cursor_start": str(cursor) if cursor else None,
+            "cursor_end": str(completed_cursor) if completed_cursor else None,
             **stats,
             "embedded_chunks": embedded_chunks,
+            "has_more": stop_reason == "filing_limit",
+            "stop_reason": stop_reason,
         }
         if error:
             result["error"] = error
@@ -652,7 +662,16 @@ class EDGARIngestionService:
         self.ensure_sync_state(target)
         cursor = self.get_cursor()
         window = calculate_sync_window(cursor, target, batch_days, overlap_days)
-        return await self._sync_window(window, max_filings, "backfill", cursor)
+        result = await self._sync_window(window, max_filings, "backfill", cursor)
+        cursor_after = self.get_cursor()
+        result.update({
+            "cursor": str(cursor_after),
+            "source_data_at": str(cursor_after),
+            "target_date": str(target),
+            "backlog_days": max(0, (target - cursor_after).days),
+            "caught_up": cursor_after >= target,
+        })
+        return result
 
     async def sync_recent(
         self,
@@ -670,7 +689,15 @@ class EDGARIngestionService:
             end=target,
         )
         self.ensure_recent_sync_state()
-        return await self._sync_window(window, max_filings, "recent")
+        result = await self._sync_window(window, max_filings, "recent")
+        result.update({
+            "cursor": str(window.end),
+            "source_data_at": str(window.end),
+            "target_date": str(target),
+            "backlog_days": 0,
+            "caught_up": True,
+        })
+        return result
 
 
 async def run_edgar_sync(**kwargs) -> dict:

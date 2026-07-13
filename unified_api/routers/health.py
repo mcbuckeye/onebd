@@ -398,14 +398,9 @@ async def data_health_check():
             if session.execute(text(
                 "SELECT to_regclass('public.source_job_state')"
             )).scalar():
-                sources["source_jobs"] = [dict(row) for row in session.execute(text("""
-                    SELECT source_key, label, status, last_started_at,
-                           last_completed_at, last_success_at,
-                           consecutive_failures, retry_count, next_retry_at,
-                           last_error, alert_status, updated_at
-                    FROM source_job_state
-                    ORDER BY source_key
-                """)).mappings().all()]
+                from unified_api.services.source_monitoring import read_source_job_states
+
+                sources["source_jobs"] = read_source_job_states(session)
                 sources["source_job_notifications"] = [
                     dict(row) for row in session.execute(text("""
                         SELECT id, source_key, event_type, severity, detail,
@@ -539,11 +534,31 @@ async def data_health_check():
     health = compute_health_score(metrics)
 
     sync_checks = []
-    for source_name, label in (
-        ("cortellis_sync", "Cortellis Sync"),
-        ("edgar_recent_sync", "EDGAR Recent Sync"),
-        ("edgar_backfill_sync", "EDGAR Backfill Sync"),
+    common_states = {
+        state["source_key"]: state
+        for state in sources.get("source_jobs", [])
+    }
+    for source_name, source_key, label in (
+        ("cortellis_sync", "cortellis", "Cortellis Sync"),
+        ("edgar_recent_sync", "edgar_recent", "EDGAR Recent Sync"),
+        ("edgar_backfill_sync", "edgar_backfill", "EDGAR Backfill Sync"),
     ):
+        common_state = common_states.get(source_key)
+        if common_state:
+            from unified_api.services.source_monitoring import (
+                SOURCE_POLICIES,
+                classify_source_job,
+            )
+
+            severity, detail = classify_source_job(
+                common_state, SOURCE_POLICIES[source_key]
+            )
+            sync_checks.append({
+                "name": label,
+                "status": severity,
+                "detail": detail,
+            })
+            continue
         source = sources.get(source_name)
         if source:
             freshness = source.get("freshness", {})
@@ -559,13 +574,7 @@ async def data_health_check():
                 "detail": "sync state unavailable",
             })
 
-    graph_state = next(
-        (
-            state for state in sources.get("source_jobs", [])
-            if state["source_key"] == "neo4j"
-        ),
-        None,
-    )
+    graph_state = common_states.get("neo4j")
     if graph_state:
         from unified_api.services.source_monitoring import (
             SOURCE_POLICIES,
@@ -577,6 +586,22 @@ async def data_health_check():
         )
         sync_checks.append({
             "name": "Neo4j Graph Sync",
+            "status": severity,
+            "detail": detail,
+        })
+
+    catalog_state = common_states.get("cortellis_catalog")
+    if catalog_state:
+        from unified_api.services.source_monitoring import (
+            SOURCE_POLICIES,
+            classify_source_job,
+        )
+
+        severity, detail = classify_source_job(
+            catalog_state, SOURCE_POLICIES["cortellis_catalog"]
+        )
+        sync_checks.append({
+            "name": "Cortellis Catalog Reconciliation",
             "status": severity,
             "detail": detail,
         })

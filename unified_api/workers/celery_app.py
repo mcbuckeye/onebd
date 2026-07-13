@@ -54,6 +54,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.cortellis.sync_deals",
             "schedule": crontab(hour=6, minute=30),
         },
+        # Weekly full-ID reconciliation repairs historical omissions that a
+        # date-watermarked incremental lane cannot see.
+        "reconcile-cortellis-catalog": {
+            "task": "unified_api.workers.tasks.cortellis.reconcile_catalog",
+            "schedule": crontab(hour=4, minute=15, day_of_week="sunday"),
+        },
         # Sync graph database daily at 7:00 AM
         "sync-neo4j-graph": {
             "task": "unified_api.workers.tasks.graph.sync_all",
@@ -131,6 +137,35 @@ def _finish_source_job(source_key: str, result: dict) -> dict:
 
     record_source_job_finished(source_key, result)
     return result
+
+
+def _cortellis_sync_service():
+    """Build the legacy Deals API sync service from unified settings."""
+    from src.config import AppConfig, CortellisConfig, DatabaseConfig, OpenAIConfig
+    from src.sync import SyncService
+
+    db_url = settings.cortellis_db_url
+    return SyncService(AppConfig(
+        cortellis=CortellisConfig(
+            username=settings.cortellis_api_username,
+            password=settings.cortellis_api_password,
+            base_url=settings.cortellis_base_url,
+        ),
+        database=DatabaseConfig(
+            host=db_url.split("@")[1].split(":")[0],
+            port=int(db_url.split("@")[1].split(":")[1].split("/")[0]),
+            database=db_url.split("/")[-1],
+            user=db_url.split("://")[1].split(":")[0],
+            password=db_url.split("://")[1].split(":")[1].split("@")[0],
+        ),
+        openai=OpenAIConfig(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+        ),
+        sync_schedule="",
+        data_dir="/app/data",
+        contracts_dir="/app/data/contracts",
+    ))
 
 @celery_app.task(name="unified_api.workers.tasks.edgar.fetch_new_filings")
 def fetch_new_filings():
@@ -213,45 +248,14 @@ def sync_cortellis_deals():
     logger.info("Starting Cortellis sync")
     _start_source_job("cortellis")
     try:
-        from unified_api.config import settings
-        from src.config import CortellisConfig, DatabaseConfig, OpenAIConfig, AppConfig
-        from src.sync import SyncService
-
         if not settings.cortellis_api_username or not settings.cortellis_api_password:
             logger.warning("Cortellis API credentials not configured, skipping sync")
             return _finish_source_job(
                 "cortellis", {"status": "skipped", "reason": "no credentials"}
             )
 
-        # Build config from unified settings
-        cortellis_config = CortellisConfig(
-            username=settings.cortellis_api_username,
-            password=settings.cortellis_api_password,
-            base_url=settings.cortellis_base_url,
-        )
-        # Parse DB URL components from the connection string
-        db_url = settings.cortellis_db_url
-        database_config = DatabaseConfig(
-            host=db_url.split("@")[1].split(":")[0],
-            port=int(db_url.split("@")[1].split(":")[1].split("/")[0]),
-            database=db_url.split("/")[-1],
-            user=db_url.split("://")[1].split(":")[0],
-            password=db_url.split("://")[1].split(":")[1].split("@")[0],
-        )
-        openai_config = OpenAIConfig(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-        )
-        app_config = AppConfig(
-            cortellis=cortellis_config,
-            database=database_config,
-            openai=openai_config,
-            sync_schedule="",
-            data_dir="/app/data",
-            contracts_dir="/app/data/contracts",
-        )
-
-        sync_service = SyncService(app_config)
+        sync_service = _cortellis_sync_service()
+        cortellis_config = sync_service.config.cortellis
         sync_log = sync_service.incremental_sync(
             batch_size=30,
             overlap_days=settings.cortellis_sync_overlap_days,
@@ -267,12 +271,68 @@ def sync_cortellis_deals():
         }
         if sync_log.error_message:
             result["error"] = sync_log.error_message
+
+        # A valid incremental window does not prove that an older full-sync
+        # batch was never omitted.  Compare the source catalog cardinality on
+        # every run and expose the source watermark in the common payload.
+        from sqlalchemy import text
+        from src.api_client import CortellisClient
+        from unified_api.services.database import get_cortellis_session
+
+        with CortellisClient(cortellis_config) as client:
+            catalog_total = client.search_deals("*", offset=0, hits=1).total_results
+        with get_cortellis_session() as session:
+            snapshot = session.execute(text("""
+                SELECT COUNT(*) AS local_total,
+                       MAX(date_change_last) AS source_cursor
+                FROM deals
+            """)).mappings().one()
+        local_total = int(snapshot["local_total"])
+        result.update({
+            "catalog_total": catalog_total,
+            "local_total": local_total,
+            "catalog_gap": catalog_total - local_total,
+            "cursor": (
+                snapshot["source_cursor"].isoformat()
+                if snapshot["source_cursor"] else None
+            ),
+            "source_data_at": (
+                snapshot["source_cursor"].isoformat()
+                if snapshot["source_cursor"] else None
+            ),
+        })
+        if catalog_total != local_total and result["status"] == "completed":
+            result["status"] = "partial"
+            result["error"] = (
+                "Cortellis catalog/local count mismatch: "
+                f"source={catalog_total}, local={local_total}"
+            )
         logger.info("Cortellis sync complete", **result)
         return _finish_source_job("cortellis", result)
 
     except Exception as e:
         logger.error("Cortellis sync failed", error=str(e))
         return _finish_source_job("cortellis", {"status": "failed", "error": str(e)})
+
+
+@celery_app.task(name="unified_api.workers.tasks.cortellis.reconcile_catalog")
+def reconcile_cortellis_catalog():
+    """Restore records omitted by historical full-sync batch failures."""
+    logger.info("Starting Cortellis catalog reconciliation")
+    _start_source_job("cortellis_catalog")
+    if not settings.cortellis_api_username or not settings.cortellis_api_password:
+        return _finish_source_job(
+            "cortellis_catalog", {"status": "skipped", "reason": "no credentials"}
+        )
+    try:
+        result = _cortellis_sync_service().reconcile_catalog(max_missing=5000)
+        logger.info("Cortellis catalog reconciliation complete", **result)
+        return _finish_source_job("cortellis_catalog", result)
+    except Exception as exc:
+        logger.error("Cortellis catalog reconciliation failed", error=str(exc))
+        return _finish_source_job(
+            "cortellis_catalog", {"status": "failed", "error": str(exc)}
+        )
 
 
 @celery_app.task(name="unified_api.workers.tasks.graph.sync_all")
@@ -284,6 +344,17 @@ def sync_graph():
         from unified_api.services.graph_sync import get_graph_sync_service
         service = get_graph_sync_service()
         results = service.full_sync()
+        from sqlalchemy import text
+        from unified_api.services.database import get_cortellis_session
+
+        with get_cortellis_session() as session:
+            source_cursor = session.execute(text(
+                "SELECT MAX(date_change_last) FROM deals"
+            )).scalar()
+        results.update({
+            "cursor": source_cursor.isoformat() if source_cursor else None,
+            "source_data_at": source_cursor.isoformat() if source_cursor else None,
+        })
         logger.info("Graph sync complete", **results)
         return _finish_source_job("neo4j", {"status": "completed", **results})
     except Exception as e:

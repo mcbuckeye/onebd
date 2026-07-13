@@ -11,6 +11,7 @@ from unified_api.services.edgar_ingestion import (
     EDGARIngestionService,
     calculate_sync_window,
     extract_submission_documents,
+    normalize_cik,
 )
 
 
@@ -234,6 +235,35 @@ async def test_recent_sync_ignores_backfill_cursor_and_does_not_advance_it():
     assert service.advanced == []
     assert service.recorded_run["lane"] == "recent"
     assert service.recorded_run["cursor_end"] is None
+
+
+@pytest.mark.asyncio
+async def test_filing_limit_is_a_successful_resumable_boundary():
+    filing_date = date(2026, 7, 9)
+    filing = next(
+        item for item in parse_master_index(MASTER_INDEX)
+        if normalize_cik(item["cik"]) == "320193" and is_priority_form(item["form"])
+    )
+    second_filing = {**filing, "accession_number": "0000320193-26-000051"}
+    service = MemoryIngestionService(
+        FakeClient({filing_date: [filing, second_filing]}),
+        cursor=date(2026, 7, 8),
+    )
+
+    result = await service.sync_incremental(
+        now=datetime(2026, 7, 11, tzinfo=timezone.utc),
+        batch_days=1,
+        overlap_days=1,
+        max_filings=1,
+    )
+
+    assert result["status"] == "completed"
+    assert result["has_more"] is True
+    assert result["stop_reason"] == "filing_limit"
+    assert result["filings_fetched"] == 1
+    assert service.advanced == []
+    assert service.finished[2] is None
+    assert service.recorded_run["status"] == "completed"
 
 
 def test_celery_task_runs_ingestion_service():

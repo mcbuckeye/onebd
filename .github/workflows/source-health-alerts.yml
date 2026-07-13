@@ -1,0 +1,103 @@
+name: Production source-health alerts
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: onebd-source-health-alerts
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      HEALTH_URL: https://onebd.pchomelab.com/api/health/data
+      ISSUE_TITLE: "[ops] OneBD source-sync health degraded"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Evaluate the common source-health payload
+        id: health
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/source-health.md"
+          response="$RUNNER_TEMP/source-health.json"
+          observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "body=$body" >> "$GITHUB_OUTPUT"
+
+          if ! curl --fail --silent --show-error --max-time 30 \
+            -H "Accept: application/json" \
+            -H "User-Agent: OneBD-Source-Health-Alert/1.0 admin@pchomelab.com" \
+            "$HEALTH_URL" > "$response"; then
+            printf 'OneBD source health could not be retrieved at `%s`.\n\nObserved: `%s`\n' \
+              "$HEALTH_URL" "$observed_at" > "$body"
+            echo "problem=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! jq -e '.sources.source_jobs | type == "array"' "$response" >/dev/null; then
+            printf 'The production response did not contain the common `source_jobs` payload.\n\nObserved: `%s`\n' \
+              "$observed_at" > "$body"
+            echo "problem=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          jq -r '
+            .sources.source_jobs[]
+            | select(
+                .status == "failed"
+                or .status == "partial"
+                or .alert_status == "warning"
+                or .alert_status == "critical"
+              )
+            | "- **\(.label)** — status `\(.status)`, alert `\(.alert_status)`"
+              + (if .last_error then ": \(.last_error)" else "" end)
+          ' "$response" > "$RUNNER_TEMP/problems.txt"
+
+          if [[ -s "$RUNNER_TEMP/problems.txt" ]]; then
+            {
+              printf 'One or more production source jobs require attention.\n\n'
+              cat "$RUNNER_TEMP/problems.txt"
+              printf '\nObserved: `%s`  \nEndpoint: `%s`\n' "$observed_at" "$HEALTH_URL"
+            } > "$body"
+            echo "problem=true" >> "$GITHUB_OUTPUT"
+          else
+            printf 'All instrumented production source jobs are healthy.\n\nObserved: `%s`\n' \
+              "$observed_at" > "$body"
+            echo "problem=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or refresh the operations issue
+        if: steps.health.outputs.problem == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --json number,title --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" \
+            | head -1)"
+          if [[ -n "$issue_number" ]]; then
+            gh issue edit "$issue_number" --repo "$GITHUB_REPOSITORY" \
+              --body-file "${{ steps.health.outputs.body }}"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
+              --body-file "${{ steps.health.outputs.body }}"
+          fi
+
+      - name: Close the operations issue after recovery
+        if: steps.health.outputs.problem == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue_number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --json number,title --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" \
+            | head -1)"
+          if [[ -n "$issue_number" ]]; then
+            gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" \
+              --comment "Production source jobs recovered; the common health payload is clear."
+          fi
