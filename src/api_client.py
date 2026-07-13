@@ -34,7 +34,17 @@ class DealRecord:
 
 class CortellisAPIError(Exception):
     """Exception raised for API errors."""
-    pass
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        response_text: str | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_text = response_text
 
 
 class CortellisClient:
@@ -89,7 +99,11 @@ class CortellisClient:
                         logger.warning(f"Server error {e.response.status_code}, retrying...")
                         time.sleep(retry_delay)
                         continue
-                raise CortellisAPIError(f"HTTP {e.response.status_code}: {e.response.text}")
+                raise CortellisAPIError(
+                    f"HTTP {e.response.status_code}: {e.response.text}",
+                    status_code=e.response.status_code,
+                    response_text=e.response.text,
+                )
             except httpx.RequestError as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"Request error: {e}, retrying...")
@@ -182,6 +196,7 @@ class CortellisClient:
         *,
         workers: int = 1,
         initial_result: Optional[SearchResult] = None,
+        sort_by: Optional[str] = None,
     ) -> Iterator[int]:
         """
         Iterate through all deal IDs matching a query.
@@ -193,7 +208,12 @@ class CortellisClient:
             Deal IDs
         """
         hits = 100
-        first = initial_result or self.search_deals(query=query, offset=0, hits=hits)
+        first = initial_result or self.search_deals(
+            query=query,
+            offset=0,
+            hits=hits,
+            sort_by=sort_by,
+        )
         logger.info(
             f"Fetched deals 0 to {len(first.deal_ids)} of {first.total_results}"
         )
@@ -209,6 +229,7 @@ class CortellisClient:
                         query=query,
                         offset=offset,
                         hits=hits,
+                        sort_by=sort_by,
                     ): offset
                     for offset in offsets
                 }
@@ -223,7 +244,12 @@ class CortellisClient:
             return
 
         for offset in offsets:
-            result = self.search_deals(query=query, offset=offset, hits=hits)
+            result = self.search_deals(
+                query=query,
+                offset=offset,
+                hits=hits,
+                sort_by=sort_by,
+            )
             logger.info(f"Fetched deals {offset} to {offset + len(result.deal_ids)} of {result.total_results}")
             yield from result.deal_ids
             time.sleep(0.5)  # Rate limiting
@@ -365,11 +391,10 @@ class CortellisClient:
         url = f"{self.base_url}/deals-v2/deal/contract/{deal_id}"
         params = {"fmt": fmt}
 
-        try:
-            response = self._request("GET", url, params=params)
-        except CortellisAPIError as e:
-            logger.warning(f"No contracts found for deal {deal_id}: {e}")
-            return []
+        # The API represents a valid no-contract result as HTTP 200 with an
+        # empty XML document. Every HTTP failure must propagate so a coverage
+        # scan retries it instead of persisting a false negative.
+        response = self._request("GET", url, params=params)
 
         if fmt == "xml":
             return self._parse_contracts_xml(response.text)

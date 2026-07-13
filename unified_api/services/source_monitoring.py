@@ -35,6 +35,11 @@ SOURCE_POLICIES = {
         24 * 8,
         24 * 14,
     ),
+    "cortellis_contracts": SourcePolicy(
+        "Cortellis Contract Metadata Scan",
+        1,
+        3,
+    ),
     "edgar_recent": SourcePolicy(
         "EDGAR Recent Sync",
         settings.edgar_freshness_warn_hours,
@@ -132,6 +137,13 @@ def _source_counts(source_key: str, result: Mapping[str, Any]) -> dict[str, int 
             "records_processed": result.get("reconciled"),
             "records_created": result.get("reconciled"),
             "documents_created": result.get("contracts_downloaded"),
+        })
+    elif source_key == "cortellis_contracts":
+        counts.update({
+            "records_seen": result.get("eligible_deals"),
+            "records_processed": result.get("processed"),
+            "records_updated": result.get("completed"),
+            "documents_created": result.get("contracts_observed"),
         })
     elif source_key == "neo4j":
         companies = int(result.get("cortellis_companies") or 0) + int(

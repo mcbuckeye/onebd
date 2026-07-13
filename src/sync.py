@@ -1033,11 +1033,20 @@ class SyncService:
         """
         batch_size = max(1, min(30, batch_size))
         with CortellisClient(self.config.cortellis) as client:
-            first = client.search_deals(query="*", offset=0, hits=100)
+            # The API's default order is unstable across concurrent pages and
+            # can repeat IDs. ``dealId`` is a verified supported monotonic sort,
+            # making the advertised-count/unique-ID gate meaningful.
+            first = client.search_deals(
+                query="*",
+                offset=0,
+                hits=100,
+                sort_by="dealId",
+            )
             remote_ids = list(client.get_all_deal_ids(
                 "*",
                 workers=scan_workers,
                 initial_result=first,
+                sort_by="dealId",
             ))
 
             with self.SessionLocal() as session:

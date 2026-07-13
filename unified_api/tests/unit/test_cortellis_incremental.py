@@ -96,9 +96,10 @@ def test_parallel_catalog_scan_fetches_every_page_once():
     client = CortellisClient(CortellisConfig("user", "password", "https://example.test"))
     initial = SearchResult(250, 0, 100, list(range(100)))
 
-    def page(*, query, offset, hits):
+    def page(*, query, offset, hits, sort_by):
         assert query == "*"
         assert hits == 100
+        assert sort_by == "dealId"
         end = min(offset + hits, 250)
         return SearchResult(250, offset, end - offset, list(range(offset, end)))
 
@@ -108,6 +109,7 @@ def test_parallel_catalog_scan_fetches_every_page_once():
         "*",
         workers=4,
         initial_result=initial,
+        sort_by="dealId",
     ))
 
     assert sorted(deal_ids) == list(range(250))
@@ -115,6 +117,10 @@ def test_parallel_catalog_scan_fetches_every_page_once():
         100,
         200,
     }
+    assert all(
+        call.kwargs["sort_by"] == "dealId"
+        for call in client.search_deals.call_args_list
+    )
 
 
 @pytest.mark.parametrize(
@@ -194,3 +200,27 @@ def test_api_request_stops_after_retry_budget():
         client._request("GET", str(request.url))
 
     assert transport.request.call_count == 3
+
+
+def test_contract_lookup_accepts_successful_empty_response_as_no_contracts():
+    client = CortellisClient(CortellisConfig("user", "password", "https://example.test"))
+    request = httpx.Request("GET", "https://example.test/contracts")
+    client._request = Mock(return_value=httpx.Response(
+        200,
+        request=request,
+        text='<?xml version="1.0"?><dealContractsOutput/>',
+    ))
+
+    assert client.get_deal_contracts(123) == []
+
+
+@pytest.mark.parametrize("status_code", [404, 503])
+def test_contract_lookup_propagates_http_errors_for_retry(status_code):
+    client = CortellisClient(CortellisConfig("user", "password", "https://example.test"))
+    client._request = Mock(side_effect=CortellisAPIError(
+        "request error",
+        status_code=status_code,
+    ))
+
+    with pytest.raises(CortellisAPIError, match="request error"):
+        client.get_deal_contracts(123)

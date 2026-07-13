@@ -606,6 +606,22 @@ async def data_health_check():
             "detail": detail,
         })
 
+    contract_state = common_states.get("cortellis_contracts")
+    if contract_state:
+        from unified_api.services.source_monitoring import (
+            SOURCE_POLICIES,
+            classify_source_job,
+        )
+
+        severity, detail = classify_source_job(
+            contract_state, SOURCE_POLICIES["cortellis_contracts"]
+        )
+        sync_checks.append({
+            "name": "Cortellis Contract Metadata Scan",
+            "status": severity,
+            "detail": detail,
+        })
+
     health["checks"].extend(sync_checks)
     degraded = any(check["status"] in {"warning", "critical"} for check in sync_checks)
 

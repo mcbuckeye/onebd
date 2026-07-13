@@ -11,7 +11,16 @@ on:
         required: true
 
 concurrency:
-  group: onebd-production-verification
+  # A completed pull-request quality run also emits workflow_run, even though
+  # the verify job is skipped by its condition below. Give those irrelevant
+  # runs unique groups so they cannot cancel the real main-push verification.
+  group: >-
+    onebd-production-verification-${{
+      github.event_name == 'workflow_dispatch' && 'main' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' && 'main' ||
+       github.run_id)
+    }}
   cancel-in-progress: true
 
 jobs:

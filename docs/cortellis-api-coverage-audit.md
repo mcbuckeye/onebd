@@ -39,6 +39,16 @@ everything exposed by the configured credential.
 | Timeline events | 203,889 | Deal timeline events and embedded payment JSON |
 | Contract metadata | 41,626 | Contract endpoint results obtained to date |
 
+## First reconciliation result
+
+The first repair run restored **2,077** deal IDs and raised the local count to
+**149,008**, but deliberately finished `partial`. Fetching all advertised page
+positions without a sort produced only **148,754 unique IDs**; the API's default
+ordering repeated 252 IDs across pages. Consequently, the run's 254 apparent
+local-only IDs are not a trustworthy extra-record set and the two-row net excess
+does not prove there are only two true extras. A rerun using monotonic `dealId`
+sorting is required to establish the exact zero-missing/extra set.
+
 ## Broader Cortellis products
 
 Clarivate documents separate [Companies](https://developer.clarivate.com/apis/cortellis-np-companies-api),
@@ -64,9 +74,19 @@ account should have additional product entitlements.
 - A weekly full-ID reconciliation scans the authoritative Deals catalog,
   restores only missing deal IDs, retrieves their contracts, and preserves
   local-only IDs for review rather than deleting them.
+- The first parallel scan exposed unstable default API pagination: 149,006
+  advertised positions produced only 148,754 unique IDs. The reconciler now
+  uses the API's verified monotonic `dealId` sort and still rejects any scan
+  whose unique-ID count differs from the advertised total.
 - Source/local counts and the reconciliation result flow through the common
   health/alert model.
 - A complete contract scan still needs to be resumed from durable database
-  state before contract completeness can be claimed.
+  state before contract completeness can be claimed. The replacement scanner
+  stores a versioned per-deal checkpoint in PostgreSQL, advances in bounded
+  scheduled batches, retries transient failures, exposes coverage and terminal
+  failures, and accepts only a successful empty response as a negative result.
+  A direct credentialed probe confirmed that no-contract deals return HTTP 200
+  with `<dealContractsOutput/>`. The legacy client incorrectly converted every
+  contract API error into `has_contract = false`.
 - Full raw expanded-record retention should be added if field-for-field archive
   fidelity is a requirement.
