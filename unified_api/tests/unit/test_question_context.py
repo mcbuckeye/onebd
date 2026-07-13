@@ -63,6 +63,40 @@ def test_prefers_ticker_backed_parent_over_suffix_duplicates():
     assert result[0]["company_id"] == 18767
 
 
+def test_prefers_ticker_backed_holding_company_for_short_brand_name():
+    def search(phrase, limit):
+        assert phrase == "Roche"
+        return [
+            {
+                "id": 19446,
+                "name": "Roche Holding Ltd",
+                "ticker": "RHHBY",
+                "has_xref": True,
+            },
+            {
+                "id": 19450,
+                "name": "Roche AG",
+                "ticker": None,
+                "has_xref": False,
+            },
+        ]
+
+    result = resolve_company_mentions("Roche oncology strategy", search=search)
+
+    assert result[0]["status"] == "resolved"
+    assert result[0]["company_id"] == 19446
+    assert result[0]["canonical_name"] == "Roche Holding Ltd"
+
+
+def test_compound_holding_suffix_normalizes_independent_of_legal_form():
+    from unified_api.services.entity_resolution import EntityResolutionService
+
+    service = object.__new__(EntityResolutionService)
+
+    assert service.normalize_company_name("Roche Holding Ltd") == "ROCHE"
+    assert service.normalize_company_name("Roche Holdings AG") == "ROCHE"
+
+
 def test_resolution_preserves_reviewable_parent_relationship():
     def search(phrase, limit):
         return [{
