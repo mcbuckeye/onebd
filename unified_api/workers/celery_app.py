@@ -96,6 +96,14 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.enrichment.extract_financial_terms",
             "schedule": crontab(minute="*/15"),
         },
+        # Deterministic, no-API-cost extraction of explicit financial clauses.
+        "extract-contract-financial-clauses": {
+            "task": (
+                "unified_api.workers.tasks.enrichment."
+                "extract_contract_financial_clauses"
+            ),
+            "schedule": crontab(minute="10,40"),
+        },
         # Conservative exact-name PubChem enrichment; bounded to respect the
         # public API and resumable across matched/not-found/failed states.
         "enrich-pubchem-identifiers": {
@@ -261,6 +269,91 @@ def rebuild_cortellis_financial_terms():
         return result
     except Exception as exc:
         logger.error("Cortellis financial term rebuild failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+@celery_app.task(
+    name=(
+        "unified_api.workers.tasks.enrichment."
+        "extract_contract_financial_clauses"
+    )
+)
+def extract_contract_financial_clauses():
+    """Normalize one resumable batch of explicit contract financial clauses."""
+    logger.info("Starting contract financial clause extraction")
+    try:
+        from unified_api.services.contract_financial_clauses import (
+            extract_contract_financial_clause_batch,
+        )
+        from unified_api.services.database import get_cortellis_session
+
+        with get_cortellis_session() as session:
+            result = extract_contract_financial_clause_batch(
+                session,
+                batch_size=1000,
+            )
+        log_result = {
+            key: value for key, value in result.items() if key != "sample"
+        }
+        logger.info("Contract financial clause extraction complete", **log_result)
+        return result
+    except Exception as exc:
+        logger.error("Contract financial clause extraction failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+@celery_app.task(
+    name=(
+        "unified_api.workers.tasks.enrichment."
+        "rebuild_contract_financial_clauses"
+    )
+)
+def rebuild_contract_financial_clauses():
+    """Run the deterministic contract-clause backfill to completion."""
+    logger.info("Starting contract financial clause rebuild")
+    try:
+        import time
+
+        from unified_api.services.contract_financial_clauses import (
+            extract_contract_financial_clause_batch,
+        )
+        from unified_api.services.database import get_cortellis_session
+
+        totals = {"batches": 0, "processed": 0, "clauses_extracted": 0, "errors": 0}
+        busy_retries = 0
+        with get_cortellis_session() as session:
+            for _ in range(50):
+                result = extract_contract_financial_clause_batch(
+                    session,
+                    batch_size=1000,
+                )
+                if result.get("status") == "busy":
+                    session.rollback()
+                    busy_retries += 1
+                    if busy_retries > 40:
+                        return {
+                            **totals,
+                            "status": "busy",
+                            "busy_retries": busy_retries,
+                        }
+                    time.sleep(0.25)
+                    continue
+                busy_retries = 0
+                session.commit()
+                processed = int(result.get("processed") or 0)
+                totals["batches"] += 1
+                totals["processed"] += processed
+                totals["clauses_extracted"] += int(
+                    result.get("clauses_extracted") or 0
+                )
+                totals["errors"] += int(result.get("errors") or 0)
+                if processed == 0:
+                    break
+        result = {**totals, "status": "completed", "busy_retries": busy_retries}
+        logger.info("Contract financial clause rebuild complete", **result)
+        return result
+    except Exception as exc:
+        logger.error("Contract financial clause rebuild failed", error=str(exc))
         return {"status": "failed", "error": str(exc)}
 
 

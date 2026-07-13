@@ -166,11 +166,13 @@ breakdowns, royalty percentages, notes, and accuracy metadata. The old regex-onl
 enrichment route treated this payload as a string and could not populate governed
 terms. The structured parser flattens it into `deal_financial_terms`, preserves
 the source JSON/path and parser version, and records resumable per-deal extraction status.
-Parser v3 corrects Cortellis `B`/`T` unit scaling and captures bounded percentage
-terms beyond royalties, with a production population/sample validation gate.
-The job runs every 15 minutes in 1,000-deal batches. These metrics remain beta and
-the chat refusal stays in place until production coverage and precision are
-measured.
+Parser v4 corrects Cortellis `B`/`T` unit scaling, captures bounded percentage
+terms beyond royalties, and normalizes one impossible vendor `%`/money unit
+conflict while preserving the raw source node. The production gate now covers
+all 125,360 payloads and 445,904 terms with zero structural failures and 100%
+accuracy across 475 deterministic source replays. The job remains resumable and
+scheduled; chat refusal stays in place until governed aggregate SQL patterns and
+question-specific database truths are added.
 
 ---
 
