@@ -101,6 +101,7 @@ class EntityResolutionService:
         r'\s+Corporation$',
         r'\s+Ltd\.?$',
         r'\s+Limited$',
+        r'\s+Holdings?$',
         r'\s+LLC$',
         r'\s+L\.L\.C\.?$',
         r'\s+PLC$',
@@ -132,9 +133,13 @@ class EntityResolutionService:
 
         normalized = name.strip().upper()
 
-        # Remove common suffixes
-        for pattern in self.COMPANY_SUFFIXES:
-            normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+        # Legal names frequently stack suffixes (for example "Holding Ltd").
+        # Iterate until stable so every trailing legal designator is removed.
+        previous = None
+        while normalized != previous:
+            previous = normalized
+            for pattern in self.COMPANY_SUFFIXES:
+                normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
 
         # Remove punctuation except ampersand
         normalized = re.sub(r'[^\w\s&]', '', normalized)
