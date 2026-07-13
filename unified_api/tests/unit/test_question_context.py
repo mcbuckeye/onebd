@@ -4,6 +4,7 @@ import pytest
 
 from unified_api.routers.chat import (
     _build_governed_sql,
+    _is_deal_pattern_query,
     _missing_resolved_entity_ids,
     _structured_metric_limitation,
 )
@@ -113,6 +114,19 @@ def test_company_year_deal_count_uses_governed_sql():
     assert "dc.company_id = 18767" in sql
     assert "2024-01-01" in sql
     assert "2025-01-01" in sql
+
+
+def test_company_oncology_strategy_uses_governed_deal_pattern_sql():
+    question = "What is Roche's oncology strategy from its deal pattern?"
+    sql = _build_governed_sql(
+        question,
+        [{"status": "resolved", "company_id": 19446}],
+    )
+
+    assert _is_deal_pattern_query(question)
+    assert "dc.company_id = 19446" in sql
+    assert "ta.name = 'Cancer'" in sql
+    assert "GROUP BY COALESCE(d.agreement_type, 'Unknown')" in sql
 
 
 @pytest.mark.parametrize(

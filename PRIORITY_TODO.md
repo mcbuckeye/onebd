@@ -150,8 +150,10 @@ and fast retrieval before adding more external data volume.
 - [x] Require every Strong-rated case to compare the deployed response with a
       read-only database truth query. Ten cases now meet this standard; six
       optimistic/context-dependent ratings were downgraded pending real proof.
-- [ ] Replace each remaining catalog probe's basic response assertion with
-      deterministic truth or an evidence-scored narrative rubric.
+- [x] Replace each remaining catalog probe's basic response assertion with
+      deterministic truth or an evidence-scored narrative rubric. All 65 cases
+      now have an oracle: 11 run read-only database truth comparisons and 55 run
+      scored grounding/provenance rubrics (Roche strategy uses both).
 
 ## Implementation Status vs PRD
 

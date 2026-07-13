@@ -18,6 +18,14 @@ DEFAULT_CASES = Path(__file__).parents[1] / "evals" / "question_cases.yaml"
 VALID_TIERS = {"regression", "catalog"}
 VALID_RATINGS = {"strong", "partial", "needs_work", "cannot"}
 VALID_TRUTH_SOURCES = {"cortellis", "edgar"}
+VALID_RUBRIC_CHECKS = {
+    "assertion",
+    "answer_quality",
+    "citation_traceability",
+    "evidence_alignment",
+    "sample_size_consistency",
+    "sql_read_only",
+}
 
 
 def get_path(payload: Any, path: str) -> Any:
@@ -129,6 +137,109 @@ def evaluate_truth_assertion(
     return passed, f"database truth {kind}; expected={expected!r}; actual={actual!r}"
 
 
+def _answer_quality(payload: dict, check: dict) -> tuple[bool, str]:
+    answer = str(payload.get("answer") or "").strip()
+    minimum = int(check.get("minimum_characters", 40))
+    forbidden = [
+        phrase.lower()
+        for phrase in check.get(
+            "forbidden_phrases",
+            ["encountered an error", "traceback", "internal server error"],
+        )
+    ]
+    passed = len(answer) >= minimum and not any(
+        phrase in answer.lower() for phrase in forbidden
+    )
+    return passed, (
+        f"answer quality: length={len(answer)}, minimum={minimum}, "
+        f"forbidden_matches={[p for p in forbidden if p in answer.lower()]}"
+    )
+
+
+def _evidence_alignment(payload: dict, _check: dict) -> tuple[bool, str]:
+    data = payload.get("data") or []
+    citations = payload.get("citations") or []
+    confidence = payload.get("confidence") or {}
+    status = confidence.get("evidence_status")
+    if data:
+        passed = status == "grounded" and bool(citations)
+    else:
+        passed = status in {"insufficient", "unsupported"} and not citations
+    return passed, (
+        f"evidence alignment: data={len(data)}, citations={len(citations)}, "
+        f"status={status!r}"
+    )
+
+
+def _citation_traceability(payload: dict, _check: dict) -> tuple[bool, str]:
+    answer = str(payload.get("answer") or "")
+    citations = payload.get("citations") or []
+    data = payload.get("data") or []
+    data_ids = {
+        str(row.get("id"))
+        for row in data
+        if isinstance(row, dict) and row.get("id") is not None
+    }
+    failures = []
+    for citation in citations:
+        citation_id = str(citation.get("id") or "")
+        record_id = citation.get("record_id") or citation.get("deal_id")
+        if citation_id and f"[{citation_id}]" not in answer:
+            failures.append(f"{citation_id} absent from answer")
+        if record_id is not None and data_ids and str(record_id) not in data_ids:
+            failures.append(f"record {record_id} absent from returned data")
+    return not failures, f"citation traceability: {failures or 'ok'}"
+
+
+def _sample_size_consistency(payload: dict, _check: dict) -> tuple[bool, str]:
+    data = payload.get("data") or []
+    sample_size = (payload.get("confidence") or {}).get("sample_size")
+    passed = sample_size == len(data)
+    return passed, f"sample size: declared={sample_size!r}, returned={len(data)}"
+
+
+def _sql_read_only(payload: dict, _check: dict) -> tuple[bool, str]:
+    query = payload.get("sql_query")
+    passed = query is None or _validate_read_only_query(query)
+    return passed, f"SQL is {'absent/read-only' if passed else 'unsafe'}"
+
+
+def evaluate_rubric(payload: Any, rubric: dict) -> tuple[bool, str]:
+    """Score a deterministic evidence rubric for narrative/API responses."""
+    score = 0
+    possible = 0
+    failed_checks = []
+    for check in rubric.get("checks") or []:
+        weight = int(check.get("weight", 1))
+        possible += weight
+        kind = check["type"]
+        if kind == "assertion":
+            passed, detail = evaluate_assertion(payload, check["assertion"])
+        elif kind == "answer_quality":
+            passed, detail = _answer_quality(payload, check)
+        elif kind == "evidence_alignment":
+            passed, detail = _evidence_alignment(payload, check)
+        elif kind == "citation_traceability":
+            passed, detail = _citation_traceability(payload, check)
+        elif kind == "sample_size_consistency":
+            passed, detail = _sample_size_consistency(payload, check)
+        elif kind == "sql_read_only":
+            passed, detail = _sql_read_only(payload, check)
+        else:
+            raise ValueError(f"Unknown rubric check type: {kind}")
+        if passed:
+            score += weight
+        else:
+            failed_checks.append(f"{check.get('name', kind)}: {detail}")
+
+    minimum = int(rubric["minimum_score"])
+    passed = score >= minimum
+    detail = f"rubric score {score}/{possible} (minimum {minimum})"
+    if failed_checks:
+        detail += "; " + "; ".join(failed_checks)
+    return passed, detail
+
+
 def run_case(client: httpx.Client, case: dict, *, with_truth: bool = False) -> list[str]:
     """Execute a case and return assertion failure messages."""
     request = case["request"]
@@ -149,6 +260,15 @@ def run_case(client: httpx.Client, case: dict, *, with_truth: bool = False) -> l
             continue
         if not passed:
             failures.append(detail)
+
+    if case.get("rubric"):
+        try:
+            passed, detail = evaluate_rubric(payload, case["rubric"])
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            failures.append(f"rubric error: {exc}")
+        else:
+            if not passed:
+                failures.append(detail)
 
     if with_truth and case.get("truth"):
         truth = case["truth"]
@@ -221,8 +341,11 @@ def validate_suite(suite: dict) -> list[str]:
         if not case.get("assertions"):
             errors.append(f"{label}: at least one assertion is required")
         truth = case.get("truth")
+        rubric = case.get("rubric")
         if case.get("rating") == "strong" and not truth:
             errors.append(f"{label}: strong cases require database truth assertions")
+        if not truth and not rubric:
+            errors.append(f"{label}: requires database truth or a scored rubric")
         if truth:
             if truth.get("source") not in VALID_TRUTH_SOURCES:
                 errors.append(
@@ -239,6 +362,27 @@ def validate_suite(suite: dict) -> list[str]:
                     errors.append(f"{label}: truth response_path/truth_path are required")
                 if assertion.get("type") == "rows_equal" and not assertion.get("fields"):
                     errors.append(f"{label}: rows_equal requires fields")
+        if rubric:
+            checks = rubric.get("checks") or []
+            if not checks:
+                errors.append(f"{label}: rubric checks are required")
+            possible = 0
+            for check in checks:
+                check_type = check.get("type")
+                if check_type not in VALID_RUBRIC_CHECKS:
+                    errors.append(f"{label}: invalid rubric check type {check_type!r}")
+                weight = check.get("weight", 1)
+                if not isinstance(weight, int) or weight <= 0:
+                    errors.append(f"{label}: rubric weights must be positive integers")
+                else:
+                    possible += weight
+                if check_type == "assertion" and not check.get("assertion"):
+                    errors.append(f"{label}: assertion rubric check requires assertion")
+            minimum = rubric.get("minimum_score")
+            if not isinstance(minimum, int) or minimum <= 0 or minimum > possible:
+                errors.append(
+                    f"{label}: rubric minimum_score must be between 1 and {possible}"
+                )
 
     regression_count = sum(case.get("tier") == "regression" for case in cases)
     if regression_count < 5:

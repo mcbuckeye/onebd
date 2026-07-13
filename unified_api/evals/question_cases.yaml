@@ -1,5 +1,5 @@
 version: 1
-dataset_as_of: 2026-07-11
+dataset_as_of: 2026-07-13
 truth_queries:
   company_year_count: &company_year_count |
     SELECT COUNT(DISTINCT d.id) AS deal_count
@@ -110,6 +110,76 @@ truth_queries:
     GROUP BY t.id, t.name
     ORDER BY deal_count DESC, t.id
     LIMIT 20
+  roche_oncology_deal_pattern: &roche_oncology_deal_pattern |
+    SELECT COALESCE(d.agreement_type, 'Unknown') AS agreement_type,
+           COUNT(DISTINCT d.id) AS deal_count,
+           MIN(d.date_start) AS first_deal_date,
+           MAX(d.date_start) AS latest_deal_date,
+           COUNT(f.total_projected_current_amount) AS disclosed_value_count
+    FROM deals d
+    JOIN therapy_areas ta ON ta.id = d.therapy_area_id AND ta.name = 'Cancer'
+    JOIN deal_companies dc ON dc.deal_id = d.id
+    LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+    WHERE dc.company_id = 19446
+    GROUP BY COALESCE(d.agreement_type, 'Unknown')
+    ORDER BY deal_count DESC, agreement_type
+    LIMIT 20
+rubric_templates:
+  chat_evidence: &chat_evidence
+    minimum_score: 8
+    checks:
+      - name: substantive answer
+        type: answer_quality
+        weight: 2
+        minimum_characters: 40
+      - name: evidence matches claims
+        type: evidence_alignment
+        weight: 3
+      - name: citations trace to returned records
+        type: citation_traceability
+        weight: 2
+      - name: declared sample matches returned rows
+        type: sample_size_consistency
+        weight: 1
+      - name: generated SQL is read-only
+        type: sql_read_only
+        weight: 2
+  exact_comp_filter: &exact_comp_filter
+    minimum_score: 4
+    checks:
+      - name: requested modality is preserved
+        type: assertion
+        weight: 2
+        assertion:
+          type: equals
+          path: criteria.modality
+          value: bispecific
+      - name: every candidate matches modality
+        type: assertion
+        weight: 2
+        assertion:
+          type: all_contains
+          path: deals
+          field: modality
+          value: bispecific
+  exact_edgar_form_filter: &exact_edgar_form_filter
+    minimum_score: 4
+    checks:
+      - name: results returned
+        type: assertion
+        weight: 2
+        assertion:
+          type: min_length
+          path: $root
+          value: 1
+      - name: every result is the requested filing type
+        type: assertion
+        weight: 2
+        assertion:
+          type: all_equal
+          path: $root
+          field: doc_type
+          value: 8-K
 cases:
   - id: 1
     tier: regression
@@ -146,6 +216,7 @@ cases:
     tier: regression
     rating: needs_work
     question: What is the median milestone payment for Phase 3 license deals?
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -164,6 +235,7 @@ cases:
     tier: regression
     rating: partial
     question: Build a comp set for a Phase 2 NSCLC bispecific license.
+    rubric: *exact_comp_filter
     scope_note: Regression currently isolates modality filtering; full multi-filter truth remains pending.
     request:
       method: POST
@@ -184,6 +256,7 @@ cases:
     tier: regression
     rating: needs_work
     question: What is Roche's oncology strategy from its deal pattern?
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -194,11 +267,25 @@ cases:
       - type: excludes
         path: answer
         value: Historically
+    truth:
+      source: cortellis
+      query: *roche_oncology_deal_pattern
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields:
+            - agreement_type
+            - deal_count
+            - first_deal_date
+            - latest_deal_date
+            - disclosed_value_count
 
   - id: 61
     tier: regression
     rating: partial
     question: Find 8-K filings mentioning ADC partnerships.
+    rubric: *exact_edgar_form_filter
     scope_note: Regression proves the 8-K form filter with a broader agreement term.
     request:
       method: GET
@@ -221,6 +308,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What was the biggest pharma deal ever?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -265,6 +353,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'How many ADC deals have been done?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -283,6 +372,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What is BeiGene''s total deal count?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -301,6 +391,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'When was the last oncology M&A deal over $1B?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -319,6 +410,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Is there a deal between Pfizer and Seagen?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -337,6 +429,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What phase is drug X in?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -355,6 +448,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'How many deals closed last week?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -399,6 +493,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Typical upfront payments for Phase 2 ADC assets?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -469,6 +564,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Compare Pfizer vs Merck vs Novartis deal activity.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -487,6 +583,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Typical royalty rates for oncology bispecifics?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -505,6 +602,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Deals with disclosed upfront over $100M.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -549,6 +647,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'YoY deal-volume growth by therapy area.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -567,6 +666,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Largest deal in each major therapy area.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -585,6 +685,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What should we pay for a lung-cancer bispecific company?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -603,6 +704,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Most likely acquisition targets in ADC oncology?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -621,6 +723,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Competitive landscape for CAR-T in hematology.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -639,6 +742,7 @@ cases:
     tier: catalog
     rating: cannot
     question: 'Build, buy, or partner for solid-tumor ADC assets?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -657,6 +761,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Which companies are divesting oncology assets?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -675,6 +780,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Expected acquisition premium for a Phase 3 company?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -693,6 +799,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Generate a DD package on Company X.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -711,6 +818,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Warm introduction paths between us and Company Y.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -729,6 +837,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Recommend deals/targets I have not seen.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -747,6 +856,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What has Pfizer done in the last 90 days?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -791,6 +901,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Compare our deal pace to Merck''s.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -809,6 +920,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Alert me when a competitor does an ADC deal.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -827,6 +939,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Which companies just entered the bispecific space?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -845,6 +958,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Show Pfizer''s partnership network.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -863,6 +977,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'How does AbbVie''s deal structure differ from Gilead''s?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -881,6 +996,7 @@ cases:
     tier: catalog
     rating: cannot
     question: 'Are competitors building ADC portfolios faster than us?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -899,6 +1015,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Weekly competitive briefing for oncology.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -917,6 +1034,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Full DD on Company X.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -935,6 +1053,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What territories are available for Drug Y?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -953,6 +1072,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Contracts mentioning royalty rates for this drug.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -971,6 +1091,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Risk flags for this acquisition target.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -989,6 +1110,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Export a comp set with deal values to Excel.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1007,6 +1129,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'What SEC filings relate to this deal?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1025,6 +1148,7 @@ cases:
     tier: catalog
     rating: needs_work
     question: 'Milestone structure for comparable deals.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1043,6 +1167,7 @@ cases:
     tier: catalog
     rating: cannot
     question: 'IP landscape for KRAS inhibitors.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1061,6 +1186,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Timeline of all deals for this target company.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1079,6 +1205,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Who else licensed this company''s technology?'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1097,6 +1224,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Oncology deal landscape 2024 for the board.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1193,6 +1321,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'M&A vs licensing split in oncology over time.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1211,6 +1340,7 @@ cases:
     tier: catalog
     rating: cannot
     question: 'Market map of NSCLC deal activity.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1229,6 +1359,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'PDF export of this board analysis.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1247,6 +1378,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Our therapeutic focus versus the industry.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1265,6 +1397,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Quarterly deal report for Q2 2025.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1283,6 +1416,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Indications with the most deal-activity growth.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1301,6 +1435,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Show Pfizer''s 10-K risk factors.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1319,6 +1454,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Cross-reference this Cortellis deal with SEC filings.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1337,6 +1473,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'Material contracts from recent 8-K filings.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
@@ -1355,6 +1492,7 @@ cases:
     tier: catalog
     rating: partial
     question: 'S-1 analysis for a pre-IPO biotech.'
+    rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2

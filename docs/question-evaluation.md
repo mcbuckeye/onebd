@@ -1,15 +1,15 @@
 # BD Intelligence Platform — Question & Analysis Evaluation
 
-**Reviewed:** 2026-07-11
+**Reviewed:** 2026-07-13
 
-**Assessment baseline:** `onebd.pchomelab.com`, commit `47cd680`
+**Assessment baseline:** `onebd.pchomelab.com`, commit `51694c4`
 
-**Verified remediation:** through commit `4d5bdea`, deployed 2026-07-11
+**Verified remediation:** through commit `51694c4`, deployed 2026-07-13
 
-**Status:** All 65 questions are versioned and executable. Five are blocking
-production regressions. Ten Strong-rated cases now require direct, read-only
-database truth comparisons; remaining catalog cases still need numerical truth
-or evidence-scored narrative rubrics.
+**Status:** All 65 questions are versioned, executable, and have deterministic
+pass/fail oracles. Five are blocking production regressions. Eleven cases compare
+the deployed response with direct, read-only database truth; 55 use scored
+grounding/provenance rubrics (case #35 uses both).
 
 ## Purpose
 
@@ -41,16 +41,17 @@ questions require source-backed claims and a refusal when evidence is insufficie
 
 ## Current Production Baseline
 
-- 146,852 Cortellis deals and 52,860 companies.
-- 39,336 deals with disclosed financial totals (26.8%).
+- 146,931 Cortellis deals and 52,889 companies; a full reconciliation is running
+  against the API's advertised 149,006-record catalog.
+- 39,366 deals with disclosed financial totals (26.8%).
 - 25,978 indexed contracts and 897,130 embedded contract chunks.
-- 314,109+ EDGAR documents and 3.35M+ filing chunks.
+- 325,541 EDGAR filings and 3.52M filing chunks.
 - 692 company mappings with CIKs (1,648 cross-references of all types).
 - 66,980 candidate deal–filing links generated from company and date proximity.
 - 2,156 patent records and 2,862 deal–patent associations; this is not a
   comprehensive patent landscape.
-- Cortellis incremental sync is current. EDGAR has an independent recent lane,
-  but its historical cursor still has a roughly 229-day backlog.
+- Cortellis incremental sync is current. EDGAR has an independent recent lane;
+  its historical cursor reached 2026-05-04 with a 69-day backlog on this review.
 
 ## Verified Baseline Reliability Findings
 
@@ -97,6 +98,14 @@ The first implementation pass addresses the most consequential baseline failures
 - `/api/analytics/metric-definitions` publishes the semantic contract for deal
   count, projected totals, reported paid totals, upfronts, milestones, royalties,
   and acquisition premiums.
+- Every non-truth case now has a weighted evidence rubric checking answer
+  integrity, retrieved-data/citation alignment, record traceability, sample-size
+  consistency, and generated-SQL safety. Direct endpoints use exact filter/result
+  rubrics instead.
+- The stricter rubric exposed that Roche's oncology-strategy question was routed
+  to an unconstrained graph leaderboard. The current remediation routes it to a
+  canonical-company, Cancer-taxonomy, agreement-pattern query and verifies the
+  returned rows against database truth.
 
 All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
 
@@ -108,8 +117,8 @@ All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
 
 The scorecard incorporates the directly justified rating changes below. A passing
 refusal improves safety but does not make an unavailable analytical capability
-Strong, and the remaining 60 questions still need deterministic, question-specific
-truth assertions.
+Strong. Narrative rubrics establish a repeatable evidence floor; they do not
+replace question-specific database truth where an exact numerical answer exists.
 
 ## 2026-07-11 Priority Sprint Verification
 
@@ -144,8 +153,9 @@ governed SQL patterns using the actual Cortellis taxonomy and fields:
 - Chat v2 exposes up to 20 rows so a top-20 request is not silently truncated.
 
 The evaluation schema now rejects any Strong-rated case without a versioned,
-read-only database truth query. Cases #1, #3, #10, #12, #13, #18, #32, #52, #53,
-and #54 meet that requirement. Cases #7, #19, #37, #42, #49, and #50 were
+read-only database truth query, and rejects any other case lacking either truth
+or a scored rubric. Cases #1, #3, #10, #12, #13, #18, #32, #35, #52, #53,
+and #54 have database truth. Cases #7, #19, #37, #42, #49, and #50 were
 downgraded until graph identity, YoY period semantics, or conversational context
 is made deterministic.
 
@@ -315,9 +325,10 @@ the limiting factors.
 ## Executable Evaluation Specification
 
 All 65 questions are versioned in `unified_api/evals/question_cases.yaml`. The
-five regression-tier cases have deterministic production assertions. The other
-60 are executable catalog probes with basic response-safety assertions and still
-need question-specific truth values. A completed truth case must include:
+five regression-tier cases have deterministic production assertions. Eleven
+cases compare response fields to read-only SQL truth, while 55 cases have weighted
+evidence rubrics. Exact truth should continue to replace narrative rubrics as
+governed query shapes are added. A completed truth case must include:
 
 ```yaml
 id: 1
@@ -357,8 +368,8 @@ Evaluation rules:
    announced/closed dates, acquisition premium, and phase-at-deal.
 3. ✅ Evidence-only synthesis: refuse or clearly return “not found” on empty results.
 4. Source references and meaningful confidence/provenance in Chat v2.
-5. 🟡 Executable 65-question harness, with 5 deterministic truth cases and 60
-   response-safety catalog probes.
+5. ✅ Executable 65-question harness with database-truth and scored-evidence
+   oracles for every case.
 
 ### P1 — Broken or incomplete workflows
 
