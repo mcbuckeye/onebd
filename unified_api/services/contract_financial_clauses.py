@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 2
+CONTRACT_CLAUSE_PARSER_VERSION = 3
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -32,6 +32,12 @@ _SYMBOL_AMOUNT_RE = re.compile(
     r"\s*(?P<unit>million|billion|thousand|mn|bn|m|b|k)?\b",
     re.IGNORECASE,
 )
+_QUALIFIED_DOLLAR_AMOUNT_RE = re.compile(
+    r"(?<!\w)(?P<currency>U\.?S\.?|US|Cdn|CAD|Can|AUS|AUD)\s*\$\s*"
+    r"(?P<value>\d[\d,]*(?:\.\d+)?)"
+    r"\s*(?P<unit>million|billion|thousand|mn|bn|m|b|k)?\b",
+    re.IGNORECASE,
+)
 _CODE_AMOUNT_RE = re.compile(
     r"\b(?P<currency>USD|EUR|GBP|JPY)\s*"
     r"(?P<value>\d[\d,]*(?:\.\d+)?)"
@@ -39,6 +45,14 @@ _CODE_AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 _CURRENCY_CODES = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
+_QUALIFIED_DOLLAR_CODES = {
+    "US": "USD",
+    "CDN": "CAD",
+    "CAD": "CAD",
+    "CAN": "CAD",
+    "AUS": "AUD",
+    "AUD": "AUD",
+}
 _TIER_WORDS = re.compile(
     r"\b(?:tier(?:ed|s)?|schedule|threshold|annual net sales|sliding scale)\b",
     re.IGNORECASE,
@@ -52,11 +66,15 @@ _NON_ROYALTY_RATE_CONTEXT = re.compile(
     r"underpay\w*|overpay\w*|audit\w*|accountant|reimburse\w*|"
     r"reimburs\w*|royalty[ -]?free|"
     r"delinquen\w*|late payment|interest|libor|prime rate|"
+    r"late charges?|allocat\w*|apportion\w*|"
     r"credit\w*|offset\w*|deduct\w*|set[ -]?off|reduc\w*|"
     r"mandatory prepayment|not (?:greater|less) than|"
-    r"responsible for (?:all )?costs|"
+    r"responsible for (?:all )?costs|borne|"
     r"costs? and expenses?|withhold\w*|tax(?:es)?|"
-    r"extraordinary payment|percentage component|supply price"
+    r"extraordinary payment|percentage component|supply price|"
+    r"(?:contracts?|agreements?).{0,50}provide for royalt\w*|"
+    r"errors? in royalt\w*|discrepanc\w* in (?:the amount of )?royalt\w*|"
+    r"(?:percent|%).{0,12}of\s+amounts\s+(?:previously\s+)?paid"
     r")\b",
     re.IGNORECASE,
 )
@@ -73,9 +91,15 @@ _NONPAYMENT_AMOUNT_CONTEXT = re.compile(
 )
 _UPFRONT_AGGREGATE_CONTEXT = re.compile(
     r"\b(?:"
-    r"research(?:\s+and\s+development)?\s+funding|equity\s+investment"
+    r"research(?:\s+and\s+development)?\s+funding|equity\s+investment|"
+    r"valued\s+(?:at|up\s+to)|total\s+(?:partnership|transaction)\s+value"
     r")\b",
     re.IGNORECASE,
+)
+_UPFRONT_CONTINGENT_CONTEXT = re.compile(
+    r"\b(?:upon|following|after|within)\b.{0,70}"
+    r"\b(?:first\s+)?(?:IND|NDA|BLA|regulatory|clinical|approval)\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _UPFRONT_EQUITY_CONTEXT = re.compile(
     r"\bup[ -]?front\s+equity\s+investment\b",
@@ -94,6 +118,9 @@ _MILESTONE_AGGREGATE_CONTEXT = re.compile(
     r"research(?:\s+and\s+development)?\s+funding|equity\s+investment|"
     r"common\s+stock|marketing\s+support\s+fee|progress\s+payment|"
     r"initial\s+payment|license\s+execution|restructur\w*|settlement"
+    r"|amortization\s+expense|cash\s+reserves?|escrow\s+amount|"
+    r"\badvance(?:d|s)?\b|partially\s+fund|"
+    r"research(?:\s+and\s+development|\s*&\s*development)\s+efforts?"
     r")\b",
     re.IGNORECASE | re.DOTALL,
 )
@@ -224,6 +251,13 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             paragraph_position + (relative_end - relative_start):
             paragraph_position + (relative_end - relative_start) + 140
         ]
+        if re.match(
+            r"\s*\)?\s*(?:of\s+)?(?:the\s+)?(?:then[ -])?outstanding\s+"
+            r"(?:capital\s+stock|equity)",
+            after,
+            re.IGNORECASE,
+        ):
+            continue
         directly_linked = bool(
             re.search(r"royalt(?:y|ies)\b.{0,100}$", before, re.IGNORECASE)
             or re.match(r"\s*royalt(?:y|ies)\b", after, re.IGNORECASE)
@@ -251,22 +285,27 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
 
 def _monetary_values(excerpt: str, absolute_start: int) -> list[dict]:
     values = []
-    seen_spans = set()
-    for pattern in (_SYMBOL_AMOUNT_RE, _CODE_AMOUNT_RE):
+    seen_spans: list[tuple[int, int]] = []
+    for pattern in (
+        _QUALIFIED_DOLLAR_AMOUNT_RE,
+        _SYMBOL_AMOUNT_RE,
+        _CODE_AMOUNT_RE,
+    ):
         for match in pattern.finditer(excerpt):
             span = match.span()
-            if span in seen_spans:
+            if any(span[0] < end and start < span[1] for start, end in seen_spans):
                 continue
-            seen_spans.add(span)
+            seen_spans.append(span)
             raw_currency = match.group("currency")
+            normalized_currency = raw_currency.replace(".", "").upper()
             values.append({
                 "amount_millions": _amount_millions(
                     match.group("value"),
                     match.group("unit"),
                 ),
-                "currency": _CURRENCY_CODES.get(
-                    raw_currency,
-                    raw_currency.upper(),
+                "currency": _QUALIFIED_DOLLAR_CODES.get(
+                    normalized_currency,
+                    _CURRENCY_CODES.get(raw_currency, normalized_currency),
                 ),
                 "raw": match.group(0),
                 "char_start": absolute_start + match.start(),
@@ -586,6 +625,31 @@ def _payment_monetary_values(
                 and allocation_distance < anchor_distance
             ):
                 continue
+            previous_end = max(
+                (
+                    other["char_end"] - absolute_start
+                    for other in monetary_values
+                    if other["char_end"] - absolute_start <= relative_start
+                ),
+                default=max(0, relative_start - 160),
+            )
+            next_start = min(
+                (
+                    other["char_start"] - absolute_start
+                    for other in monetary_values
+                    if other["char_start"] - absolute_start >= relative_end
+                ),
+                default=min(len(excerpt), relative_end + 160),
+            )
+            contingent_context = excerpt[
+                max(previous_end, relative_start - 160):
+                min(next_start, relative_end + 160)
+            ]
+            if (
+                _UPFRONT_CONTINGENT_CONTEXT.search(contingent_context)
+                and "license issue fee" not in closest_anchor.group(0).lower()
+            ):
+                continue
         if clause_type == "milestone_payment":
             sentence_start = max(
                 excerpt.rfind(".", 0, relative_start),
@@ -619,6 +683,16 @@ def _payment_monetary_values(
             ):
                 continue
         values.append(value)
+
+    # A single min/max pair cannot safely compare different currencies. Keep
+    # the first supported currency in document order and preserve the full
+    # source excerpt for analysts who need the alternate-currency disclosure.
+    if values:
+        primary_currency = values[0]["currency"]
+        values = [
+            value for value in values
+            if value["currency"] == primary_currency
+        ]
     return values
 
 

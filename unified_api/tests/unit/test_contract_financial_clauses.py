@@ -309,6 +309,133 @@ def test_execution_and_milestone_table_excludes_execution_payment():
     assert milestone["amount_max_millions"] == 0.5
 
 
+def test_royalty_rate_excludes_allocation_covenant_and_equity_percentages():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """
+        <para>New Contracts may not provide for royalties or profit share above
+        50% in favor of the other party.</para>
+        """,
+        """
+        <para>Each payment of the Royalty shall be allocated and paid 37.28% to
+        Fund A, 7.8% to Fund B, and 54.92% to Fund C.</para>
+        """,
+        """
+        <para>Late charges will be assessed as additional royalties on overdue
+        payments at one percent (1%) per month.</para>
+        """,
+        """
+        <para>The termination amount includes fifty percent (50%) of amounts
+        previously paid as royalties under Section 3.</para>
+        """,
+        """
+        <para>All costs for Products in the Royalty Territory shall be borne
+        one hundred percent (100%) by Licensee.</para>
+        """,
+        """
+        <para>If an error in royalties of more than five percent (5%) is found,
+        Licensee shall pay the audit costs.</para>
+        """,
+        """
+        <para>Royalties are payable under Section 3. On the Effective Date,
+        Licensee shall issue capital stock equal to ten percent (10%) of its
+        outstanding equity ownership.</para>
+        """,
+    ]
+
+    for contract in false_rate_clauses:
+        assert extract_contract_financial_clauses(contract) == []
+
+
+def test_milestone_bounds_exclude_expense_funding_reserve_advance_and_escrow():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_milestone_clauses = [
+        """
+        <para>Revenue includes a milestone payment and trial reimbursement
+        totalling $17.1 million. Amortization expense was $3.0 million per
+        quarter.</para>
+        """,
+        """
+        <para>Milestone 3 pays $7 million. Concurrent with that milestone,
+        Licensee shall also pay $8 million for future research and development
+        efforts.</para>
+        """,
+        """
+        <para>A milestone payment of $500,000 is due on NDA submission. If cash
+        reserves are less than $5 million, the payment may be made by note.</para>
+        """,
+        """
+        <para>The First Milestone is expected next year. Company paid an
+        advance of $35,000, in addition to $25,000 already advanced, to
+        partially fund the R&amp;D Program.</para>
+        """,
+        """
+        <para>The purchase price is reduced by Milestone Payments received
+        before Closing. Buyer will deposit $3 million as the Escrow Amount.</para>
+        """,
+    ]
+
+    expected = [None, (7, 7), (0.5, 0.5), None, None]
+    for contract, bounds in zip(false_milestone_clauses, expected, strict=True):
+        milestones = [
+            clause for clause in extract_contract_financial_clauses(contract)
+            if clause["clause_type"] == "milestone_payment"
+        ]
+        if bounds is None:
+            assert milestones == []
+        else:
+            assert len(milestones) == 1
+            assert (
+                milestones[0]["amount_min_millions"],
+                milestones[0]["amount_max_millions"],
+            ) == bounds
+
+
+def test_upfront_bounds_exclude_contingent_and_total_package_amounts():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contingent = """
+    <para>Upfront Payment. Licensee shall pay $1 million on the Effective Date
+    and $500,000 upon the first IND approval.</para>
+    """
+    package = """
+    <para>The partnership, valued up to $60 million, includes a $15 million
+    up-front purchase of stock, milestone payments, and clinical costs.</para>
+    """
+
+    for contract, expected in ((contingent, 1), (package, 15)):
+        upfront = next(
+            clause for clause in extract_contract_financial_clauses(contract)
+            if clause["clause_type"] == "upfront_payment"
+        )
+        assert upfront["amount_min_millions"] == expected
+        assert upfront["amount_max_millions"] == expected
+
+
+def test_payment_bounds_do_not_mix_us_and_canadian_dollar_amounts():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>Company may receive milestone payments of up to U.S.$21.5 million
+    [Cdn$33 million] upon successful clinical development.</para>
+    """
+
+    milestone = extract_contract_financial_clauses(contract)[0]
+    assert milestone["currency"] == "USD"
+    assert milestone["amount_min_millions"] == 21.5
+    assert milestone["amount_max_millions"] == 21.5
+
+
 def test_contract_clause_batch_returns_busy_when_lock_is_held():
     from unified_api.services.contract_financial_clauses import (
         CONTRACT_CLAUSE_PARSER_VERSION,
