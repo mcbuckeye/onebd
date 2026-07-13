@@ -1362,6 +1362,117 @@ def test_v9_milestone_keeps_payments_but_excludes_receipt_and_sales_triggers():
             assert milestones[0]["amount_max_millions"] == expected[1]
 
 
+def test_v10_milestone_excludes_fixed_fee_and_mixed_payment_aggregates():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_milestone_clauses = [
+        """<para>The fixed fee for this government contract is $1,616,698.
+        The fixed fee is paid in installments based on negotiated milestones.
+        The total obligation is $28,561,658 and the available fixed-fee funds
+        are $172,869.</para>""",
+        """<para>This is a fixed-fee Agreement inclusive of all costs. The
+        subrecipient will be paid per milestone achieved. The maximum amount
+        payable under this Agreement is $3,569,526.</para>""",
+        """<para>Company could receive up to $12.4 million in equity
+        investments, milestone and other precommercial payments.</para>""",
+    ]
+    for contract in false_milestone_clauses:
+        assert all(
+            clause["clause_type"] != "milestone_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
+def test_v10_milestone_excludes_disclosure_and_acquisition_thresholds():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_milestone_clauses = [
+        """<para>Material Contracts include any Contract with continuing
+        obligations involving milestone or similar payments in excess of
+        $1,000,000 in the aggregate.</para>""",
+        """<para>Acquisitions require approval when consideration exceeds
+        $10 million individually or $20 million in the aggregate, excluding
+        contingent milestone and royalty payments.</para>""",
+    ]
+    for contract in false_milestone_clauses:
+        assert all(
+            clause["clause_type"] != "milestone_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
+def test_v10_milestone_keeps_supported_amounts_from_mixed_prose():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    prior_payments = extract_contract_financial_clauses(
+        """<para>Buyer made payments under the agreements in the aggregate
+        amount of $80 million and may make an additional $77 million in
+        milestone payments.</para>"""
+    )
+    milestone = next(
+        clause for clause in prior_payments
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 77
+    assert milestone["amount_max_millions"] == 77
+
+    truncated = extract_contract_financial_clauses(
+        """<para>Company may receive up to $160 million in potential
+        milestone payments for trials and approvals, and up to $45 million in
+
+        CONFIDENTIAL</para>"""
+    )
+    milestone = next(
+        clause for clause in truncated
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 160
+    assert milestone["amount_max_millions"] == 160
+
+
+def test_v10_upfront_excludes_aggregate_payment_formula_denominator():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """<para>The prorated royalty fraction has as its numerator
+    the aggregate Upfront Payment and Periodic Payments advanced by CDC and as
+    its denominator $7,000,000.</para>"""
+    assert all(
+        clause["clause_type"] != "upfront_payment"
+        for clause in extract_contract_financial_clauses(contract)
+    )
+
+
+def test_v10_royalty_excludes_sales_cost_and_payment_burden_thresholds():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """<para>If sales of a Generic Product exceed fifteen percent (15%)
+        of Net Sales, the applicable royalty rate shall be reduced by fifty
+        percent.</para>""",
+        """<para>If Purchaser's Cost of Goods is greater than fifty percent
+        (50%) of Net Sales, its share of the overage may be offset against
+        royalties payable to Vendor.</para>""",
+        """<para>If the sum of transfer-price and royalty payments exceeds
+        ten percent (10%) of Net Sales, the royalty rate shall be reduced by a
+        share of the excess.</para>""",
+    ]
+    for contract in false_rate_clauses:
+        assert all(
+            clause["clause_type"] != "royalty_rate"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
 def test_review_key_changes_when_the_extracted_assertion_changes():
     from unified_api.services.contract_financial_clauses import (
         _clause_review_key,
