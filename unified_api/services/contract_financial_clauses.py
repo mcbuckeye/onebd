@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 7
+CONTRACT_CLAUSE_PARSER_VERSION = 8
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -497,6 +497,94 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             before,
             re.IGNORECASE,
         )
+        example_prefix = excerpt[max(0, relative_start - 800):relative_start]
+        example_matches = list(re.finditer(
+            r"\bfor\s+example\b",
+            example_prefix,
+            re.IGNORECASE,
+        ))
+        same_rate_before_example = False
+        if example_matches:
+            example_absolute_start = (
+                max(0, relative_start - 800) + example_matches[-1].start()
+            )
+            same_rate_before_example = any(
+                math.isclose(
+                    _number(earlier.group("value")),
+                    value["value_pct"],
+                    rel_tol=1e-12,
+                    abs_tol=1e-9,
+                )
+                for earlier in _RATE_RE.finditer(
+                    excerpt[:example_absolute_start]
+                )
+            )
+        if (
+            example_matches
+            and not same_rate_before_example
+            and immediate_royalty_rate is None
+        ):
+            continue
+        if re.match(
+            r"\s*\)?\s*(?:percent\s+)?of\s+"
+            r"(?:(?:any|the|such)\s+)?(?:funds|sums|"
+            r"(?:third[ -]?party\s+license\s+)?payments|royalt(?:y|ies)|"
+            r"royalty\s+income)\b",
+            after,
+            re.IGNORECASE,
+        ):
+            continue
+        if re.match(
+            r"\s*\)?\s*(?:percent\s+)?of\s+(?:the\s+)?"
+            r"amounts?\s+(?:otherwise\s+payable|due)\b",
+            after,
+            re.IGNORECASE,
+        ):
+            continue
+        if re.search(
+            r"\badditional\s+earned\s+royalties\b.{0,120}"
+            r"(?:equal\s+to|greater\s+than).{0,50}$|"
+            r"\badditional\s+royalties\s+owed\b.{0,120}"
+            r"vary\s+from\s+royalties\s+paid\s+by.{0,30}$",
+            before,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            continue
+        royalty_distribution_prefix = excerpt[
+            max(0, relative_start - 400):relative_start
+        ]
+        royalty_allocation_scope = excerpt[
+            max(0, relative_start - 800):min(len(excerpt), relative_end + 800)
+        ]
+        if (
+            re.search(
+                r"\broyalty\s+income\b.{0,300}\bdistributed\s+as\s+follows\b",
+                royalty_distribution_prefix,
+                re.IGNORECASE | re.DOTALL,
+            )
+            and re.match(r"\s*\)?\s*to\b", after, re.IGNORECASE)
+        ):
+            continue
+        if re.search(
+            r"\broyalty\s+income\b.{0,700}\bdistribut\w*\b",
+            royalty_allocation_scope,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            continue
+        if (
+            re.search(
+                r"\b(?:sums?|funds?)\s+recover\w*\b|"
+                r"\binfringement\s+recovery\b",
+                royalty_allocation_scope,
+                re.IGNORECASE,
+            )
+            and re.search(
+                r"\b(?:distribut\w*|belong)\b",
+                royalty_allocation_scope,
+                re.IGNORECASE,
+            )
+        ):
+            continue
         if (
             _NON_ROYALTY_RATE_CONTEXT.search(excerpt[local_start:local_end])
             and immediate_royalty_rate is None
@@ -871,9 +959,18 @@ def _payment_monetary_values(
         nonpayment_follows_value = _NONPAYMENT_AMOUNT_CONTEXT.search(
             value_after_short
         )
+        direct_milestone_label = (
+            clause_type == "milestone_payment"
+            and bool(re.match(
+                r"\s+milestone(?:\s+payment)?\b",
+                value_after_short,
+                re.IGNORECASE,
+            ))
+        )
         if (
             nonpayment_distance is not None
             and nonpayment_distance < payment_distance
+            and not direct_milestone_label
             and not (
                 direct_historical_payment is not None
                 and nonpayment_follows_value is not None
@@ -911,6 +1008,41 @@ def _payment_monetary_values(
                 r"amounts?\s+in\s+excess\s+of)\s*$",
                 value_before,
                 re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if (
+                re.search(
+                    r"\binclusive\s+of\s*$",
+                    value_before,
+                    re.IGNORECASE,
+                )
+                and re.match(
+                    r"\s+in\s+an?\s+up[ -]?front\s+fee\b",
+                    value_after,
+                    re.IGNORECASE,
+                )
+            ):
+                continue
+            if (
+                re.search(
+                    r"\b\d+(?:\.\d+)?\s*%\s+of\s+the\s+first\s*$",
+                    value_before,
+                    re.IGNORECASE,
+                )
+                and re.match(
+                    r"\s+of\s+any\s+up[ -]?front\b",
+                    value_after,
+                    re.IGNORECASE,
+                )
+            ):
+                continue
+            if re.search(
+                r"\bamount\s+equal\s+to\s+\d+(?:\.\d+)?\s*%\s+of\s+"
+                r"the\s+first\s+\$?\s*\d[\d,]*(?:\.\d+)?\s*"
+                r"(?:million|billion|thousand|mn|bn|m|b|k)?\s+of\s+any\s+"
+                r"up[ -]?front\b",
+                value_scope,
+                re.IGNORECASE,
             ):
                 continue
             if _UPFRONT_PACKAGE_TOTAL.search(value_after):
@@ -1081,6 +1213,42 @@ def _payment_monetary_values(
                 max(0, relative_start - 600):
                 min(len(excerpt), relative_end + 600)
             ]
+            if re.search(
+                r"\b(?:deduction|credit|offset)\b.{0,80}"
+                r"\bshall\s+not\s+exceed\s*$|"
+                r"\bpayments?\s+of\s+amounts?\s+in\s+excess\s+of\s*$|"
+                r"\b(?:trigger|incur\w*)\s+obligations?\s+to\s+make\s+"
+                r"milestone\s+or\s+other\s+payments?.{0,100}exceed\s*$|"
+                r"\bwould\s+reasonably\s+be\s+expected\s+to\s+be\s+"
+                r"more\s+than\s*$|"
+                r"\bnet\s+sales\b.{0,180}\b(?:reach|exceed|exceeding)\w*\s*$",
+                value_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if re.search(
+                r"\bnet\s+sales\b.{0,220}\b(?:reach|exceed|exceeding)\w*"
+                r".{0,100}\bdollars?\s*\(\s*$",
+                value_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if re.match(
+                r"\s+payment\s+upon\s+closing\b",
+                value_after_short,
+                re.IGNORECASE,
+            ):
+                continue
+            if re.search(
+                r"\baggregate\s+up[ -]?front\b.{0,80}"
+                r"\bmilestone\b.{0,120}\b(?:could|may)\s+exceed\b|"
+                r"\bvarious\s+collaboration-related\s+payments\b|"
+                r"\bfor\s+any\s+milestone\s+not\s+reached\b.{0,180}"
+                r"\bpay\b",
+                table_scope,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
             if re.search(
                 r"\b(?:earnout\s+payments?|maximum\s+aggregate\s+"
                 r"consideration|maximum\s+increase\s+in\s+the\s+milestone\s+"

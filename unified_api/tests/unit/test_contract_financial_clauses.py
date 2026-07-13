@@ -1058,6 +1058,122 @@ def test_v7_milestone_excludes_earnouts_packages_options_and_adjustment_caps():
         )
 
 
+def test_v8_royalty_excludes_examples_cash_flow_shares_and_audit_thresholds():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """<para>The operative rates are redacted. For example, if another
+        agreement carries a 1% royalty and this agreement hypothetically
+        carries a royalty of 2% of Net Sales, only the higher applies.</para>""",
+        """<para>Any infringement recovery shall be divided, with fifty
+        percent (50%) of any funds remaining distributed to parties receiving
+        royalties and the remaining fifty (50%) percent belonging to Licensee.
+        </para>""",
+        """<para>Royalty income shall be distributed as follows: 50% to A and
+        50% to B. The underlying royalty rates are redacted.</para>""",
+        """<para>Seller conveys 60% of the Royalties under the Counterparty
+        Agreements. The underlying royalty rates are not disclosed.</para>""",
+        """<para>Licensee pays a 5% royalty on Net Sales and a royalty of 25%
+        of such third-party license payments.</para>""",
+        """<para>The earned rate is redacted. Additional Earned Royalties are
+        equal to or greater than 3% but below the next offset tier.</para>""",
+        """<para>The audit fees shift if additional royalties owed vary from
+        royalties paid by five percent (5%) or greater.</para>""",
+        """<para>Expenses may be credited up to fifty percent (50%) of the
+        amount otherwise payable, and excess expenses above fifty percent
+        (50%) of amounts due in a royalty period carry forward.</para>""",
+    ]
+    for contract in false_rate_clauses:
+        royalties = [
+            clause for clause in extract_contract_financial_clauses(contract)
+            if clause["clause_type"] == "royalty_rate"
+        ]
+        if "5% royalty on Net Sales" in contract:
+            assert len(royalties) == 1
+            assert royalties[0]["rate_min_pct"] == 5
+            assert royalties[0]["rate_max_pct"] == 5
+        else:
+            assert royalties == []
+
+
+def test_v8_upfront_excludes_package_headlines_and_receipt_share_caps():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    package = """
+    <para>Company may receive $330 million, inclusive of $330 million in an
+    Upfront Fee ($200 million) and near-term enrollment milestones
+    ($130 million).</para>
+    """
+    receipt_share = """
+    <para>Buyer shall pay 50% of the first $50 million of any upfront,
+    pre-commercialization milestone, or similar payments it later receives
+    from third parties.</para>
+    """
+
+    upfront = next(
+        clause for clause in extract_contract_financial_clauses(package)
+        if clause["clause_type"] == "upfront_payment"
+    )
+    assert upfront["amount_min_millions"] == 200
+    assert upfront["amount_max_millions"] == 200
+    assert all(
+        clause["clause_type"] != "upfront_payment"
+        for clause in extract_contract_financial_clauses(receipt_share)
+    )
+
+
+def test_v8_milestone_excludes_thresholds_triggers_mixed_packages_and_delay_fees():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_milestone_clauses = [
+        """<para>The next milestone payment may be reduced by expenses,
+        provided the deduction shall not exceed $250,000.</para>""",
+        """<para>The disclosure schedule lists contracts requiring payments
+        of amounts in excess of $50,000, including royalties and milestones.
+        </para>""",
+        """<para>The aggregate upfront, R&amp;D funding, milestone and other
+        payments could exceed $230 million. About $8 million is due as various
+        collaboration-related payments.</para>""",
+        """<para>Approval is required before incurring obligations to make
+        milestone or other payments that exceed $100,000.</para>""",
+        """<para>For any Milestone not reached by the Target Date, Licensee
+        shall pay $50,000 and all Target Dates advance by one year.</para>""",
+    ]
+    for contract in false_milestone_clauses:
+        assert all(
+            clause["clause_type"] != "milestone_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+    mixed = """
+    <para>Seller receives a $15 million payment upon closing, up to $20 million
+    in regulatory and launch milestones, and royalties.</para>
+    """
+    milestone = next(
+        clause for clause in extract_contract_financial_clauses(mixed)
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 20
+    assert milestone["amount_max_millions"] == 20
+
+    trigger = """
+    <para>Buyer shall pay a $25 million milestone upon approval and a $30
+    million milestone when Net Sales first exceed $80 million.</para>
+    """
+    milestone = next(
+        clause for clause in extract_contract_financial_clauses(trigger)
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 25
+    assert milestone["amount_max_millions"] == 30
+
+
 def test_review_key_changes_when_the_extracted_assertion_changes():
     from unified_api.services.contract_financial_clauses import (
         _clause_review_key,
