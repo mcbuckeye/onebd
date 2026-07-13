@@ -19,6 +19,10 @@ from unified_api.services.financial_terms import (
     financial_term_status,
     financial_term_validation_status,
 )
+from unified_api.services.pubchem_enrichment import (
+    pubchem_enrichment_status,
+    pubchem_validation_status,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["enrichment"])
@@ -71,10 +75,12 @@ async def enrichment_status():
     with get_cortellis_session() as session:
         finance_status = financial_term_status(session)
         contract_clause_status = contract_financial_clause_status(session)
+    pubchem_status = pubchem_enrichment_status()
 
     return {
         "finance_enrichment": finance_status,
         "contract_financial_clause_enrichment": contract_clause_status,
+        "pubchem_enrichment": pubchem_status,
     }
 
 
@@ -90,6 +96,18 @@ async def financial_term_validation(
                 sample_per_type=sample_per_type,
             )
         }
+
+
+@router.get("/api/enrichment/pubchem/validation")
+async def pubchem_validation(
+    sample_limit: int = Query(25, ge=1, le=100),
+):
+    """Return PubChem coverage, identifier integrity, and review samples."""
+    return {
+        "pubchem_validation": pubchem_validation_status(
+            sample_limit=sample_limit,
+        )
+    }
 
 
 @router.get("/api/enrichment/contract-financial-clauses/validation")

@@ -96,6 +96,11 @@ and fast retrieval before adding more external data volume.
          identifiers; external identifier population remains pending.
    - [x] Add conservative, resumable exact-name PubChem enrichment for CID,
          InChIKey, connectivity SMILES, and source-verified public titles.
+   - [ ] Complete and validate PubChem coverage across every available Cortellis
+         alias. The 2026-07-13 audit found 1,632 matches and 2,791 first-alias
+         misses, but a miss incorrectly stopped alternate-name attempts. A
+         per-alias state migration, integrity endpoint, retry handling, and
+         faster policy-compliant schedule are being deployed before catch-up.
    - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
    - [x] Seed normalized Cortellis display names and conservative development-code
          candidates for all drugs without treating organization suffixes as aliases.

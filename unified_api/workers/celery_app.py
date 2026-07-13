@@ -104,11 +104,11 @@ celery_app.conf.update(
             ),
             "schedule": crontab(minute="10,40"),
         },
-        # Conservative exact-name PubChem enrichment; bounded to respect the
-        # public API and resumable across matched/not-found/failed states.
+        # Per-alias PubChem enrichment stays below the official five-request/s
+        # ceiling while advancing the corpus in bounded resumable batches.
         "enrich-pubchem-identifiers": {
             "task": "unified_api.workers.tasks.enrichment.pubchem_identifiers",
-            "schedule": crontab(minute=45),
+            "schedule": crontab(minute="5,20,35,50"),
         },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
@@ -364,7 +364,7 @@ def enrich_pubchem_identifiers():
     try:
         from unified_api.services.pubchem_enrichment import enrich_pubchem_batch
 
-        result = enrich_pubchem_batch(batch_size=100)
+        result = enrich_pubchem_batch(batch_size=500)
         logger.info("PubChem identifier enrichment complete", **result)
         return result
     except Exception as e:
