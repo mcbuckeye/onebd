@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 3
+CONTRACT_CLAUSE_PARSER_VERSION = 4
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -74,9 +74,14 @@ _NON_ROYALTY_RATE_CONTEXT = re.compile(
     r"extraordinary payment|percentage component|supply price|"
     r"(?:contracts?|agreements?).{0,50}provide for royalt\w*|"
     r"errors? in royalt\w*|discrepanc\w* in (?:the amount of )?royalt\w*|"
-    r"(?:percent|%).{0,12}of\s+amounts\s+(?:previously\s+)?paid"
+    r"(?:percent|%).{0,12}of\s+amounts\s+(?:previously\s+)?paid|"
+    r"disclosure schedule|material contracts?|equal or exceed|"
+    r"financial consideration|"
+    r"(?:percent|%).{0,30}of\s+(?:the\s+)?applicable\s+royalty\s+rates?|"
+    r"reduced by one[ -]?half|half of (?:the )?applicable royalty rates?"
+    r"|royalty\s+shall\s+not\s+be\s+applicable"
     r")\b",
-    re.IGNORECASE,
+    re.IGNORECASE | re.DOTALL,
 )
 _PAYMENT_CONTEXT = re.compile(
     r"\b(?:pay(?:able|ment|ments|ing)?|fee|consideration|cash amount|amount due)\b",
@@ -85,7 +90,8 @@ _PAYMENT_CONTEXT = re.compile(
 _NONPAYMENT_AMOUNT_CONTEXT = re.compile(
     r"\b(?:"
     r"net sales|gross sales|revenue|sales threshold|par value|per share|"
-    r"at the rate|per year|full[ -]?time staff|research support"
+    r"at the rate|per year|full[ -]?time staff|research support|"
+    r"initial purchase price|market potential|equity financing|per batch"
     r")\b",
     re.IGNORECASE,
 )
@@ -93,6 +99,7 @@ _UPFRONT_AGGREGATE_CONTEXT = re.compile(
     r"\b(?:"
     r"research(?:\s+and\s+development)?\s+funding|equity\s+investment|"
     r"valued\s+(?:at|up\s+to)|total\s+(?:partnership|transaction)\s+value"
+    r"|milestone\s+payments?"
     r")\b",
     re.IGNORECASE,
 )
@@ -109,8 +116,16 @@ _UPFRONT_ALLOCATION_CONTEXT = re.compile(
     r"\b(?:"
     r"committee\s+reimbursement\s+amount|escrow\s+contribution\s+amount|"
     r"payment\s+agent|distribut(?:e|ion)\s+(?:of\s+)?the\s+upfront\s+payment"
+    r"|creditable\s+against\s+future.{0,80}payments?|"
+    r"cost\s+of\s+such\s+license|deducted\s+from\s+(?:the\s+)?purchase\s+price"
     r")\b",
     re.IGNORECASE,
+)
+_THIRD_PARTY_LICENSE_COST_CAP = re.compile(
+    r"\b(?:third[ -]?party.{0,100}license|cost\s+of\s+such\s+license)\b"
+    r".{0,500}\bup[ -]?front\s+payments?\b"
+    r".{0,500}\b(?:maximum|deducted)\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _MILESTONE_AGGREGATE_CONTEXT = re.compile(
     r"\b(?:"
@@ -121,6 +136,12 @@ _MILESTONE_AGGREGATE_CONTEXT = re.compile(
     r"|amortization\s+expense|cash\s+reserves?|escrow\s+amount|"
     r"\badvance(?:d|s)?\b|partially\s+fund|"
     r"research(?:\s+and\s+development|\s*&\s*development)\s+efforts?"
+    r"|late[ -]?delivery|creditable\s+against.{0,40}milestone|"
+    r"change\s+of\s+control\s+plan|eligible\s+employees?|"
+    r"initial\s+purchase\s+price|licensing\s+fees?|warrants?|repurchase|"
+    r"principal\s+amount|market\s+potential|up[ -]?fronts?\s+and\s+milestones?|"
+    r"annual\s+net\s+sales|equity\s+financing|research\s+plan|"
+    r"additional\s+batches?|per\s+batch"
     r")\b",
     re.IGNORECASE | re.DOTALL,
 )
@@ -138,6 +159,10 @@ _HISTORICAL_MILESTONE_REFERENCE = re.compile(
 )
 _MILESTONE_EXECUTION_ROW = re.compile(
     r"\bupon\s+execution\s+of\s+(?:the\s+)?license\b",
+    re.IGNORECASE,
+)
+_NUMBERED_MILESTONE_ROW = re.compile(
+    r"\bmilestone\s+(?:\d+|[ivxlcdm]+)\b",
     re.IGNORECASE,
 )
 
@@ -518,6 +543,25 @@ def _payment_monetary_values(
             continue
         relative_start = value["char_start"] - absolute_start
         relative_end = value["char_end"] - absolute_start
+        previous_value = max(
+            (
+                other
+                for other in monetary_values
+                if other["char_end"] <= value["char_start"]
+            ),
+            key=lambda other: other["char_end"],
+            default=None,
+        )
+        if previous_value is not None:
+            previous_end = previous_value["char_end"] - absolute_start
+            bracket_prefix = excerpt[previous_end:relative_start]
+            bracket_suffix = excerpt[relative_end:relative_end + 4]
+            if (
+                previous_value["currency"] != value["currency"]
+                and re.fullmatch(r"\s*\[\s*", bracket_prefix)
+                and re.match(r"\s*\]", bracket_suffix)
+            ):
+                continue
         position = (relative_start + relative_end) // 2
         anchor_distance = min(
             (
@@ -599,10 +643,72 @@ def _payment_monetary_values(
             context_position,
         )
         if payment_distance is None:
-            continue
+            numbered_milestone_row = (
+                clause_type == "milestone_payment"
+                and anchor_distance <= 80
+                and _NUMBERED_MILESTONE_ROW.search(
+                    excerpt[
+                        max(0, closest_anchor.start() - 30):
+                        min(len(excerpt), relative_end + 30)
+                    ]
+                )
+            )
+            if not numbered_milestone_row:
+                continue
+            payment_distance = anchor_distance
         if nonpayment_distance is not None and nonpayment_distance < payment_distance:
             continue
         if clause_type == "upfront_payment":
+            following_upfront_anchor = min(
+                (
+                    match
+                    for match in anchors
+                    if match.start() >= relative_end
+                ),
+                key=lambda match: match.start(),
+                default=None,
+            )
+            following_milestone_anchor = min(
+                (
+                    match
+                    for match in competing_anchors
+                    if match.start() >= relative_end
+                ),
+                key=lambda match: match.start(),
+                default=None,
+            )
+            # In constructions such as "$55m up-front and up to $6m in
+            # milestone payments", proximity alone assigns the second value
+            # to the earlier up-front anchor. Prefer the first following
+            # payment label when it is close enough to govern the value.
+            if (
+                following_milestone_anchor is not None
+                and following_milestone_anchor.start() - relative_end <= 100
+                and not _SENTENCE_BOUNDARY.search(
+                    excerpt[relative_end:following_milestone_anchor.start()]
+                )
+                and (
+                    following_upfront_anchor is None
+                    or following_milestone_anchor.start()
+                    < following_upfront_anchor.start()
+                )
+                and any(
+                    other["char_end"] - absolute_start <= relative_start
+                    and min(
+                        abs(
+                            (other["char_start"] + other["char_end"])
+                            // 2 - absolute_start - closest_anchor.start()
+                        ),
+                        abs(
+                            (other["char_start"] + other["char_end"])
+                            // 2 - absolute_start - closest_anchor.end()
+                        ),
+                    ) <= 100
+                    for other in monetary_values
+                    if other is not value
+                )
+            ):
+                continue
             aggregate_distance = _nearest_context_distance(
                 _UPFRONT_AGGREGATE_CONTEXT,
                 context,
@@ -624,6 +730,12 @@ def _payment_monetary_values(
                 allocation_distance is not None
                 and allocation_distance < anchor_distance
             ):
+                continue
+            allocation_scope = excerpt[
+                max(0, min(closest_anchor.start(), relative_start) - 600):
+                min(len(excerpt), max(closest_anchor.end(), relative_end) + 600)
+            ]
+            if _THIRD_PARTY_LICENSE_COST_CAP.search(allocation_scope):
                 continue
             previous_end = max(
                 (
@@ -651,6 +763,30 @@ def _payment_monetary_values(
             ):
                 continue
         if clause_type == "milestone_payment":
+            table_scope = excerpt[
+                max(0, relative_start - 600):
+                min(len(excerpt), relative_end + 600)
+            ]
+            if (
+                re.search(
+                    r"\bannual\s+net\s+sales\b", table_scope, re.IGNORECASE
+                )
+                and re.search(r"\broyalty\s+rate\b", table_scope, re.IGNORECASE)
+            ):
+                continue
+            preceding_scope = excerpt[max(0, relative_start - 1200):relative_start]
+            preceding_lower = preceding_scope.lower()
+            last_research_section = max(
+                preceding_lower.rfind("research funding"),
+                preceding_lower.rfind("research plan"),
+            )
+            last_milestone_payment = preceding_lower.rfind("milestone payment")
+            if (
+                last_research_section >= 0
+                and last_research_section > last_milestone_payment
+                and len(preceding_scope) - last_research_section <= 700
+            ):
+                continue
             sentence_start = max(
                 excerpt.rfind(".", 0, relative_start),
                 excerpt.rfind("\n\n", 0, relative_start),
@@ -658,6 +794,30 @@ def _payment_monetary_values(
             sentence_end = excerpt.find(".", relative_end)
             sentence_end = sentence_end if sentence_end >= 0 else len(excerpt)
             sentence = excerpt[sentence_start:sentence_end]
+            if (
+                re.search(r"\bannual\s+net\s+sales\b", sentence, re.IGNORECASE)
+                and re.search(r"\broyalty\s+rate\b", sentence, re.IGNORECASE)
+                and not re.search(
+                    r"\bmilestone\s+payments?\b", sentence, re.IGNORECASE
+                )
+            ):
+                continue
+            if (
+                re.search(
+                    r"\bresearch\s+(?:funding|plan)\b", sentence, re.IGNORECASE
+                )
+                and not re.search(
+                    r"\bmilestone\s+payments?\b", sentence, re.IGNORECASE
+                )
+            ):
+                continue
+            if re.search(
+                r"\bup[ -]?fronts?\s+and\s+milestones?\b.{0,100}"
+                r"\b(?:worth|total(?:ing)?)\b",
+                sentence,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
             value_line_start = excerpt.rfind("\n", 0, relative_start) + 1
             value_line_end = excerpt.find("\n", relative_end)
             value_line_end = value_line_end if value_line_end >= 0 else len(excerpt)
@@ -674,8 +834,8 @@ def _payment_monetary_values(
                 continue
             aggregate_distance = _nearest_context_distance(
                 _MILESTONE_AGGREGATE_CONTEXT,
-                context,
-                context_position,
+                sentence,
+                position - sentence_start,
             )
             if (
                 aggregate_distance is not None

@@ -435,6 +435,213 @@ def test_payment_bounds_do_not_mix_us_and_canadian_dollar_amounts():
     assert milestone["amount_min_millions"] == 21.5
     assert milestone["amount_max_millions"] == 21.5
 
+    historical_context = """
+    <para>The agreement provides initial licensing revenue of U.S.$2,000,000
+    [Cdn$3,100,000], research funding of U.S.$2,250,000 [Cdn$3,400,000],
+    and milestone payments of up to U.S.$21,500,000 [Cdn$33,000,000].</para>
+    """
+    milestone = next(
+        clause for clause in extract_contract_financial_clauses(historical_context)
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["currency"] == "USD"
+    assert milestone["amount_min_millions"] == 21.5
+    assert milestone["amount_max_millions"] == 21.5
+
+
+def test_royalty_rate_excludes_disclosure_multipliers_and_revenue_shares():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """
+        <para>The disclosure schedule lists all Material Contracts requiring
+        royalty payments that equal or exceed 1% of net sales.</para>
+        """,
+        """
+        <para>Royalties are otherwise redacted. Licensee will pay fifty percent
+        (50%) of all Financial Consideration received under any sublicense or
+        distributor agreement.</para>
+        """,
+        """
+        <para>The royalty rate shall be equal to fifty percent (50%) of the
+        applicable royalty rates in Section 6.5.</para>
+        """,
+        """
+        <para>All royalty payments shall be reduced by one-half (the “50%
+        Royalty”) after a Final Patent Refusal.</para>
+        """,
+        """
+        <para>Royalty rates are redacted; however, payments shall be reduced by
+        one-half (the “50% Royalty”). If market exclusivity applies, then the
+        50% Royalty shall not be applicable until that period expires.</para>
+        """,
+    ]
+
+    for contract in false_rate_clauses:
+        assert extract_contract_financial_clauses(contract) == []
+
+
+def test_upfront_bounds_exclude_milestones_credits_and_third_party_cost_caps():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    mixed = """
+    <para>Buyer will make a $55 million up-front payment and up to $6 million
+    in potential sales-based milestone payments.</para>
+    """
+    credit = """
+    <para>Initial payment: Licensee shall pay USD 1,000,000, of which USD
+    250,000 is creditable against future royalty payments and sublicense up
+    front payments.</para>
+    """
+    third_party_cost = """
+    <para>If Buyer obtains a third-party patent license, the cost of such
+    license, including all up front payments, up to a maximum of $175,000,
+    shall be deducted from the purchase price.</para>
+    """
+
+    upfront = next(
+        clause for clause in extract_contract_financial_clauses(mixed)
+        if clause["clause_type"] == "upfront_payment"
+    )
+    assert upfront["amount_min_millions"] == 55
+    assert upfront["amount_max_millions"] == 55
+
+    press_release = """
+    <para>Pfizer will make an up-front payment of $75 million and up to
+    $410 million in potential milestone payments, including $150 million in
+    regulatory milestones and $260 million in sales milestones.</para>
+    """
+    upfront = next(
+        clause for clause in extract_contract_financial_clauses(press_release)
+        if clause["clause_type"] == "upfront_payment"
+    )
+    assert upfront["amount_min_millions"] == 75
+    assert upfront["amount_max_millions"] == 75
+    for contract in (credit, third_party_cost):
+        assert all(
+            clause["clause_type"] != "upfront_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
+def test_milestone_bounds_exclude_adjacent_transaction_and_threshold_values():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    cases = [
+        (
+            """
+            <para>Buyer shall pay a $7,500 daily late-delivery credit, which is
+            creditable against any milestone payments due under Article 7.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>The Level 4 Milestone Amount is $50 million in cash less a
+            Change of Control Plan amount of $2.984 million payable to Eligible
+            Employees. The Level 5 Milestone Amount is $100 million.</para>
+            """,
+            (50, 100),
+        ),
+        (
+            """
+            <para>The purchase price consists of a $3.8 billion Initial Purchase
+            Price and Milestone Payments. A $250 million Milestone Payment is
+            due on FDA approval.</para>
+            """,
+            (250, 250),
+        ),
+        (
+            """
+            <para>ARTICLE 8 Milestone Payments. Section 8.1 Licensing Fees.
+            Buyer shall pay an initial licensing fee of $85 million. Section
+            8.2 Milestone Payments contains redacted amounts.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>Following the Phase III Milestone Date, the holder may require
+            repurchase of the Warrant for $12.5 million principal plus
+            interest.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>The Second Milestone will be adjusted against anticipated
+            Market Potential of $67 million.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>The transaction has up fronts and milestones worth
+            approximately $150 million between signing and approval.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>NexMed receives milestone payments. Annual Net Sales less
+            than $750 million bear a 3.5% royalty and sales above $1.5 billion
+            bear a 6.5% royalty.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>NexMed receives upfront and milestone payments. In addition,
+            royalties are as follows: Annual Net Sales of each Product;
+            Royalty Rate; more than $750 million and less than $1.5 billion,
+            4.5%.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>A $500,000 milestone payment is due after equity financing in
+            the minimum amount of $5 million.</para>
+            """,
+            (0.5, 0.5),
+        ),
+        (
+            """
+            <para>ARTICLE 9 RESEARCH FUNDING AND MILESTONES. Section 9.1
+            Research Funding. On the Effective Date, Company pays $250,000 for
+            work under the Research Plan.</para>
+            """,
+            None,
+        ),
+        (
+            """
+            <para>Milestone 5 Validation of New Process $172,000. Additional
+            Batches are priced at US$20,000 per Batch.</para>
+            """,
+            (0.172, 0.172),
+        ),
+    ]
+
+    for contract, expected in cases:
+        milestones = [
+            clause for clause in extract_contract_financial_clauses(contract)
+            if clause["clause_type"] == "milestone_payment"
+        ]
+        if expected is None:
+            assert milestones == []
+        else:
+            assert len(milestones) == 1
+            assert (
+                milestones[0]["amount_min_millions"],
+                milestones[0]["amount_max_millions"],
+            ) == expected
+
 
 def test_review_key_changes_when_the_extracted_assertion_changes():
     from unified_api.services.contract_financial_clauses import (
