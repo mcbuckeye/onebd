@@ -263,6 +263,47 @@ class TestCortellisFinanceJsonParser:
         assert term["rate_max_pct"] == 12.5
         assert term["amount_usd_millions"] is None
 
+    def test_impossible_percentage_with_monetary_conversion_normalizes_unit(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        payload = {
+            "PaymentsToPrincipal": {
+                "PaymentsProjectedCurrent": {
+                    "PaymentsGeneral": {
+                        "Payment": {
+                            "Type": "Upfront Payment",
+                            "Note": "upfront payment of $200 million",
+                            "Values": {
+                                "@attributes": {
+                                    "accuracy": "=",
+                                    "disclosureStatus": "Known",
+                                },
+                                "ValueReported": {
+                                    "@text": "200.00",
+                                    "@attributes": {"unit": "%", "currency": "USD"},
+                                },
+                                "ValueConvertedToUSD": {
+                                    "@text": "200.00",
+                                    "@attributes": {"unit": "Million"},
+                                },
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+        term = extract_financial_terms(payload)[0]
+
+        assert term["reported_unit"] == "Million"
+        assert term["amount_reported_millions"] == 200
+        assert term["amount_usd_millions"] == 200
+        assert term["rate_min_pct"] is None
+        assert term["rate_max_pct"] is None
+        assert term["source_payload"]["Values"]["ValueReported"]["@attributes"][
+            "unit"
+        ] == "%"
+
     def test_cortellis_abbreviated_billion_and_trillion_units_are_normalized(self):
         from unified_api.services.finance_parser import extract_financial_terms
 
@@ -416,6 +457,7 @@ def test_celery_financial_extraction_runs_resumable_batch():
 
 
 def test_financial_extraction_returns_busy_when_another_batch_holds_lock():
+    from unified_api.services.finance_parser import FINANCE_PARSER_VERSION
     from unified_api.services.financial_terms import extract_financial_term_batch
 
     session = MagicMock()
@@ -429,7 +471,7 @@ def test_financial_extraction_returns_busy_when_another_batch_holds_lock():
         "terms_extracted": 0,
         "errors": 0,
         "dry_run": False,
-        "parser_version": 3,
+        "parser_version": FINANCE_PARSER_VERSION,
         "sample": [],
     }
     session.execute.assert_called_once()
