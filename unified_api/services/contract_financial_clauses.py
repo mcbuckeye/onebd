@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 9
+CONTRACT_CLAUSE_PARSER_VERSION = 10
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -214,6 +214,18 @@ _MILESTONE_EXECUTION_ROW = re.compile(
 _NUMBERED_MILESTONE_ROW = re.compile(
     r"\bmilestone\s+(?:\d+|[ivxlcdm]+)\b",
     re.IGNORECASE,
+)
+_FIXED_FEE_MILESTONE_SCHEDULE = re.compile(
+    r"\bfixed[ -]?fee\b.{0,500}\b(?:based\s+on|paid\s+per)\b"
+    r".{0,120}\bmilestones?\b|"
+    r"\bmilestones?\b.{0,160}\bfixed[ -]?fee\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_MIXED_MILESTONE_AGGREGATE = re.compile(
+    r"\b(?:up\s+to|total(?:ing)?|aggregate)\b.{0,120}"
+    r"\bin\s+equity\s+investments?\s*,\s*milestones?\s+and\s+"
+    r"other\s+(?:precommercial\s+)?payments?\b",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -586,6 +598,34 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             )
         ):
             continue
+        threshold_before = excerpt[max(0, relative_start - 700):relative_start]
+        threshold_scope = excerpt[
+            max(0, relative_start - 700):min(len(excerpt), relative_end + 700)
+        ]
+        if (
+            re.search(
+                r"\b(?:cost\s+of\s+goods|sales\s+by\s+third\s+parties|"
+                r"sales\s+of\s+(?:a\s+)?generic\s+product|"
+                r"sum\s+of\s+.{0,160}royalty\s+payments?)\b"
+                r".{0,500}\b(?:greater\s+than|exceed(?:s|ed|ing)?)\b"
+                r".{0,80}$",
+                threshold_before,
+                re.IGNORECASE | re.DOTALL,
+            )
+            and re.match(
+                r"\s*\)?\s*of\s+(?:the\s+)?net\s+sales\b",
+                after,
+                re.IGNORECASE,
+            )
+            and re.search(
+                r"\b(?:royalt(?:y|ies)|royalty\s+rate)\b.{0,500}"
+                r"\b(?:reduc\w*|offset\w*)\b|"
+                r"\b(?:reduc\w*|offset\w*)\b.{0,500}\broyalt(?:y|ies)\b",
+                threshold_scope,
+                re.IGNORECASE | re.DOTALL,
+            )
+        ):
+            continue
         royalty_distribution_prefix = excerpt[
             max(0, relative_start - 400):relative_start
         ]
@@ -844,6 +884,14 @@ def _payment_monetary_values(
     clause_type: str,
 ) -> list[dict]:
     """Retain explicit payment amounts, excluding closer sales/par-value context."""
+    if (
+        clause_type == "milestone_payment"
+        and (
+            _FIXED_FEE_MILESTONE_SCHEDULE.search(excerpt)
+            or _MIXED_MILESTONE_AGGREGATE.search(excerpt)
+        )
+    ):
+        return []
     anchors = list(_ANCHORS[clause_type].finditer(excerpt))
     competing_types = (
         {"milestone_payment", "upfront_payment"} - {clause_type}
@@ -986,7 +1034,8 @@ def _payment_monetary_values(
                 max(0, closest_anchor.start() - 50):closest_anchor.start()
             ]
             if re.search(
-                r"\b(?:excluding|exclude|excepting|other\s+than)\s*$",
+                r"\b(?:excluding(?:\s+contingent)?|exclude|excepting|"
+                r"other\s+than)\s*$",
                 anchor_prefix,
                 re.IGNORECASE,
             ):
@@ -1022,6 +1071,32 @@ def _payment_monetary_values(
                 r".{0,180}\bshall\s+pay\b.{0,100}$",
                 milestone_before,
                 re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            aggregate_payment_matches = list(re.finditer(
+                r"\bpayments?\b.{0,120}\b(?:in\s+the\s+)?aggregate\s+"
+                r"amount\s+of\b",
+                milestone_before,
+                re.IGNORECASE | re.DOTALL,
+            ))
+            if aggregate_payment_matches:
+                aggregate_match = aggregate_payment_matches[-1]
+                if not _monetary_values(
+                    milestone_before[aggregate_match.end():], 0
+                ):
+                    continue
+            if re.search(
+                r"\b(?:continuing\s+)?obligations?\b.{0,260}"
+                r"\bmilestone(?:\s+or\s+similar)?\s+payments?\b"
+                r".{0,120}\bin\s+excess\s+of\b.{0,60}$",
+                milestone_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if re.match(
+                r"\s+in\s*(?:\n\s*)?(?:confidential\b)?\s*$",
+                milestone_after,
+                re.IGNORECASE,
             ):
                 continue
             trigger_matches = [
@@ -1105,6 +1180,16 @@ def _payment_monetary_values(
                 max(0, relative_start - 500):
                 min(len(excerpt), relative_end + 650)
             ]
+            if re.search(
+                r"\bdenominator\s+shall\s+be\b.{0,260}"
+                r"\baggregate\s+up[ -]?front\s+payments?\s+and\s+"
+                r"periodic\s+payments?\b|"
+                r"\baggregate\s+up[ -]?front\s+payments?\s+and\s+"
+                r"periodic\s+payments?\b.{0,300}\bdenominator\b",
+                value_scope,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
             if _OTHER_LICENSE_UPFRONT_REFERENCE.search(value_scope):
                 continue
             if re.search(
