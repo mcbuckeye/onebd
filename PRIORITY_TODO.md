@@ -119,11 +119,15 @@ and fast retrieval before adding more external data volume.
 10. **Build higher-value intelligence workflows after the foundation is stable**
     - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a
           provenance-preserving beta table with resumable scheduled extraction.
-    - [ ] Validate extracted term precision/coverage before enabling governed
-          aggregate answers; add contract-derived scale-clause extraction.
-          Parser-v2 audit found 1,818 `B`/`T` values scaled incorrectly and 2,343
-          known percentage terms without bounds. Parser v3 and a deterministic
-          population/sample validation gate are being deployed before release.
+    - [x] Validate extracted Cortellis term precision/coverage before enabling
+          governed aggregate answers. Parser v4 covers all 125,360 source JSON
+          payloads and 445,904 terms; the production gate reports zero failures,
+          invalid units/rates, or source mismatches, 100% percentage capture,
+          100% replay accuracy across 475 stratified terms, and release ready.
+    - [ ] Add contract-derived financial-clause extraction at scale and validate
+          semantic precision before governed use. A deterministic, no-API-cost
+          royalty/milestone/upfront candidate pipeline with exact excerpts,
+          replay validation, and a 100-clause human-review gate is in progress.
     - [ ] Deal-to-trial and deal-to-regulatory-event timelines.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.
