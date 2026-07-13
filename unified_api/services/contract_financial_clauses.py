@@ -773,6 +773,20 @@ def extract_contract_financial_clauses(
     return clauses
 
 
+def _clause_review_key(clause: dict) -> tuple:
+    """Identify the exact extracted assertion covered by a human decision."""
+    return (
+        clause.get("clause_type"),
+        clause.get("source_hash"),
+        clause.get("rate_min_pct"),
+        clause.get("rate_max_pct"),
+        clause.get("amount_min_millions"),
+        clause.get("amount_max_millions"),
+        clause.get("currency"),
+        clause.get("is_tiered"),
+    )
+
+
 def ensure_contract_financial_clause_schema(session) -> None:
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS contract_financial_clauses (
@@ -904,7 +918,10 @@ def extract_contract_financial_clause_batch(
                     previous_reviews = {}
                     reviewed_rows = session.execute(text("""
                         SELECT clause_type, source_hash, review_status,
-                               reviewer, review_note, reviewed_at
+                               reviewer, review_note, reviewed_at,
+                               rate_min_pct, rate_max_pct,
+                               amount_min_millions, amount_max_millions,
+                               currency, is_tiered
                         FROM contract_financial_clauses
                         WHERE contract_id = :contract_id
                           AND review_status IN ('accepted', 'rejected')
@@ -912,10 +929,7 @@ def extract_contract_financial_clause_batch(
                     """), {"contract_id": contract_id}).mappings().all()
                     for reviewed_row in reviewed_rows:
                         previous_reviews.setdefault(
-                            (
-                                reviewed_row["clause_type"],
-                                reviewed_row["source_hash"],
-                            ),
+                            _clause_review_key(reviewed_row),
                             dict(reviewed_row),
                         )
                     session.execute(text(
@@ -923,10 +937,9 @@ def extract_contract_financial_clause_batch(
                         "WHERE contract_id = :contract_id"
                     ), {"contract_id": contract_id})
                     for clause in clauses:
-                        previous_review = previous_reviews.get((
-                            clause["clause_type"],
-                            clause["source_hash"],
-                        )) or {}
+                        previous_review = previous_reviews.get(
+                            _clause_review_key(clause)
+                        ) or {}
                         session.execute(text("""
                             INSERT INTO contract_financial_clauses (
                                 contract_id, deal_id, clause_type,
