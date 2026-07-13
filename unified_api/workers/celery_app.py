@@ -217,11 +217,51 @@ def extract_cortellis_financial_terms():
 
         with get_cortellis_session() as session:
             result = extract_financial_term_batch(session, batch_size=1000)
-        logger.info("Cortellis financial term extraction complete", **result)
+        log_result = {key: value for key, value in result.items() if key != "sample"}
+        logger.info("Cortellis financial term extraction complete", **log_result)
         return result
     except Exception as e:
         logger.error("Cortellis financial term extraction failed", error=str(e))
         return {"status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.rebuild_financial_terms")
+def rebuild_cortellis_financial_terms():
+    """Run the versioned financial-term backfill serially to completion."""
+    logger.info("Starting Cortellis financial term rebuild")
+    try:
+        import time
+
+        from unified_api.services.database import get_cortellis_session
+        from unified_api.services.financial_terms import extract_financial_term_batch
+
+        totals = {"batches": 0, "processed": 0, "terms_extracted": 0, "errors": 0}
+        busy_retries = 0
+        with get_cortellis_session() as session:
+            for _ in range(200):
+                result = extract_financial_term_batch(session, batch_size=1000)
+                if result.get("status") == "busy":
+                    session.rollback()
+                    busy_retries += 1
+                    if busy_retries > 40:
+                        return {**totals, "status": "busy", "busy_retries": busy_retries}
+                    time.sleep(0.25)
+                    continue
+                busy_retries = 0
+                session.commit()
+                processed = int(result.get("processed") or 0)
+                totals["batches"] += 1
+                totals["processed"] += processed
+                totals["terms_extracted"] += int(result.get("terms_extracted") or 0)
+                totals["errors"] += int(result.get("errors") or 0)
+                if processed == 0:
+                    break
+        result = {**totals, "status": "completed", "busy_retries": busy_retries}
+        logger.info("Cortellis financial term rebuild complete", **result)
+        return result
+    except Exception as exc:
+        logger.error("Cortellis financial term rebuild failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.enrichment.pubchem_identifiers")
