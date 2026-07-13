@@ -10,7 +10,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-FINANCE_PARSER_VERSION = 3
+FINANCE_PARSER_VERSION = 4
 
 
 def _as_list(value: Any) -> list:
@@ -93,6 +93,21 @@ def _extract_payment(
     term_type = _term_type(payment_type, is_breakdown=is_breakdown)
     reported_unit = reported_attributes.get("unit")
     reported_value = _number(reported.get("@text"))
+    converted_unit = converted_attributes.get("unit")
+
+    # One upstream Cortellis record labels a $200 million upfront payment as
+    # 200%, while its converted value and narrative both identify money.  A
+    # percentage above 100 with a monetary USD conversion is internally
+    # inconsistent, so normalize the analytical unit while retaining the
+    # untouched vendor node in source_payload for audit and replay.
+    if (
+        reported_unit == "%"
+        and reported_value is not None
+        and reported_value > 100
+        and (converted_unit or "").lower()
+        in {"million", "b", "billion", "bn", "t", "trillion", "tn"}
+    ):
+        reported_unit = converted_unit
 
     rate_min = rate_max = None
     if reported_unit == "%" and reported_value is not None:
@@ -112,7 +127,7 @@ def _extract_payment(
         amount_reported_millions = _millions(reported.get("@text"), reported_unit)
         amount_usd_millions = _millions(
             converted.get("@text"),
-            converted_attributes.get("unit"),
+            converted_unit,
         )
 
     disclosed = value_attributes.get("disclosureStatus") == "Known"
