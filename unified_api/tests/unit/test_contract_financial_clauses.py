@@ -132,6 +132,183 @@ def test_milestone_section_does_not_capture_preceding_stock_purchase():
     assert clause["amount_max_millions"] == 25
 
 
+def test_royalty_rate_excludes_audit_interest_credit_and_cost_percentages():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>Royalty Records. If Licensee has underpaid Royalties by more than five
+    percent (5%), it shall reimburse the audit cost.</para>
+    <para>Interest on delinquent royalty payments accrues at LIBOR plus two
+    percent (2%).</para>
+    <para>No more than fifty percent (50%) of royalty payments may be credited
+    in any year.</para>
+    <para>For activities where Licensee is one hundred percent (100%)
+    responsible for costs and expenses, Licensee shall reimburse Licensor.</para>
+    """
+
+    assert extract_contract_financial_clauses(contract) == []
+
+
+def test_royalty_payout_percentage_remains_an_explicit_rate():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>The Royalty Payout shall equal thirty percent (30%) of Net Sales for
+    the calendar year and shall be payable in cash.</para>
+    """
+
+    clause = extract_contract_financial_clauses(contract)[0]
+    assert clause["clause_type"] == "royalty_rate"
+    assert clause["rate_min_pct"] == 30
+
+
+def test_milestone_does_not_claim_a_nearby_upfront_or_combined_package_amount():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>Licensee will receive an upfront payment and committed research
+    funding of as much as $10 million. Licensee may also receive undisclosed
+    milestones and royalties.</para>
+    <para>The agreement includes $123 million in upfront and potential
+    development milestone payments, including a $30 million cash upfront
+    licensing payment. Sales milestones are undisclosed.</para>
+    """
+
+    clauses = extract_contract_financial_clauses(contract)
+    assert all(clause["clause_type"] != "milestone_payment" for clause in clauses)
+
+
+def test_upfront_does_not_claim_research_funding_aggregate():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>Company will receive an upfront payment and committed research
+    funding of as much as $10 million.</para>
+    """
+
+    assert extract_contract_financial_clauses(contract) == []
+
+
+def test_combined_package_keeps_only_the_explicit_upfront_amount():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>The agreement includes $123 million in upfront and potential
+    development milestone payments, including a $30 million cash upfront
+    licensing payment.</para>
+    """
+
+    clauses = extract_contract_financial_clauses(contract)
+    assert [clause["clause_type"] for clause in clauses] == ["upfront_payment"]
+    assert clauses[0]["amount_min_millions"] == 30
+    assert clauses[0]["amount_max_millions"] == 30
+
+
+def test_license_fee_installments_are_not_milestones_when_triggered_by_one():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>Issue Fee. Licensee will pay a license issue fee of $100,000 in two
+    installments. The first installment of $50,000 is due when Licensee
+    achieves the Essential Milestone, and the second installment of $50,000 is
+    due on the Effective Date.</para>
+    """
+
+    clauses = extract_contract_financial_clauses(contract)
+    assert [clause["clause_type"] for clause in clauses] == ["upfront_payment"]
+    assert clauses[0]["amount_min_millions"] == 0.05
+    assert clauses[0]["amount_max_millions"] == 0.1
+    assert clauses[0]["rate_min_pct"] is None
+
+
+def test_payment_lists_capture_all_rows_without_crossing_categories():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>(d) milestone payments as follows: (i) $10,000 upon filing an IND;
+    (ii) $25,000 upon filing an NDA; and (iii) $100,000 upon NDA approval.</para>
+    <para>(e) Licensee shall pay annual minimum royalties of $5,000.</para>
+    """
+
+    milestone = next(
+        clause for clause in extract_contract_financial_clauses(contract)
+        if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 0.01
+    assert milestone["amount_max_millions"] == 0.1
+    assert [
+        value["amount_millions"]
+        for value in milestone["extracted_values"]["monetary_values"]
+    ] == [0.01, 0.025, 0.1]
+
+
+def test_initial_and_research_payments_do_not_pollute_milestone_or_upfront():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>Company will make an initial payment of $50 million, with up to
+    $455 million in additional milestone payments.</para>
+    <para>Near-term payments include $4 million in upfront license fees and
+    $8 million in research and development funding. An additional $58 million
+    in milestone payments relates to regulatory approvals.</para>
+    """
+
+    clauses = extract_contract_financial_clauses(contract)
+    by_type = {clause["clause_type"]: clause for clause in clauses}
+    assert by_type["milestone_payment"]["amount_min_millions"] == 58
+    assert by_type["milestone_payment"]["amount_max_millions"] == 455
+    assert by_type["upfront_payment"]["amount_min_millions"] == 4
+    assert by_type["upfront_payment"]["amount_max_millions"] == 4
+
+
+def test_historical_milestone_and_upfront_distribution_allocations_are_excluded():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>To the extent Company has paid the milestone in Section 6.5 in the
+    amount of $20 million, that amount shall be credited on termination.</para>
+    <para>The Payment Agent shall distribute the Upfront Payment as follows:
+    $100,000 as the Committee Reimbursement Amount for expenses.</para>
+    """
+
+    assert extract_contract_financial_clauses(contract) == []
+
+
+def test_execution_and_milestone_table_excludes_execution_payment():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    contract = """
+    <para>LICENSE EXECUTION AND MILESTONE PAYMENTS</para>
+    <para>Upon execution of license $250,000</para>
+    <para>Upon start of Phase I Clinical Trials $500,000</para>
+    """
+
+    milestone = extract_contract_financial_clauses(contract)[0]
+    assert milestone["clause_type"] == "milestone_payment"
+    assert milestone["amount_min_millions"] == 0.5
+    assert milestone["amount_max_millions"] == 0.5
+
+
 def test_contract_clause_batch_returns_busy_when_lock_is_held():
     from unified_api.services.contract_financial_clauses import (
         CONTRACT_CLAUSE_PARSER_VERSION,
