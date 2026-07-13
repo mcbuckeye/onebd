@@ -1,7 +1,6 @@
 """
 TDD: Finance detail parser tests.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 
 
@@ -264,10 +263,135 @@ class TestCortellisFinanceJsonParser:
         assert term["rate_max_pct"] == 12.5
         assert term["amount_usd_millions"] is None
 
+    def test_cortellis_abbreviated_billion_and_trillion_units_are_normalized(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        def payload(unit, value):
+            return {
+                "PaymentsToPrincipal": {
+                    "PaymentsPaid": {
+                        "PaymentsGeneral": {
+                            "Payment": {
+                                "Type": "Upfront Payment",
+                                "Values": {
+                                    "@attributes": {"disclosureStatus": "Known"},
+                                    "ValueReported": {
+                                        "@text": str(value),
+                                        "@attributes": {"unit": unit, "currency": "USD"},
+                                    },
+                                    "ValueConvertedToUSD": {
+                                        "@text": str(value),
+                                        "@attributes": {"unit": unit},
+                                    },
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+
+        billion = extract_financial_terms(payload("B", 1.5))[0]
+        trillion = extract_financial_terms(payload("T", 2))[0]
+
+        assert billion["amount_usd_millions"] == 1500
+        assert trillion["amount_usd_millions"] == 2_000_000
+
+    def test_all_known_percentage_terms_capture_directional_bounds(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+
+        payload = {
+            "PaymentsToPartner": {
+                "PaymentsProjectedCurrent": {
+                    "PaymentsPercentage": {
+                        "Payment": [
+                            {
+                                "Type": "Profit Split(%)",
+                                "Values": {
+                                    "@attributes": {
+                                        "accuracy": "=<",
+                                        "disclosureStatus": "Known",
+                                    },
+                                    "ValueReported": {
+                                        "@text": "40",
+                                        "@attributes": {"unit": "%"},
+                                    },
+                                },
+                            },
+                            {
+                                "Type": "Equity Stake(%)",
+                                "Values": {
+                                    "@attributes": {
+                                        "accuracy": ">=",
+                                        "disclosureStatus": "Known",
+                                    },
+                                    "ValueReported": {
+                                        "@text": "10",
+                                        "@attributes": {"unit": "%"},
+                                    },
+                                },
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+
+        profit_split, equity_stake = extract_financial_terms(payload)
+
+        assert (profit_split["rate_min_pct"], profit_split["rate_max_pct"]) == (
+            None,
+            40,
+        )
+        assert (equity_stake["rate_min_pct"], equity_stake["rate_max_pct"]) == (
+            10,
+            None,
+        )
+
     def test_non_json_payload_returns_no_structured_terms(self):
         from unified_api.services.finance_parser import extract_financial_terms
 
         assert extract_financial_terms("Upfront payment of $50 million") == []
+
+    def test_persisted_term_validation_replays_source_payload(self):
+        from unified_api.services.finance_parser import extract_financial_terms
+        from unified_api.services.financial_terms import validate_financial_term_record
+
+        payload = {
+            "PaymentsToPrincipal": {
+                "PaymentsPaid": {
+                    "PaymentsGeneral": {
+                        "Payment": {
+                            "Type": "Upfront Payment",
+                            "Values": {
+                                "@attributes": {
+                                    "accuracy": "=",
+                                    "disclosureStatus": "Known",
+                                },
+                                "ValueReported": {
+                                    "@text": "1.25",
+                                    "@attributes": {"unit": "B", "currency": "USD"},
+                                },
+                                "ValueConvertedToUSD": {
+                                    "@text": "1.25",
+                                    "@attributes": {"unit": "B"},
+                                },
+                            },
+                        }
+                    }
+                }
+            }
+        }
+        term = extract_financial_terms(payload, deal_id=42)[0]
+
+        assert validate_financial_term_record(term) == []
+
+        term["amount_usd_millions"] = 1.25
+        mismatches = validate_financial_term_record(term)
+        assert mismatches == [{
+            "field": "amount_usd_millions",
+            "expected": 1250.0,
+            "actual": 1.25,
+        }]
 
 
 def test_celery_financial_extraction_runs_resumable_batch():

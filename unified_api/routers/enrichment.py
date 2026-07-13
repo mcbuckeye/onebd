@@ -8,6 +8,7 @@ from unified_api.services.database import get_cortellis_session
 from unified_api.services.financial_terms import (
     extract_financial_term_batch,
     financial_term_status,
+    financial_term_validation_status,
 )
 
 logger = structlog.get_logger(__name__)
@@ -40,3 +41,17 @@ async def enrichment_status():
         status = financial_term_status(session)
 
     return {"finance_enrichment": status}
+
+
+@router.get("/api/enrichment/financial-terms/validation")
+async def financial_term_validation(
+    sample_per_type: int = Query(25, ge=1, le=100),
+):
+    """Return a deterministic population and source-fidelity audit."""
+    with get_cortellis_session() as session:
+        return {
+            "finance_enrichment_validation": financial_term_validation_status(
+                session,
+                sample_per_type=sample_per_type,
+            )
+        }

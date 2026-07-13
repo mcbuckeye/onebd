@@ -1,6 +1,5 @@
 """ETL/Sync pipeline for Cortellis Deals data."""
 
-import os
 import json
 import logging
 import time
@@ -18,7 +17,7 @@ from .models import (
     Base, Deal, Company, DealCompany, Indication, Technology, Action,
     DealAction, Territory, DealTerritory, Drug, DealDrug, Patent,
     TherapyArea, DealFinanceSummary, DealTimelineEvent, DealContract,
-    DealMASummary, SyncLog, deal_indications, deal_technologies, deal_patents,
+    DealMASummary, SyncLog,
 )
 
 logger = logging.getLogger(__name__)
@@ -1023,6 +1022,7 @@ class SyncService:
         self,
         batch_size: int = 30,
         max_missing: Optional[int] = None,
+        scan_workers: int = 1,
     ) -> Dict[str, Any]:
         """Find and restore deals omitted by an older full-sync batch.
 
@@ -1034,7 +1034,11 @@ class SyncService:
         batch_size = max(1, min(30, batch_size))
         with CortellisClient(self.config.cortellis) as client:
             first = client.search_deals(query="*", offset=0, hits=100)
-            remote_ids = list(client.get_all_deal_ids("*"))
+            remote_ids = list(client.get_all_deal_ids(
+                "*",
+                workers=scan_workers,
+                initial_result=first,
+            ))
 
             with self.SessionLocal() as session:
                 local_ids = session.execute(select(Deal.id)).scalars().all()
@@ -1103,7 +1107,7 @@ class SyncService:
 
     def _download_all_contracts(self, session: Session, client: CortellisClient) -> int:
         """Download all contract documents."""
-        deals_with_contracts = session.query(Deal).filter(Deal.has_contract == True).all()
+        deals_with_contracts = session.query(Deal).filter(Deal.has_contract.is_(True)).all()
         return self._download_contracts_for_deals(
             session, client, [d.id for d in deals_with_contracts]
         )

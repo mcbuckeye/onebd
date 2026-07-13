@@ -3,13 +3,41 @@
 from __future__ import annotations
 
 import json
+import math
+from typing import Any
 
 from sqlalchemy import text
 
 from unified_api.services.finance_parser import (
     FINANCE_PARSER_VERSION,
+    _extract_payment,
     extract_financial_terms,
 )
+
+
+KNOWN_SOURCE_PAYMENT_TYPES = {
+    "Adjusted Milestones",
+    "Contingent Equity",
+    "Dev/Reg Milestones",
+    "Equity",
+    "Equity Stake(%)",
+    "Loan/Credit",
+    "Lump Sum",
+    "Milestones",
+    "Option Payment",
+    "Other",
+    "Other Equity",
+    "Other Milestones",
+    "Profit Split(%)",
+    "R&D Funding",
+    "Royalty(%)",
+    "Royalty Payment",
+    "Sales Milestones",
+    "Transfer Price(%)",
+    "Undisclosed",
+    "Upfront Equity",
+    "Upfront Payment",
+}
 
 
 def ensure_financial_term_schema(session) -> None:
@@ -85,9 +113,10 @@ def extract_financial_term_batch(
             OR e.parser_version <> :parser_version
             OR e.source_hash <> md5(f.finance_detail_raw::text)
             OR e.status = 'failed'
-          )
+        )
         ORDER BY f.deal_id
         LIMIT :batch_size
+        FOR UPDATE OF f SKIP LOCKED
     """), {
         "force": force,
         "parser_version": FINANCE_PARSER_VERSION,
@@ -210,7 +239,7 @@ def financial_term_status(session) -> dict:
             (SELECT COUNT(*) FROM deal_financial_terms
              WHERE parser_version = :parser_version
                AND term_type = 'royalty_rate'
-               AND rate_min_pct IS NOT NULL) AS royalty_terms
+               AND (rate_min_pct IS NOT NULL OR rate_max_pct IS NOT NULL)) AS royalty_terms
     """), {"parser_version": FINANCE_PARSER_VERSION}).mappings().one()
     result = dict(row)
     raw = result["deals_with_raw_json"] or 0
@@ -220,3 +249,164 @@ def financial_term_status(session) -> dict:
     ) if raw else 0.0
     result["parser_version"] = FINANCE_PARSER_VERSION
     return result
+
+
+def _values_match(actual: Any, expected: Any) -> bool:
+    if isinstance(actual, (int, float)) or isinstance(expected, (int, float)):
+        if actual is None or expected is None:
+            return actual is expected
+        return math.isclose(float(actual), float(expected), rel_tol=1e-12, abs_tol=1e-9)
+    return actual == expected
+
+
+def validate_financial_term_record(record: dict) -> list[dict]:
+    """Compare one persisted term with a fresh extraction from its source node."""
+    payload = record.get("source_payload")
+    if not isinstance(payload, dict):
+        return [{"field": "source_payload", "expected": "object", "actual": type(payload).__name__}]
+    expected = _extract_payment(
+        payload,
+        deal_id=record.get("deal_id"),
+        recipient=record.get("recipient"),
+        basis=record.get("basis"),
+        source_path=record.get("source_path"),
+        is_breakdown=bool(record.get("is_breakdown")),
+    )
+    fields = (
+        "recipient",
+        "basis",
+        "term_type",
+        "source_payment_type",
+        "amount_reported_millions",
+        "reported_currency",
+        "reported_unit",
+        "amount_usd_millions",
+        "rate_min_pct",
+        "rate_max_pct",
+        "accuracy",
+        "disclosure_status",
+        "note",
+        "is_breakdown",
+        "confidence",
+        "source_path",
+    )
+    return [
+        {"field": field, "expected": expected.get(field), "actual": record.get(field)}
+        for field in fields
+        if not _values_match(record.get(field), expected.get(field))
+    ]
+
+
+def financial_term_validation_status(session, *, sample_per_type: int = 25) -> dict:
+    """Audit extraction coverage, structural fidelity, units, and percentage bounds."""
+    sample_per_type = max(1, min(100, sample_per_type))
+    status = financial_term_status(session)
+    population = dict(session.execute(text("""
+        SELECT
+            COUNT(*) AS terms_total,
+            COUNT(DISTINCT deal_id) AS deals_with_terms,
+            COUNT(*) FILTER (
+                WHERE disclosure_status = 'Known'
+                  AND reported_unit = '%'
+                  AND NULLIF(source_payload->'Values'->'ValueReported'->>'@text', '') IS NOT NULL
+            ) AS known_percentage_terms,
+            COUNT(*) FILTER (
+                WHERE disclosure_status = 'Known'
+                  AND reported_unit = '%'
+                  AND NULLIF(source_payload->'Values'->'ValueReported'->>'@text', '') IS NOT NULL
+                  AND (rate_min_pct IS NOT NULL OR rate_max_pct IS NOT NULL)
+            ) AS captured_percentage_terms,
+            COUNT(*) FILTER (
+                WHERE reported_unit NOT IN ('Million', 'B', 'T', '%')
+                  AND COALESCE(reported_unit, '') <> ''
+            ) AS unrecognized_unit_terms,
+            COUNT(*) FILTER (
+                WHERE amount_reported_millions < 0 OR amount_usd_millions < 0
+            ) AS negative_amount_terms,
+            COUNT(*) FILTER (
+                WHERE rate_min_pct < 0 OR rate_max_pct < 0
+                   OR rate_min_pct > 100 OR rate_max_pct > 100
+                   OR (rate_min_pct IS NOT NULL AND rate_max_pct IS NOT NULL
+                       AND rate_min_pct > rate_max_pct)
+            ) AS invalid_rate_terms,
+            COUNT(*) FILTER (
+                WHERE source_payment_type IS DISTINCT FROM source_payload->>'Type'
+            ) AS source_type_mismatches
+        FROM deal_financial_terms
+        WHERE parser_version = :parser_version
+    """), {"parser_version": FINANCE_PARSER_VERSION}).mappings().one())
+
+    source_types = {
+        row[0]
+        for row in session.execute(text("""
+            SELECT DISTINCT source_payment_type
+            FROM deal_financial_terms
+            WHERE parser_version = :parser_version
+              AND source_payment_type IS NOT NULL
+        """), {"parser_version": FINANCE_PARSER_VERSION})
+    }
+    unknown_source_types = sorted(source_types - KNOWN_SOURCE_PAYMENT_TYPES)
+
+    rows = session.execute(text("""
+        WITH sampled AS (
+            SELECT t.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY term_type
+                       ORDER BY md5(deal_id::text || ':' || source_path)
+                   ) AS sample_rank
+            FROM deal_financial_terms t
+            WHERE parser_version = :parser_version
+        )
+        SELECT * FROM sampled WHERE sample_rank <= :sample_per_type
+        ORDER BY term_type, sample_rank
+    """), {
+        "parser_version": FINANCE_PARSER_VERSION,
+        "sample_per_type": sample_per_type,
+    }).mappings().all()
+
+    failures = []
+    failed = 0
+    for row in rows:
+        mismatches = validate_financial_term_record(dict(row))
+        if mismatches:
+            failed += 1
+            if len(failures) < 20:
+                failures.append({
+                    "term_id": row["id"],
+                    "deal_id": row["deal_id"],
+                    "term_type": row["term_type"],
+                    "source_path": row["source_path"],
+                    "mismatches": mismatches,
+                })
+
+    sampled = len(rows)
+    known_percentage = int(population["known_percentage_terms"] or 0)
+    captured_percentage = int(population["captured_percentage_terms"] or 0)
+    report = {
+        **status,
+        **population,
+        "known_source_types": len(source_types),
+        "unknown_source_types": unknown_source_types,
+        "sampled_terms": sampled,
+        "sample_failures": failed,
+        "sample_field_accuracy_pct": round(100 * (sampled - failed) / sampled, 2)
+        if sampled else 0.0,
+        "known_percentage_capture_pct": round(
+            100 * captured_percentage / known_percentage,
+            2,
+        ) if known_percentage else 100.0,
+        "failure_samples": failures,
+    }
+    report["governed_release_ready"] = bool(
+        report["parse_coverage_pct"] == 100.0
+        and report["terms_total"] > 0
+        and not report["deals_failed"]
+        and not report["unrecognized_unit_terms"]
+        and not report["negative_amount_terms"]
+        and not report["invalid_rate_terms"]
+        and not report["source_type_mismatches"]
+        and not unknown_source_types
+        and report["sample_field_accuracy_pct"] == 100.0
+        and report["known_percentage_capture_pct"] == 100.0
+    )
+    return report

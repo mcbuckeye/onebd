@@ -196,6 +196,7 @@ services:
       - CORTELLIS_API_PASSWORD=${CORTELLIS_API_PASSWORD}
       - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
       - CORTELLIS_SYNC_OVERLAP_DAYS=${CORTELLIS_SYNC_OVERLAP_DAYS:-2}
+      - CORTELLIS_CATALOG_SCAN_WORKERS=${CORTELLIS_CATALOG_SCAN_WORKERS:-8}
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage
@@ -246,6 +247,7 @@ services:
       - CORTELLIS_API_PASSWORD=${CORTELLIS_API_PASSWORD}
       - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
       - CORTELLIS_SYNC_OVERLAP_DAYS=${CORTELLIS_SYNC_OVERLAP_DAYS:-2}
+      - CORTELLIS_CATALOG_SCAN_WORKERS=${CORTELLIS_CATALOG_SCAN_WORKERS:-8}
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage

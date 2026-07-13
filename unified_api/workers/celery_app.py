@@ -325,7 +325,10 @@ def reconcile_cortellis_catalog():
             "cortellis_catalog", {"status": "skipped", "reason": "no credentials"}
         )
     try:
-        result = _cortellis_sync_service().reconcile_catalog(max_missing=5000)
+        result = _cortellis_sync_service().reconcile_catalog(
+            max_missing=5000,
+            scan_workers=settings.cortellis_catalog_scan_workers,
+        )
         logger.info("Cortellis catalog reconciliation complete", **result)
         return _finish_source_job("cortellis_catalog", result)
     except Exception as exc:
