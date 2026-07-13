@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 1
+CONTRACT_CLAUSE_PARSER_VERSION = 2
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -43,8 +43,21 @@ _TIER_WORDS = re.compile(
     r"\b(?:tier(?:ed|s)?|schedule|threshold|annual net sales|sliding scale)\b",
     re.IGNORECASE,
 )
-_RATE_CONTEXT = re.compile(
-    r"\b(?:royalt(?:y|ies)|net sales|tier(?:ed|s)?|rate|sublicens\w*)\b",
+_ROYALTY_RATE_CONTEXT = re.compile(
+    r"\b(?:royalt(?:y|ies)|net sales|tier(?:ed|s)?|sublicens\w*)\b",
+    re.IGNORECASE,
+)
+_NON_ROYALTY_RATE_CONTEXT = re.compile(
+    r"\b(?:"
+    r"underpay\w*|overpay\w*|audit\w*|accountant|reimburse\w*|"
+    r"reimburs\w*|royalty[ -]?free|"
+    r"delinquen\w*|late payment|interest|libor|prime rate|"
+    r"credit\w*|offset\w*|deduct\w*|set[ -]?off|reduc\w*|"
+    r"mandatory prepayment|not (?:greater|less) than|"
+    r"responsible for (?:all )?costs|"
+    r"costs? and expenses?|withhold\w*|tax(?:es)?|"
+    r"extraordinary payment|percentage component|supply price"
+    r")\b",
     re.IGNORECASE,
 )
 _PAYMENT_CONTEXT = re.compile(
@@ -52,7 +65,52 @@ _PAYMENT_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 _NONPAYMENT_AMOUNT_CONTEXT = re.compile(
-    r"\b(?:net sales|gross sales|revenue|sales threshold|par value|per share)\b",
+    r"\b(?:"
+    r"net sales|gross sales|revenue|sales threshold|par value|per share|"
+    r"at the rate|per year|full[ -]?time staff|research support"
+    r")\b",
+    re.IGNORECASE,
+)
+_UPFRONT_AGGREGATE_CONTEXT = re.compile(
+    r"\b(?:"
+    r"research(?:\s+and\s+development)?\s+funding|equity\s+investment"
+    r")\b",
+    re.IGNORECASE,
+)
+_UPFRONT_EQUITY_CONTEXT = re.compile(
+    r"\bup[ -]?front\s+equity\s+investment\b",
+    re.IGNORECASE,
+)
+_UPFRONT_ALLOCATION_CONTEXT = re.compile(
+    r"\b(?:"
+    r"committee\s+reimbursement\s+amount|escrow\s+contribution\s+amount|"
+    r"payment\s+agent|distribut(?:e|ion)\s+(?:of\s+)?the\s+upfront\s+payment"
+    r")\b",
+    re.IGNORECASE,
+)
+_MILESTONE_AGGREGATE_CONTEXT = re.compile(
+    r"\b(?:"
+    r"reimburse\w*|reimburs\w*|"
+    r"research(?:\s+and\s+development)?\s+funding|equity\s+investment|"
+    r"common\s+stock|marketing\s+support\s+fee|progress\s+payment|"
+    r"initial\s+payment|license\s+execution|restructur\w*|settlement"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_SENTENCE_BOUNDARY = re.compile(
+    r"(?:(?<![A-Z0-9])\.\s+|[!?;]\s+|\n\s*\n)"
+)
+_COMBINED_MILESTONE_PACKAGE = re.compile(
+    r"\b(?:license\s+fees?|research(?:\s+and\s+development)?\s+funding)\b"
+    r".{0,180}\bmilestone\s+payments?\b.{0,80}\b(?:including|total(?:ing)?)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_HISTORICAL_MILESTONE_REFERENCE = re.compile(
+    r"\b(?:has|have|had)\s+paid\b.{0,100}\bmilestone\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_MILESTONE_EXECUTION_ROW = re.compile(
+    r"\bupon\s+execution\s+of\s+(?:the\s+)?license\b",
     re.IGNORECASE,
 )
 
@@ -80,10 +138,25 @@ def _window(text_value: str, start: int, end: int) -> tuple[int, int]:
     paragraph_end = text_value.find("\n\n", end)
     paragraph_end = paragraph_end if paragraph_end >= 0 else len(text_value)
 
-    # Tables and schedules often continue into the next two paragraphs.
-    for _ in range(2):
+    anchor_paragraph = text_value[paragraph_start:paragraph_end]
+    is_table_or_schedule = bool(re.search(
+        r"\b(?:as follows|specified below|set forth below|amount\s+event|"
+        r"milestone payment.*fuss)\b",
+        anchor_paragraph,
+        re.IGNORECASE | re.DOTALL,
+    ))
+    # Tables and schedules can span many short paragraphs. Prose windows keep
+    # the original two-paragraph continuation to avoid unrelated sections.
+    for _ in range(12 if is_table_or_schedule else 2):
+        next_start = paragraph_end + 2
+        if text_value[next_start:].lstrip().startswith("#"):
+            break
         next_end = text_value.find("\n\n", paragraph_end + 2)
-        if next_end < 0 or next_end - paragraph_start > 4000:
+        if next_end < 0:
+            if len(text_value) - paragraph_start <= 4000:
+                paragraph_end = len(text_value)
+            break
+        if next_end - paragraph_start > 4000:
             break
         paragraph_end = next_end
 
@@ -128,7 +201,7 @@ def _rates(excerpt: str, absolute_start: int) -> list[dict]:
 
 
 def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dict]:
-    """Keep rates whose own paragraph establishes a royalty/sales context."""
+    """Keep rates locally tied to royalties, excluding accounting/cost rates."""
     values = []
     for value in _rates(excerpt, absolute_start):
         relative_start = value["char_start"] - absolute_start
@@ -137,8 +210,42 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
         paragraph_start = paragraph_start + 2 if paragraph_start >= 0 else 0
         paragraph_end = excerpt.find("\n\n", relative_end)
         paragraph_end = paragraph_end if paragraph_end >= 0 else len(excerpt)
-        if _RATE_CONTEXT.search(excerpt[paragraph_start:paragraph_end]):
-            values.append(value)
+        paragraph = excerpt[paragraph_start:paragraph_end]
+        paragraph_position = relative_start - paragraph_start
+        royalty_distance = _nearest_context_distance(
+            _ROYALTY_RATE_CONTEXT,
+            paragraph,
+            paragraph_position,
+        )
+        if royalty_distance is None or royalty_distance > 500:
+            continue
+        before = paragraph[max(0, paragraph_position - 140):paragraph_position]
+        after = paragraph[
+            paragraph_position + (relative_end - relative_start):
+            paragraph_position + (relative_end - relative_start) + 140
+        ]
+        directly_linked = bool(
+            re.search(r"royalt(?:y|ies)\b.{0,100}$", before, re.IGNORECASE)
+            or re.match(r"\s*royalt(?:y|ies)\b", after, re.IGNORECASE)
+            or re.match(
+                r"\s*(?:for|of|on|based\s+on)?\s*(?:the\s+)?"
+                r"net\s+(?:sales|revenues)\b",
+                after,
+                re.IGNORECASE,
+            )
+            or (
+                bool(_TIER_WORDS.search(paragraph))
+                and bool(_ANCHORS["royalty_rate"].search(paragraph))
+                and royalty_distance <= 500
+            )
+        )
+        if not directly_linked:
+            continue
+        local_start = max(0, relative_start - 220)
+        local_end = min(len(excerpt), relative_end + 220)
+        if _NON_ROYALTY_RATE_CONTEXT.search(excerpt[local_start:local_end]):
+            continue
+        values.append(value)
     return values
 
 
@@ -176,6 +283,174 @@ def _nearest_context_distance(pattern: re.Pattern, text_value: str, position: in
     return min(distances) if distances else None
 
 
+def _is_same_sentence_or_following_heading(
+    excerpt: str,
+    value_start: int,
+    value_end: int,
+    anchor: re.Match,
+) -> bool:
+    """Require a local clause link while allowing a short payment-table heading."""
+    if anchor.end() <= value_start:
+        between = excerpt[anchor.end():value_start]
+    elif value_end <= anchor.start():
+        between = excerpt[value_end:anchor.start()]
+    else:
+        return True
+    if not _SENTENCE_BOUNDARY.search(between):
+        return True
+    if anchor.start() >= value_start:
+        return False
+    line_start = excerpt.rfind("\n", 0, anchor.start()) + 1
+    line_end = excerpt.find("\n", anchor.end())
+    line_end = line_end if line_end >= 0 else len(excerpt)
+    heading = excerpt[line_start:line_end].strip()
+    sentence_end = excerpt.find(".", anchor.end())
+    inline_heading = (
+        not excerpt[line_start:anchor.start()].strip()
+        and sentence_end >= 0
+        and sentence_end - anchor.end() <= 30
+    )
+    return (
+        (
+            inline_heading
+            or (
+                len(heading) <= 100
+                and bool(re.fullmatch(
+                    r"(?:[#\d.()\s-]*)?(?:milestone(?:s)?(?:\s+payments?)?|"
+                    r"up[ -]?front(?:\s+(?:fees?|payments?|consideration))?|"
+                    r"license issue fee)[:.]?",
+                    heading,
+                    re.IGNORECASE,
+                ))
+            )
+        )
+        and value_start - anchor.end() <= 600
+    )
+
+
+def _is_event_only_milestone_anchor(excerpt: str, anchor: re.Match) -> bool:
+    """Identify a named trigger rather than a milestone-payment label."""
+    context = excerpt[max(0, anchor.start() - 70):anchor.end() + 70]
+    if re.search(
+        r"\bmilestone\s+payments?\b|\bpayment\s+milestone\b",
+        context,
+        re.IGNORECASE,
+    ):
+        return False
+    return bool(re.search(
+        r"\b(?:achiev\w*|reach\w*|satisf\w*)\b.{0,60}\bmilestone\b",
+        context,
+        re.IGNORECASE | re.DOTALL,
+    ))
+
+
+def _is_payment_list_value(
+    excerpt: str,
+    value_start: int,
+    anchor: re.Match,
+) -> bool:
+    """Keep values under an explicit 'payments as follows' list heading."""
+    if anchor.end() > value_start or value_start - anchor.end() > 1400:
+        return False
+    lead = excerpt[anchor.end():min(len(excerpt), anchor.end() + 100)]
+    header_context = excerpt[max(0, anchor.start() - 500):anchor.end() + 100]
+    explicit_list = bool(re.search(
+        r"\b(?:as follows|following|set forth)\b",
+        lead,
+        re.IGNORECASE,
+    ))
+    explicit_table = bool(re.search(
+        r"\b(?:specified below|milestone\s+payments?)\b",
+        header_context,
+        re.IGNORECASE,
+    )) and "\n" in excerpt[anchor.end():value_start]
+    if not (explicit_list or explicit_table):
+        return False
+    between = excerpt[anchor.end():value_start]
+    # A new top-level lettered clause ends the preceding payment list. Nested
+    # roman-numeral entries remain part of it.
+    if re.search(r"(?:^|\n)\s*\([a-h]\)\s+", between):
+        return False
+    return True
+
+
+def _has_strong_payment_link(
+    excerpt: str,
+    value_start: int,
+    value_end: int,
+    anchor: re.Match,
+) -> bool:
+    """Allow a short trigger-to-payment sentence pair such as Milestone I."""
+    if anchor.start() >= value_start:
+        return False
+    segment_start = min(value_start, anchor.start())
+    segment_end = max(value_end, anchor.end())
+    if segment_end - segment_start > 260:
+        return False
+    segment = excerpt[segment_start:segment_end]
+    if "\n\n" in segment or re.search(
+        r"(?:^|\n)\s*\([a-h]\)\s+",
+        segment,
+    ):
+        return False
+    return bool(re.search(
+        r"\b(?:pay|pays|paid|payable|payment|payments|amount|receive|"
+        r"receives|eligible|due)\b",
+        segment,
+        re.IGNORECASE,
+    ))
+
+
+def _is_combined_payment_amount(
+    excerpt: str,
+    value: dict,
+    target_anchor: re.Match,
+    competing_anchor: re.Match | None,
+    monetary_values: list[dict],
+    absolute_start: int,
+) -> bool:
+    """Detect one amount expressly aggregating upfront and milestone value."""
+    if competing_anchor is None:
+        return False
+    value_start = value["char_start"] - absolute_start
+    value_end = value["char_end"] - absolute_start
+    both_after = (
+        target_anchor.start() >= value_end
+        and competing_anchor.start() >= value_end
+    )
+    both_before = (
+        target_anchor.end() <= value_start
+        and competing_anchor.end() <= value_start
+    )
+    if not (both_after or both_before):
+        return False
+    segment_start = min(
+        value_start,
+        target_anchor.start(),
+        competing_anchor.start(),
+    )
+    segment_end = max(
+        value_end,
+        target_anchor.end(),
+        competing_anchor.end(),
+    )
+    for other in monetary_values:
+        if other is value:
+            continue
+        other_start = other["char_start"] - absolute_start
+        other_end = other["char_end"] - absolute_start
+        if other_start >= segment_start and other_end <= segment_end:
+            return False
+    segment = excerpt[segment_start:segment_end]
+    between_anchors = excerpt[
+        min(target_anchor.end(), competing_anchor.end()):
+        max(target_anchor.start(), competing_anchor.start())
+    ]
+    if re.search(r"[,;]", between_anchors):
+        return False
+    return bool(re.search(r"\b(?:and|includes?|including)\b", segment, re.IGNORECASE))
+
+
 def _payment_monetary_values(
     excerpt: str,
     absolute_start: int,
@@ -183,8 +458,23 @@ def _payment_monetary_values(
 ) -> list[dict]:
     """Retain explicit payment amounts, excluding closer sales/par-value context."""
     anchors = list(_ANCHORS[clause_type].finditer(excerpt))
+    competing_types = (
+        {"milestone_payment", "upfront_payment"} - {clause_type}
+    )
+    competing_anchors = [
+        match
+        for competing_type in competing_types
+        for match in _ANCHORS[competing_type].finditer(excerpt)
+    ]
+    if clause_type == "upfront_payment":
+        competing_anchors = [
+            match
+            for match in competing_anchors
+            if not _is_event_only_milestone_anchor(excerpt, match)
+        ]
     values = []
-    for value in _monetary_values(excerpt, absolute_start):
+    monetary_values = _monetary_values(excerpt, absolute_start)
+    for value in monetary_values:
         if value["amount_millions"] < 0.001:
             continue
         relative_start = value["char_start"] - absolute_start
@@ -199,6 +489,15 @@ def _payment_monetary_values(
         )
         if anchor_distance is None or anchor_distance > 750:
             continue
+        competing_distance = min(
+            (
+                min(abs(position - match.start()), abs(position - match.end()))
+                for match in competing_anchors
+            ),
+            default=None,
+        )
+        if competing_distance is not None and competing_distance < anchor_distance:
+            continue
         closest_anchor = min(
             anchors,
             key=lambda match: min(
@@ -206,16 +505,46 @@ def _payment_monetary_values(
                 abs(position - match.end()),
             ),
         )
+        closest_competing_anchor = min(
+            competing_anchors,
+            key=lambda match: min(
+                abs(position - match.start()),
+                abs(position - match.end()),
+            ),
+            default=None,
+        )
+        if _is_combined_payment_amount(
+            excerpt,
+            value,
+            closest_anchor,
+            closest_competing_anchor,
+            monetary_values,
+            absolute_start,
+        ):
+            continue
+        same_sentence = _is_same_sentence_or_following_heading(
+            excerpt, relative_start, relative_end, closest_anchor
+        )
+        list_value = _is_payment_list_value(
+            excerpt, relative_start, closest_anchor
+        )
+        strong_link = _has_strong_payment_link(
+            excerpt, relative_start, relative_end, closest_anchor
+        )
+        if not (same_sentence or list_value or strong_link):
+            continue
+        if (
+            clause_type == "milestone_payment"
+            and _is_event_only_milestone_anchor(excerpt, closest_anchor)
+            and closest_competing_anchor is not None
+            and competing_distance is not None
+            and competing_distance <= 750
+        ):
+            continue
         # Permit "$5m milestone payment", but do not pull an earlier, unrelated
         # transaction amount into a later milestone/upfront section.
         if closest_anchor.start() - position > 80:
             continue
-        if (
-            closest_anchor.start() > relative_end
-            and "\n" in excerpt[relative_end:closest_anchor.start()]
-        ):
-            continue
-
         context_start = max(0, relative_start - 250)
         context_end = min(len(excerpt), relative_end + 250)
         context = excerpt[context_start:context_end]
@@ -234,6 +563,61 @@ def _payment_monetary_values(
             continue
         if nonpayment_distance is not None and nonpayment_distance < payment_distance:
             continue
+        if clause_type == "upfront_payment":
+            aggregate_distance = _nearest_context_distance(
+                _UPFRONT_AGGREGATE_CONTEXT,
+                context,
+                context_position,
+            )
+            if (
+                aggregate_distance is not None
+                and aggregate_distance < anchor_distance
+            ):
+                continue
+            if _UPFRONT_EQUITY_CONTEXT.search(context):
+                continue
+            allocation_distance = _nearest_context_distance(
+                _UPFRONT_ALLOCATION_CONTEXT,
+                context,
+                context_position,
+            )
+            if (
+                allocation_distance is not None
+                and allocation_distance < anchor_distance
+            ):
+                continue
+        if clause_type == "milestone_payment":
+            sentence_start = max(
+                excerpt.rfind(".", 0, relative_start),
+                excerpt.rfind("\n\n", 0, relative_start),
+            ) + 1
+            sentence_end = excerpt.find(".", relative_end)
+            sentence_end = sentence_end if sentence_end >= 0 else len(excerpt)
+            sentence = excerpt[sentence_start:sentence_end]
+            value_line_start = excerpt.rfind("\n", 0, relative_start) + 1
+            value_line_end = excerpt.find("\n", relative_end)
+            value_line_end = value_line_end if value_line_end >= 0 else len(excerpt)
+            if _MILESTONE_EXECUTION_ROW.search(
+                excerpt[value_line_start:value_line_end]
+            ):
+                continue
+            if _COMBINED_MILESTONE_PACKAGE.search(sentence):
+                continue
+            historical_start = max(0, closest_anchor.start() - 140)
+            if _HISTORICAL_MILESTONE_REFERENCE.search(
+                excerpt[historical_start:relative_end]
+            ):
+                continue
+            aggregate_distance = _nearest_context_distance(
+                _MILESTONE_AGGREGATE_CONTEXT,
+                context,
+                context_position,
+            )
+            if (
+                aggregate_distance is not None
+                and aggregate_distance < anchor_distance
+            ):
+                continue
         values.append(value)
     return values
 
@@ -259,6 +643,8 @@ def extract_contract_financial_clauses(
             stripped_start = clean_text.find(excerpt, start, end)
             stripped_end = stripped_start + len(excerpt)
             rates = _rates_with_financial_context(excerpt, stripped_start)
+            if clause_type != "royalty_rate":
+                rates = []
             monetary_values = (
                 _monetary_values(excerpt, stripped_start)
                 if clause_type == "royalty_rate"

@@ -63,13 +63,17 @@ and fast retrieval before adding more external data volume.
    - [ ] Complete the first reconciliation: the 2026-07-13 audit found 149,006
          source deals versus 146,931 local deals (2,075 net gap). The first run
          restored 2,077 IDs but rejected its own result because unstable default
-         pagination yielded only 148,754 unique IDs. A verified `dealId`-sorted
-         rerun remains required.
-   - [ ] Complete a durable all-deal contract metadata scan; 41,626 contracts are
-         local, but only 16,194 deals currently have a persisted checked state.
-         A versioned PostgreSQL checkpoint, bounded scheduled worker, explicit
-         retry/terminal-failure accounting, and coverage endpoint are ready for
-         deployment; the full production scan remains to be run.
+         pagination yielded only 148,754 unique IDs. A `dealId`-sorted rerun
+         restored five more records but also rejected itself: 149,006 advertised
+         positions yielded only 148,910 unique IDs. Add validated page-boundary
+         retries or a retrieval-based membership audit before certifying the set.
+   - [ ] Complete the durable all-deal contract metadata scan. The deployed
+         versioned PostgreSQL scanner has checked 3,000 of 149,013 deals (2.01%)
+         without retryable or terminal failures and holds 41,786 contract rows;
+         scheduled bounded batches continue until coverage reaches 100%.
+   - [ ] Add lossless raw expanded-response retention and ingest the credentialed
+         `deal/sources/{dealId}` citations; the normalized database currently
+         drops at least `ProductNumber` and all deal-linked source records.
 
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
