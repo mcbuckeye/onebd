@@ -49,3 +49,30 @@ def test_pubchem_client_rejects_ambiguous_multiple_results():
         return_value=Response(json.dumps(payload).encode()),
     ):
         assert PubChemClient(delay_seconds=0).lookup_name("ambiguous") is None
+
+
+def test_pubchem_client_retries_throttled_request():
+    payload = {"PropertyTable": {"Properties": [{
+        "CID": 2244,
+        "Title": "Aspirin",
+        "InChIKey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+        "ConnectivitySMILES": "CC(=O)OC1=CC=CC=C1C(=O)O",
+    }]}}
+    error = HTTPError(
+        "https://example.test",
+        503,
+        "throttled",
+        {"Retry-After": "0"},
+        None,
+    )
+    with (
+        patch(
+            "unified_api.services.pubchem_enrichment.urlopen",
+            side_effect=[error, Response(json.dumps(payload).encode())],
+        ),
+        patch("unified_api.services.pubchem_enrichment.time.sleep") as sleep,
+    ):
+        match = PubChemClient(delay_seconds=0).lookup_name("aspirin")
+
+    assert match.cid == 2244
+    sleep.assert_called_once_with(0.0)
