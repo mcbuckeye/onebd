@@ -13,7 +13,7 @@ from sqlalchemy import text
 from unified_api.services.html_cleaner import clean_contract_html
 
 
-CONTRACT_CLAUSE_PARSER_VERSION = 8
+CONTRACT_CLAUSE_PARSER_VERSION = 9
 
 _ANCHORS = {
     "royalty_rate": re.compile(r"\broyalt(?:y|ies)\b", re.IGNORECASE),
@@ -54,7 +54,7 @@ _QUALIFIED_DOLLAR_CODES = {
     "AUD": "AUD",
 }
 _TIER_WORDS = re.compile(
-    r"\b(?:tier(?:ed|s)?|schedule|threshold|annual net sales|sliding scale)\b",
+    r"\b(?:tier(?:ed|s)?|threshold|annual net sales|sliding scale)\b",
     re.IGNORECASE,
 )
 _ROYALTY_RATE_CONTEXT = re.compile(
@@ -64,7 +64,7 @@ _ROYALTY_RATE_CONTEXT = re.compile(
 _NON_ROYALTY_RATE_CONTEXT = re.compile(
     r"\b(?:"
     r"underpay\w*|overpay\w*|audit\w*|accountant|reimburse\w*|"
-    r"reimburs\w*|royalty[ -]?free|"
+    r"reimburs\w*|royalty[ -]?free|diminish\w*|"
     r"delinquen\w*|late payment|interest|libor|prime rate|"
     r"late charges?|allocat\w*|apportion\w*|"
     r"credit\w*|offset\w*|deduct\w*|set[ -]?off|reduc\w*|"
@@ -164,8 +164,17 @@ _UPFRONT_PACKAGE_TOTAL = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _HYPOTHETICAL_UPFRONT = re.compile(
-    r"\b(?:if,?\s+for\s+example|for\s+example)\b.{0,240}"
-    r"\b(?:third[ -]?part(?:y|ies)|up[ -]?front\s+fee)\b",
+    r"\b(?:if,?\s+for\s+example|for\s+example)\b.{0,800}"
+    r"\b(?:third[ -]?part(?:y|ies)|up[ -]?front(?:\s+fee|\s+payment)?)\b|"
+    r"\b(?:we\s+assume|our\s+assumption|assume\s+such\s+terms)\b.{0,500}"
+    r"\bup[ -]?front\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_OTHER_LICENSE_UPFRONT_REFERENCE = re.compile(
+    r"\b(?:grant|grants|granted)\s+to\s+(?:any\s+)?other\s+part(?:y|ies)\b"
+    r".{0,500}\b(?:initial\s+license\s+fee|up[ -]?front)\b|"
+    r"\bterms\s+of\s+(?:any\s+)?other\s+(?:agreement|license)\b"
+    r".{0,500}\b(?:initial\s+license\s+fee|up[ -]?front)\b",
     re.IGNORECASE | re.DOTALL,
 )
 _MILESTONE_AGGREGATE_CONTEXT = re.compile(
@@ -333,7 +342,7 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             re.search(r"royalt(?:y|ies)\b.{0,100}$", before, re.IGNORECASE)
             or re.match(r"\s*royalt(?:y|ies)\b", after, re.IGNORECASE)
             or re.match(
-                r"\s*(?:for|of|on|based\s+on)?\s*(?:the\s+)?"
+                r"\s*\)?\s*(?:for|of|on|based\s+on)?\s*(?:the\s+)?"
                 r"net\s+(?:sales|revenues)\b",
                 after,
                 re.IGNORECASE,
@@ -358,6 +367,7 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
         )
         false_rate_before = re.search(
                 r"\b(?:retain|responsible\s+for|reduced\s+by|"
+                r"diminish(?:ed|es|ing)?\s+by|"
                 r"reduction.{0,100}exceed|"
                 r"amount\s+less\s+than|additional\s+royalty\s+equal\s+to|"
                 r"deemed\s+to\s+be\s+equal\s+to|defray.{0,100}|"
@@ -373,6 +383,8 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
                 r"research\s+and\s+development\s+funding|the\s+amounts\s+"
                 r"described|the\s+net\s+sales|the\s+corresponding\s+"
                 r"milestone\s+payment|u\.?s\.?\s+profits?|the\s+asp|"
+                r"(?:the\s+)?remaining\s+proceeds|"
+                r"(?:the\s+)?operating\s+income|"
                 r"(?:aggregate\s+product\s+)?net\s+sales|"
                 r"(?:the\s+)?(?:patent\s+)?royalty\s+rates?|"
                 r"(?:the\s+)?rate\s+otherwise\s+applicable|"
@@ -397,6 +409,12 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             )
             or re.match(
                 r"\s*\)?\s*of\s+u\.?s\.?\s+profits?\b",
+                after,
+                re.IGNORECASE,
+            )
+            or re.match(
+                r"\s*\)?\s*of\s+(?:the\s+)?(?:operating\s+income|"
+                r"remaining\s+proceeds)\b",
                 after,
                 re.IGNORECASE,
             )
@@ -548,6 +566,24 @@ def _rates_with_financial_context(excerpt: str, absolute_start: int) -> list[dic
             r"vary\s+from\s+royalties\s+paid\s+by.{0,30}$",
             before,
             re.IGNORECASE | re.DOTALL,
+        ):
+            continue
+        cost_cap_before = excerpt[max(0, relative_start - 1400):relative_start]
+        if (
+            re.search(
+                r"\b(?:fully\s+allocated\s+cost|"
+                r"costs?\s+(?:incurred\s+)?in\s+manufactur\w*)\b"
+                r".{0,1100}\b(?:exceed|exceeds|exceeded|in\s+excess\s+of)\b"
+                r".{0,500}$",
+                cost_cap_before,
+                re.IGNORECASE | re.DOTALL,
+            )
+            and re.match(
+                r"\s*\)?\s*of\s+(?:the\s+)?(?:u\.?s\.?\s+partnership'?s\s+|"
+                r"relevant\s+jv\s+entity'?s\s+)?net\s+sales\b",
+                after,
+                re.IGNORECASE,
+            )
         ):
             continue
         royalty_distribution_prefix = excerpt[
@@ -945,6 +981,75 @@ def _payment_monetary_values(
             payment_distance = anchor_distance
         value_before = excerpt[max(0, relative_start - 180):relative_start]
         value_after_short = excerpt[relative_end:relative_end + 180]
+        if clause_type == "milestone_payment":
+            anchor_prefix = excerpt[
+                max(0, closest_anchor.start() - 50):closest_anchor.start()
+            ]
+            if re.search(
+                r"\b(?:excluding|exclude|excepting|other\s+than)\s*$",
+                anchor_prefix,
+                re.IGNORECASE,
+            ):
+                continue
+            milestone_before = excerpt[
+                max(0, relative_start - 650):relative_start
+            ]
+            milestone_after = excerpt[
+                relative_end:min(len(excerpt), relative_end + 260)
+            ]
+            cancellation_match = re.search(
+                r"\b(?:cancelled|canceled|forfeited)\b",
+                milestone_after,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if (
+                cancellation_match is not None
+                and not _monetary_values(
+                    milestone_after[:cancellation_match.end()], 0
+                )
+            ):
+                continue
+            if re.search(
+                r"\b(?:by\s+way\s+of\s+example\s+only|for\s+example)\b"
+                r".{0,600}$",
+                milestone_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if re.search(
+                r"\bshall\s+not\s+be\s+required\s+to\s+pay\b.{0,300}$|"
+                r"\bas\s+consideration\s+for\b.{0,220}\bassignment\b"
+                r".{0,180}\bshall\s+pay\b.{0,100}$",
+                milestone_before,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            trigger_matches = [
+                match
+                for pattern in (
+                    r"\b(?:milestone\s+)?payments?\b.{0,220}\breceived\b"
+                    r".{0,100}\bin\s+excess\s+of\b",
+                    r"\bnet\s+sales\b.{0,260}\b(?:at\s+least|"
+                    r"reach(?:es|ed)?|exceed(?:s|ed|ing)?)\b",
+                    r"\brevenues?\b.{0,450}\bexceed(?:s|ed|ing)?\b"
+                    r".{0,180}\b(?:amount\s+)?(?:equal\s+to\s+or\s+)?"
+                    r"greater\s+than\b",
+                )
+                for match in re.finditer(
+                    pattern,
+                    milestone_before,
+                    re.IGNORECASE | re.DOTALL,
+                )
+            ]
+            if trigger_matches:
+                latest_trigger = max(trigger_matches, key=lambda match: match.end())
+                between_trigger_and_value = milestone_before[latest_trigger.end():]
+                if (
+                    len(between_trigger_and_value) <= 180
+                    and not _SENTENCE_BOUNDARY.search(between_trigger_and_value)
+                    and not _monetary_values(between_trigger_and_value, 0)
+                ):
+                    continue
         if re.search(
             r"\bminimum\s+amount\s+of\b.{0,100}$",
             value_before,
@@ -967,10 +1072,16 @@ def _payment_monetary_values(
                 re.IGNORECASE,
             ))
         )
+        direct_upfront_label = (
+            clause_type == "upfront_payment"
+            and closest_anchor.end() <= relative_start
+            and relative_start - closest_anchor.end() <= 60
+        )
         if (
             nonpayment_distance is not None
             and nonpayment_distance < payment_distance
             and not direct_milestone_label
+            and not direct_upfront_label
             and not (
                 direct_historical_payment is not None
                 and nonpayment_follows_value is not None
@@ -994,6 +1105,53 @@ def _payment_monetary_values(
                 max(0, relative_start - 500):
                 min(len(excerpt), relative_end + 650)
             ]
+            if _OTHER_LICENSE_UPFRONT_REFERENCE.search(value_scope):
+                continue
+            if re.search(
+                r"\binvest\s*$",
+                value_before,
+                re.IGNORECASE,
+            ) and re.match(
+                r".{0,100}\b(?:by\s+)?purchas(?:e|ing)\b.{0,100}\bshares?\b",
+                value_after,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            if re.search(
+                r"\b(?:purchase|acquire)\s*$",
+                value_before,
+                re.IGNORECASE,
+            ) and re.match(
+                r".{0,80}\b(?:its\s+)?(?:common|preferred)\s+stock\b|"
+                r".{0,80}\bshares?\b",
+                value_after,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
+            contingent_after_match = re.match(
+                r".{0,160}?\b(?:the\s+)?(?:first|second|contingent\s+cash)\s+"
+                r"contingent\s+payments?\b",
+                value_after,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if re.search(
+                r"\bcontingent\s+(?:cash\s+)?payments?\b.{0,120}$",
+                value_before,
+                re.IGNORECASE | re.DOTALL,
+            ) or (
+                contingent_after_match is not None
+                and not _monetary_values(
+                    value_after[:contingent_after_match.end()], 0
+                )
+            ):
+                continue
+            if re.match(
+                r".{0,100}\bincluding\b.{0,300}\bup[ -]?front\b"
+                r".{0,300}\bmilestone",
+                value_after,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                continue
             if re.search(
                 r"\b(?:term\s+loan\s+commitment|credit\s+extensions?)\b",
                 value_scope,
@@ -1539,6 +1697,7 @@ def ensure_contract_financial_clause_schema(session) -> None:
             reviewer TEXT,
             review_note TEXT,
             reviewed_at TIMESTAMPTZ,
+            review_parser_version INTEGER,
             source_text TEXT NOT NULL,
             source_char_start INTEGER NOT NULL,
             source_char_end INTEGER NOT NULL,
@@ -1562,6 +1721,16 @@ def ensure_contract_financial_clause_schema(session) -> None:
     session.execute(text("""
         ALTER TABLE contract_financial_clauses
         ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
+    """))
+    session.execute(text("""
+        ALTER TABLE contract_financial_clauses
+        ADD COLUMN IF NOT EXISTS review_parser_version INTEGER
+    """))
+    session.execute(text("""
+        UPDATE contract_financial_clauses
+        SET review_parser_version = parser_version
+        WHERE review_status IN ('accepted', 'rejected')
+          AND review_parser_version IS NULL
     """))
     session.execute(text("""
         CREATE INDEX IF NOT EXISTS ix_contract_financial_clauses_analytics
@@ -1653,6 +1822,7 @@ def extract_contract_financial_clause_batch(
                     reviewed_rows = session.execute(text("""
                         SELECT clause_type, source_hash, review_status,
                                reviewer, review_note, reviewed_at,
+                               review_parser_version,
                                rate_min_pct, rate_max_pct,
                                amount_min_millions, amount_max_millions,
                                currency, is_tiered
@@ -1681,6 +1851,7 @@ def extract_contract_financial_clause_batch(
                                 amount_min_millions, amount_max_millions,
                                 currency, is_tiered, confidence, review_status,
                                 reviewer, review_note, reviewed_at,
+                                review_parser_version,
                                 source_text, source_char_start, source_char_end,
                                 source_line_start, source_line_end, source_hash,
                                 parser_version, extracted_values
@@ -1690,6 +1861,7 @@ def extract_contract_financial_clause_batch(
                                 :amount_min_millions, :amount_max_millions,
                                 :currency, :is_tiered, :confidence, :review_status,
                                 :reviewer, :review_note, :reviewed_at,
+                                :review_parser_version,
                                 :source_text, :source_char_start, :source_char_end,
                                 :source_line_start, :source_line_end, :source_hash,
                                 :parser_version, CAST(:extracted_values AS JSONB)
@@ -1707,6 +1879,9 @@ def extract_contract_financial_clause_batch(
                             "reviewer": previous_review.get("reviewer"),
                             "review_note": previous_review.get("review_note"),
                             "reviewed_at": previous_review.get("reviewed_at"),
+                            "review_parser_version": previous_review.get(
+                                "review_parser_version"
+                            ),
                             "extracted_values": json.dumps(
                                 clause["extracted_values"]
                             ),
@@ -1869,15 +2044,17 @@ def review_contract_financial_clause(
         SET review_status = :review_status,
             reviewer = :reviewer,
             review_note = :note,
-            reviewed_at = NOW()
+            reviewed_at = NOW(),
+            review_parser_version = :parser_version
         WHERE id = :clause_id
         RETURNING id, contract_id, deal_id, clause_type, review_status,
-                  reviewer, review_note, reviewed_at
+                  reviewer, review_note, reviewed_at, review_parser_version
     """), {
         "clause_id": clause_id,
         "review_status": review_status,
         "reviewer": reviewer,
         "note": note,
+        "parser_version": CONTRACT_CLAUSE_PARSER_VERSION,
     }).mappings().one_or_none()
     return dict(row) if row else None
 
@@ -1919,6 +2096,14 @@ def contract_financial_clause_validation_status(
             ) AS invalid_provenance_clauses,
             COUNT(*) FILTER (WHERE review_status = 'accepted') AS reviewed_accepted,
             COUNT(*) FILTER (WHERE review_status = 'rejected') AS reviewed_rejected,
+            COUNT(*) FILTER (
+                WHERE review_status = 'accepted'
+                  AND review_parser_version = :parser_version
+            ) AS fresh_reviewed_accepted,
+            COUNT(*) FILTER (
+                WHERE review_status = 'rejected'
+                  AND review_parser_version = :parser_version
+            ) AS fresh_reviewed_rejected,
             COUNT(*) FILTER (WHERE review_status = 'unreviewed') AS unreviewed_clauses
         FROM contract_financial_clauses
         WHERE parser_version = :parser_version
@@ -2000,6 +2185,13 @@ def contract_financial_clause_validation_status(
     reviewed_rejected = int(population["reviewed_rejected"] or 0)
     reviewed = reviewed_accepted + reviewed_rejected
     review_precision = round(100 * reviewed_accepted / reviewed, 2) if reviewed else None
+    fresh_reviewed_accepted = int(population["fresh_reviewed_accepted"] or 0)
+    fresh_reviewed_rejected = int(population["fresh_reviewed_rejected"] or 0)
+    fresh_reviewed = fresh_reviewed_accepted + fresh_reviewed_rejected
+    fresh_review_precision = (
+        round(100 * fresh_reviewed_accepted / fresh_reviewed, 2)
+        if fresh_reviewed else None
+    )
     report = {
         **status,
         **population,
@@ -2011,6 +2203,8 @@ def contract_financial_clause_validation_status(
         ) if sampled else 0.0,
         "reviewed_clauses": reviewed,
         "review_precision_pct": review_precision,
+        "fresh_reviewed_clauses": fresh_reviewed,
+        "fresh_review_precision_pct": fresh_review_precision,
         "failure_samples": failures,
     }
     report["technical_release_ready"] = bool(
@@ -2024,8 +2218,8 @@ def contract_financial_clause_validation_status(
     )
     report["governed_release_ready"] = bool(
         report["technical_release_ready"]
-        and reviewed >= 100
-        and review_precision is not None
-        and review_precision >= 95.0
+        and fresh_reviewed >= 100
+        and fresh_review_precision is not None
+        and fresh_review_precision >= 95.0
     )
     return report
