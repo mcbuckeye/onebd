@@ -11,6 +11,9 @@ and fast retrieval before adding more external data volume.
    - [x] Health checks pass and the deployed SHA is visible from the API image.
    - [x] A post-Dokploy GitHub workflow waits for the expected SHA and visibly
          fails if deployment health or the five production regressions fail.
+   - [x] Isolate irrelevant pull-request `workflow_run` events from the main
+         production-verification concurrency group so a skipped run cannot
+         cancel verification of a deployed push.
    - [x] Add a concurrency-safe automated revert after a failed production gate;
          the revert passes the protected pre-deploy checks, redeploys through the
          existing GitHub/Dokploy integration, and is verified in production.
@@ -58,9 +61,15 @@ and fast retrieval before adding more external data volume.
    - [x] Add a weekly full-ID reconciliation that restores historical omissions
          in bounded API batches without deleting local-only records.
    - [ ] Complete the first reconciliation: the 2026-07-13 audit found 149,006
-         source deals versus 146,931 local deals (2,075 missing before repair).
+         source deals versus 146,931 local deals (2,075 net gap). The first run
+         restored 2,077 IDs but rejected its own result because unstable default
+         pagination yielded only 148,754 unique IDs. A verified `dealId`-sorted
+         rerun remains required.
    - [ ] Complete a durable all-deal contract metadata scan; 41,626 contracts are
          local, but only 16,194 deals currently have a persisted checked state.
+         A versioned PostgreSQL checkpoint, bounded scheduled worker, explicit
+         retry/terminal-failure accounting, and coverage endpoint are ready for
+         deployment; the full production scan remains to be run.
 
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.

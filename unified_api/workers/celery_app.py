@@ -60,6 +60,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.cortellis.reconcile_catalog",
             "schedule": crontab(hour=4, minute=15, day_of_week="sunday"),
         },
+        # Scan contract metadata independently in bounded, database-checkpointed
+        # batches. API failures remain retryable and never become false negatives.
+        "scan-cortellis-contract-metadata": {
+            "task": "unified_api.workers.tasks.cortellis.scan_contract_metadata",
+            "schedule": crontab(minute="*/10"),
+        },
         # Sync graph database daily at 7:00 AM
         "sync-neo4j-graph": {
             "task": "unified_api.workers.tasks.graph.sync_all",
@@ -468,6 +474,36 @@ def reconcile_cortellis_catalog():
         logger.error("Cortellis catalog reconciliation failed", error=str(exc))
         return _finish_source_job(
             "cortellis_catalog", {"status": "failed", "error": str(exc)}
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.cortellis.scan_contract_metadata")
+def scan_cortellis_contract_metadata():
+    """Advance the durable all-deal contract metadata coverage scan."""
+    logger.info("Starting Cortellis contract metadata scan")
+    _start_source_job("cortellis_contracts")
+    if not settings.cortellis_api_username or not settings.cortellis_api_password:
+        return _finish_source_job(
+            "cortellis_contracts",
+            {"status": "skipped", "reason": "no credentials"},
+        )
+    try:
+        from unified_api.services.cortellis_contract_sync import (
+            sync_contract_metadata_batch,
+        )
+
+        result = sync_contract_metadata_batch(
+            batch_size=settings.cortellis_contract_scan_batch_size,
+            workers=settings.cortellis_contract_scan_workers,
+        )
+        log_result = {key: value for key, value in result.items() if key != "error"}
+        logger.info("Cortellis contract metadata scan complete", **log_result)
+        return _finish_source_job("cortellis_contracts", result)
+    except Exception as exc:
+        logger.error("Cortellis contract metadata scan failed", error=str(exc))
+        return _finish_source_job(
+            "cortellis_contracts",
+            {"status": "failed", "error": str(exc)},
         )
 
 

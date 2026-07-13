@@ -14,6 +14,7 @@ from unified_api.services.contract_financial_clauses import (
     extract_contract_financial_clause_batch,
     review_contract_financial_clause,
 )
+from unified_api.services.cortellis_contract_sync import contract_scan_status
 from unified_api.services.financial_terms import (
     extract_financial_term_batch,
     financial_term_status,
@@ -75,11 +76,13 @@ async def enrichment_status():
     with get_cortellis_session() as session:
         finance_status = financial_term_status(session)
         contract_clause_status = contract_financial_clause_status(session)
+    contract_metadata_status = contract_scan_status()
     pubchem_status = pubchem_enrichment_status()
 
     return {
         "finance_enrichment": finance_status,
         "contract_financial_clause_enrichment": contract_clause_status,
+        "cortellis_contract_metadata_scan": contract_metadata_status,
         "pubchem_enrichment": pubchem_status,
     }
 
