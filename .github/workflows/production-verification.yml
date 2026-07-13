@@ -35,6 +35,12 @@ jobs:
     env:
       BASE_URL: https://onebd.pchomelab.com
       EXPECTED_SHA: ${{ inputs.commit || github.event.workflow_run.head_sha }}
+    outputs:
+      # Rollback is safe only after the public endpoint returned an origin
+      # response. A Cloudflare/DNS/tunnel outage cannot be repaired by changing
+      # application code and may also prevent the rollback webhook reaching
+      # Dokploy, so leave main untouched and surface the failed verification.
+      rollback_safe: ${{ steps.wait-for-deployment.outputs.rollback_safe }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,39 +49,12 @@ jobs:
         with:
           python-version: "3.11"
       - name: Wait for Dokploy to expose the expected image commit
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import time
-          import urllib.request
-
-          url = os.environ["BASE_URL"] + "/api/health"
-          expected = os.environ["EXPECTED_SHA"]
-          last = None
-          for attempt in range(90):
-              try:
-                  request = urllib.request.Request(
-                      url,
-                      headers={
-                          "User-Agent": "OneBD-Deployment-Verifier/1.0 admin@pchomelab.com",
-                          "Accept": "application/json",
-                      },
-                  )
-                  with urllib.request.urlopen(request, timeout=15) as response:
-                      last = json.load(response)
-                  if last.get("status") == "healthy" and last.get("commit") == expected:
-                      print(f"Dokploy is serving {expected}")
-                      break
-              except Exception as exc:
-                  last = {"error": str(exc)}
-              print(f"Waiting for deployment ({attempt + 1}/90): {last}")
-              time.sleep(10)
-          else:
-              raise SystemExit(
-                  f"Dokploy did not serve healthy commit {expected}; last response={last}"
-              )
-          PY
+        id: wait-for-deployment
+        run: >-
+          python -m unified_api.scripts.verify_deployment
+          --base-url "$BASE_URL"
+          --expected-sha "$EXPECTED_SHA"
+          --github-output "$GITHUB_OUTPUT"
       - run: pip install httpx==0.28.1 PyYAML==6.0.3
       - name: Run blocking production question regressions
         run: >-
@@ -100,6 +79,7 @@ jobs:
     if: >-
       always() &&
       needs.verify.result == 'failure' &&
+      needs.verify.outputs.rollback_safe == 'true' &&
       github.event_name == 'workflow_run'
     runs-on: ubuntu-latest
     timeout-minutes: 55
