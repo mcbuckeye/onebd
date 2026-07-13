@@ -8,7 +8,7 @@ import pytest
 
 from src.api_client import CortellisAPIError, CortellisClient, SearchResult
 from src.config import CortellisConfig
-from src.sync import assess_zero_result_window
+from src.sync import assess_catalog_coverage, assess_zero_result_window
 
 
 def test_updated_deals_query_replays_overlap_window():
@@ -67,6 +67,29 @@ def test_recent_zero_result_is_valid_when_source_catalog_is_nonempty():
 
     assert valid is True
     assert reason == "validated zero-result window"
+
+
+def test_catalog_coverage_finds_historical_omissions_without_deleting_extras():
+    coverage = assess_catalog_coverage(
+        remote_ids=[1, 2, 3, 4],
+        local_ids=[1, 3, 9],
+        expected_remote_total=4,
+    )
+
+    assert coverage["scan_complete"] is True
+    assert coverage["missing_ids"] == [2, 4]
+    assert coverage["extra_ids"] == [9]
+    assert coverage["local_total"] == 3
+
+
+def test_catalog_coverage_rejects_an_incomplete_api_scan():
+    coverage = assess_catalog_coverage(
+        remote_ids=[1, 2, 2],
+        local_ids=[1, 2],
+        expected_remote_total=3,
+    )
+
+    assert coverage["scan_complete"] is False
 
 
 @pytest.mark.parametrize(

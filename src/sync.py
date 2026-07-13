@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Iterable, Optional, List
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -47,6 +47,26 @@ def assess_zero_result_window(
     if now - watermark > timedelta(days=max_watermark_age_days):
         return False, "zero results with a stale watermark"
     return True, "validated zero-result window"
+
+
+def assess_catalog_coverage(
+    remote_ids: Iterable[int],
+    local_ids: Iterable[int],
+    expected_remote_total: int,
+) -> dict[str, Any]:
+    """Compare a complete API ID scan with the local deal catalog."""
+    remote = set(remote_ids)
+    local = set(local_ids)
+    missing = sorted(remote - local)
+    extra = sorted(local - remote)
+    return {
+        "expected_remote_total": expected_remote_total,
+        "remote_unique_total": len(remote),
+        "local_total": len(local),
+        "scan_complete": len(remote) == expected_remote_total,
+        "missing_ids": missing,
+        "extra_ids": extra,
+    }
 
 
 class DealTransformer:
@@ -708,7 +728,20 @@ class SyncService:
                         # Check if cache is complete
                         if isinstance(cache_data, dict) and cache_data.get("complete"):
                             all_ids = cache_data["ids"]
-                            logger.info(f"Loaded {len(all_ids)} deal IDs from complete cache")
+                            source_total = client.search_deals(
+                                query="*", offset=0, hits=1
+                            ).total_results
+                            if len(set(all_ids)) == source_total:
+                                logger.info(
+                                    f"Loaded {len(all_ids)} deal IDs from verified complete cache"
+                                )
+                            else:
+                                logger.warning(
+                                    "Discarding stale deal ID cache: "
+                                    f"cache={len(set(all_ids))}, source={source_total}"
+                                )
+                                cache_data = None
+                                all_ids = []
                         elif isinstance(cache_data, dict):
                             # Resume from partial cache
                             all_ids = cache_data.get("ids", [])
@@ -716,10 +749,24 @@ class SyncService:
                             total_expected = cache_data.get("total_expected", 0)
                             logger.info(f"Resuming from partial cache: {len(all_ids)} IDs collected, resuming from offset {resume_offset}")
                         elif isinstance(cache_data, list):
-                            # Old format - assume complete
+                            # Old caches had no completeness metadata; verify
+                            # cardinality before trusting them.
                             all_ids = cache_data
-                            logger.info(f"Loaded {len(all_ids)} deal IDs from cache (legacy format)")
-                            cache_data = {"complete": True}
+                            source_total = client.search_deals(
+                                query="*", offset=0, hits=1
+                            ).total_results
+                            if len(set(all_ids)) == source_total:
+                                logger.info(
+                                    f"Loaded {len(all_ids)} verified deal IDs from legacy cache"
+                                )
+                                cache_data = {"complete": True}
+                            else:
+                                logger.warning(
+                                    "Discarding stale legacy deal ID cache: "
+                                    f"cache={len(set(all_ids))}, source={source_total}"
+                                )
+                                cache_data = None
+                                all_ids = []
 
                     # Fetch remaining IDs if needed
                     if not cache_data or not cache_data.get("complete"):
@@ -755,11 +802,22 @@ class SyncService:
                             import time
                             time.sleep(0.5)  # Rate limiting
 
+                    all_ids = list(dict.fromkeys(all_ids))
+                    source_total = client.search_deals(
+                        query="*", offset=0, hits=1
+                    ).total_results
+                    if len(all_ids) != source_total:
+                        raise RuntimeError(
+                            "Incomplete Cortellis ID scan: "
+                            f"collected={len(all_ids)}, source={source_total}"
+                        )
+
                     # Process in batches
                     transformer = DealTransformer(session)
                     records_processed = 0
                     records_created = 0
                     records_updated = 0
+                    batch_errors: list[str] = []
 
                     for i in range(0, len(all_ids), batch_size):
                         batch_ids = all_ids[i:i + batch_size]
@@ -780,17 +838,24 @@ class SyncService:
                         except Exception as e:
                             logger.exception(f"Error processing batch: {e}")
                             session.rollback()
+                            batch_errors.append(
+                                f"batch {batch_ids[0]}..{batch_ids[-1]}: {e}"
+                            )
+                            transformer = DealTransformer(session)
                             continue
 
                     # Download contracts
                     contracts_downloaded = self._download_all_contracts(session, client)
 
                     sync_log.completed_at = datetime.utcnow()
-                    sync_log.status = "completed"
+                    sync_log.status = "partial" if batch_errors else "completed"
                     sync_log.records_processed = records_processed
                     sync_log.records_created = records_created
                     sync_log.records_updated = records_updated
                     sync_log.contracts_downloaded = contracts_downloaded
+                    sync_log.error_message = (
+                        "; ".join(batch_errors)[:4000] if batch_errors else None
+                    )
                     session.commit()
 
                     logger.info(
@@ -954,6 +1019,88 @@ class SyncService:
             session.expunge(sync_log)
             return sync_log
 
+    def reconcile_catalog(
+        self,
+        batch_size: int = 30,
+        max_missing: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Find and restore deals omitted by an older full-sync batch.
+
+        Incremental date windows cannot repair a historical record that was
+        skipped before its current watermark.  This bounded, idempotent audit
+        scans the authoritative API IDs, inserts only missing records, and
+        preserves local-only records for review instead of deleting them.
+        """
+        batch_size = max(1, min(30, batch_size))
+        with CortellisClient(self.config.cortellis) as client:
+            first = client.search_deals(query="*", offset=0, hits=100)
+            remote_ids = list(client.get_all_deal_ids("*"))
+
+            with self.SessionLocal() as session:
+                local_ids = session.execute(select(Deal.id)).scalars().all()
+                coverage = assess_catalog_coverage(
+                    remote_ids, local_ids, first.total_results
+                )
+                missing = coverage["missing_ids"]
+                selected = missing[:max_missing] if max_missing else missing
+                transformer = DealTransformer(session)
+                reconciled = 0
+                errors: list[str] = []
+
+                for i in range(0, len(selected), batch_size):
+                    batch_ids = selected[i:i + batch_size]
+                    try:
+                        records = client.get_deal_records(batch_ids)
+                        returned_ids = {record.id for record in records}
+                        omitted = sorted(set(batch_ids) - returned_ids)
+                        if omitted:
+                            errors.append(f"API batch omitted deal IDs: {omitted}")
+                        for record in records:
+                            transformer.transform_deal(record)
+                            reconciled += 1
+                        session.commit()
+                    except Exception as exc:
+                        session.rollback()
+                        transformer = DealTransformer(session)
+                        errors.append(
+                            f"batch {batch_ids[0]}..{batch_ids[-1]}: {exc}"
+                        )
+
+                contracts_downloaded = self._download_contracts_for_deals(
+                    session, client, selected
+                ) if selected else 0
+                source_cursor = session.execute(
+                    select(Deal.date_change_last).order_by(
+                        Deal.date_change_last.desc().nullslast()
+                    ).limit(1)
+                ).scalar()
+
+        remaining = max(0, len(coverage["missing_ids"]) - reconciled)
+        complete = coverage["scan_complete"] and remaining == 0 and not errors
+        result: Dict[str, Any] = {
+            "status": "completed" if complete else "partial",
+            "expected_remote_total": coverage["expected_remote_total"],
+            "remote_unique_total": coverage["remote_unique_total"],
+            "local_total_before": coverage["local_total"],
+            "missing_before": len(coverage["missing_ids"]),
+            "extra_local": len(coverage["extra_ids"]),
+            "reconciled": reconciled,
+            "missing_remaining": remaining,
+            "contracts_downloaded": contracts_downloaded,
+            "cursor": source_cursor.isoformat() if source_cursor else None,
+            "source_data_at": source_cursor.isoformat() if source_cursor else None,
+        }
+        if coverage["extra_ids"]:
+            result["extra_local_sample"] = coverage["extra_ids"][:20]
+        if errors:
+            result["error"] = "; ".join(errors)[:4000]
+        if not coverage["scan_complete"]:
+            result["error"] = (
+                f"API scan returned {coverage['remote_unique_total']} unique IDs "
+                f"but advertised {coverage['expected_remote_total']}"
+            )
+        return result
+
     def _download_all_contracts(self, session: Session, client: CortellisClient) -> int:
         """Download all contract documents."""
         deals_with_contracts = session.query(Deal).filter(Deal.has_contract == True).all()
@@ -975,8 +1122,15 @@ class SyncService:
         for deal_id in deal_ids:
             try:
                 contracts = client.get_deal_contracts(deal_id)
+                deal = session.get(Deal, deal_id)
                 if not contracts:
+                    if deal:
+                        deal.has_contract = False
+                        session.commit()
                     continue
+
+                if deal:
+                    deal.has_contract = True
 
                 deal_dir = contracts_dir / str(deal_id)
                 deal_dir.mkdir(exist_ok=True)
@@ -1070,6 +1224,14 @@ class SyncService:
         Session = sessionmaker(bind=self.engine)
         with Session() as session:
             all_deal_ids = [d.id for d in session.query(Deal.id).all()]
+            if resume:
+                # The database is the durable checkpoint. Deployment checkouts
+                # and their JSON cache files may be replaced at any time.
+                checked_deals.update(
+                    deal_id for (deal_id,) in session.query(Deal.id).filter(
+                        Deal.has_contract.isnot(None)
+                    ).all()
+                )
 
         # Filter out already checked deals
         deals_to_check = [d for d in all_deal_ids if d not in checked_deals]
@@ -1102,6 +1264,12 @@ class SyncService:
                     contracts = client.get_deal_contracts(deal_id)
 
                     if not contracts:
+                        Session = sessionmaker(bind=self.engine)
+                        with Session() as session:
+                            deal = session.get(Deal, deal_id)
+                            if deal:
+                                deal.has_contract = False
+                                session.commit()
                         return result
 
                     result["has_contracts"] = True

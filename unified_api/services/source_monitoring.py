@@ -30,6 +30,11 @@ SOURCE_POLICIES = {
         settings.cortellis_freshness_warn_hours,
         settings.cortellis_freshness_critical_hours,
     ),
+    "cortellis_catalog": SourcePolicy(
+        "Cortellis Catalog Reconciliation",
+        24 * 8,
+        24 * 14,
+    ),
     "edgar_recent": SourcePolicy(
         "EDGAR Recent Sync",
         settings.edgar_freshness_warn_hours,
@@ -82,6 +87,95 @@ def ensure_source_monitoring_tables(session) -> None:
         CREATE INDEX IF NOT EXISTS ix_source_job_notifications_created
         ON source_job_notifications (created_at DESC)
     """))
+    session.execute(text("""
+        ALTER TABLE source_job_state
+        ADD COLUMN IF NOT EXISTS source_cursor TEXT,
+        ADD COLUMN IF NOT EXISTS source_data_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION,
+        ADD COLUMN IF NOT EXISTS counts JSONB NOT NULL DEFAULT '{}'::jsonb
+    """))
+
+
+COMMON_COUNT_KEYS = (
+    "records_seen",
+    "records_processed",
+    "records_created",
+    "records_updated",
+    "documents_created",
+    "chunks_created",
+    "relationships_processed",
+)
+
+
+def _source_counts(source_key: str, result: Mapping[str, Any]) -> dict[str, int | None]:
+    """Map heterogeneous worker counters into one stable source payload."""
+    counts: dict[str, int | None] = {key: None for key in COMMON_COUNT_KEYS}
+    if source_key.startswith("edgar_"):
+        counts.update({
+            "records_seen": result.get("filings_seen"),
+            "records_processed": result.get("filings_fetched"),
+            "records_created": result.get("filings_fetched"),
+            "documents_created": result.get("documents_created"),
+            "chunks_created": result.get("chunks_created"),
+        })
+    elif source_key == "cortellis":
+        counts.update({
+            "records_seen": result.get("records_processed"),
+            "records_processed": result.get("records_processed"),
+            "records_created": result.get("records_created"),
+            "records_updated": result.get("records_updated"),
+            "documents_created": result.get("contracts_downloaded"),
+        })
+    elif source_key == "cortellis_catalog":
+        counts.update({
+            "records_seen": result.get("remote_unique_total"),
+            "records_processed": result.get("reconciled"),
+            "records_created": result.get("reconciled"),
+            "documents_created": result.get("contracts_downloaded"),
+        })
+    elif source_key == "neo4j":
+        companies = int(result.get("cortellis_companies") or 0) + int(
+            result.get("edgar_companies") or 0
+        )
+        deals = int(result.get("cortellis_deals") or 0)
+        relationships = int(result.get("deal_relationships") or 0)
+        counts.update({
+            "records_seen": companies + deals,
+            "records_processed": companies + deals,
+            "records_updated": companies + deals,
+            "relationships_processed": relationships,
+        })
+    return counts
+
+
+def _source_timestamp(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
+def source_job_payload(row: Mapping[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    """Return the versioned common operational payload for any source job."""
+    now = now or datetime.now(timezone.utc)
+    payload = dict(row)
+    source_data_at = _source_timestamp(payload.get("source_data_at"))
+    payload["payload_version"] = 1
+    payload["cursor"] = payload.pop("source_cursor", None)
+    payload["source_data_at"] = source_data_at
+    payload["source_lag_seconds"] = (
+        max(0.0, (now - source_data_at).total_seconds()) if source_data_at else None
+    )
+    payload["counts"] = payload.get("counts") or {
+        key: None for key in COMMON_COUNT_KEYS
+    }
+    return payload
 
 
 def _normalized_result_status(status: str | None) -> str:
@@ -131,7 +225,7 @@ def record_source_job_finished(source_key: str, result: Mapping[str, Any]) -> No
         with get_cortellis_session() as session:
             ensure_source_monitoring_tables(session)
             existing = session.execute(text("""
-                SELECT retry_count, consecutive_failures
+                SELECT retry_count, consecutive_failures, last_started_at
                 FROM source_job_state
                 WHERE source_key = :source_key
             """), {"source_key": source_key}).mappings().first() or {}
@@ -141,29 +235,46 @@ def record_source_job_finished(source_key: str, result: Mapping[str, Any]) -> No
                 int(existing.get("consecutive_failures") or 0) + 1 if failed else 0
             )
             next_retry = datetime.now(timezone.utc) + retry_delay(retry_count) if failed else None
+            completed_at = datetime.now(timezone.utc)
+            started_at = _source_timestamp(existing.get("last_started_at"))
+            duration_seconds = (
+                max(0.0, (completed_at - started_at).total_seconds())
+                if started_at else None
+            )
+            source_cursor = result.get("cursor") or result.get("cursor_end")
+            source_data_at = _source_timestamp(
+                result.get("source_data_at") or result.get("target_date")
+            )
+            counts = _source_counts(source_key, result)
             session.execute(text("""
                 INSERT INTO source_job_state (
                     source_key, label, status, last_started_at, last_completed_at,
                     last_success_at, consecutive_failures, retry_count,
-                    next_retry_at, last_error, updated_at
+                    next_retry_at, last_error, source_cursor, source_data_at,
+                    duration_seconds, counts, updated_at
                 ) VALUES (
-                    :source_key, :label, :status, NOW(), NOW(),
-                    CASE WHEN :status = 'completed' THEN NOW() END,
+                    :source_key, :label, :status, NOW(), :completed_at,
+                    CASE WHEN :status = 'completed' THEN :completed_at END,
                     :consecutive_failures, :retry_count, :next_retry_at,
-                    :last_error, NOW()
+                    :last_error, :source_cursor, :source_data_at,
+                    :duration_seconds, CAST(:counts AS JSONB), NOW()
                 )
                 ON CONFLICT (source_key) DO UPDATE SET
                     label = EXCLUDED.label,
                     status = EXCLUDED.status,
-                    last_completed_at = NOW(),
+                    last_completed_at = EXCLUDED.last_completed_at,
                     last_success_at = CASE
-                        WHEN EXCLUDED.status = 'completed' THEN NOW()
+                        WHEN EXCLUDED.status = 'completed' THEN EXCLUDED.last_completed_at
                         ELSE source_job_state.last_success_at
                     END,
                     consecutive_failures = EXCLUDED.consecutive_failures,
                     retry_count = EXCLUDED.retry_count,
                     next_retry_at = EXCLUDED.next_retry_at,
                     last_error = EXCLUDED.last_error,
+                    source_cursor = EXCLUDED.source_cursor,
+                    source_data_at = EXCLUDED.source_data_at,
+                    duration_seconds = EXCLUDED.duration_seconds,
+                    counts = EXCLUDED.counts,
                     updated_at = NOW()
             """), {
                 "source_key": source_key,
@@ -173,6 +284,11 @@ def record_source_job_finished(source_key: str, result: Mapping[str, Any]) -> No
                 "retry_count": retry_count,
                 "next_retry_at": next_retry,
                 "last_error": str(error)[:4000] if error else None,
+                "completed_at": completed_at,
+                "source_cursor": str(source_cursor) if source_cursor is not None else None,
+                "source_data_at": source_data_at,
+                "duration_seconds": duration_seconds,
+                "counts": json.dumps(counts),
             })
             session.commit()
     except Exception as exc:
@@ -417,10 +533,11 @@ def monitor_source_jobs() -> dict[str, Any]:
 
 def read_source_job_states(session) -> list[dict[str, Any]]:
     ensure_source_monitoring_tables(session)
-    return [dict(row) for row in session.execute(text("""
+    return [source_job_payload(row) for row in session.execute(text("""
         SELECT source_key, label, status, last_started_at, last_completed_at,
                last_success_at, consecutive_failures, retry_count,
-               next_retry_at, last_error, alert_status, updated_at
+               next_retry_at, last_error, alert_status, source_cursor,
+               source_data_at, duration_seconds, counts, updated_at
         FROM source_job_state
         ORDER BY source_key
     """)).mappings().all()]

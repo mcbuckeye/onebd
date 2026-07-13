@@ -14,6 +14,9 @@ and fast retrieval before adding more external data volume.
    - [x] Add a concurrency-safe automated revert after a failed production gate;
          the revert passes the protected pre-deploy checks, redeploys through the
          existing GitHub/Dokploy integration, and is verified in production.
+         Controlled run `29166857870` intentionally failed deployed SHA
+         `9fce3f4`, merged protected rollback PR #19, served rollback SHA
+         `34340b2`, and passed the production regressions and EDGAR latency gate.
 
 2. **Separate current EDGAR ingestion from historical backfill**
    - [x] A recent-data lane always processes the latest SEC business days.
@@ -29,9 +32,8 @@ and fast retrieval before adding more external data volume.
    - [x] Persist a common last-attempt, last-success, status, exponential retry
          advisory, consecutive-failure, error, and alert-transition model for
          Cortellis, both EDGAR lanes, and Neo4j graph syncs.
-   - [ ] Standardize cursor, source-data date, lag, duration, and count fields in
-         the common payload; the source-specific health records already expose
-         these fields for Cortellis and both EDGAR lanes.
+   - [x] Standardize cursor, source-data date, lag, duration, and count fields in
+         a versioned common payload for every instrumented source job.
    - [x] Report those fields plus throughput and ETA for both EDGAR lanes; retry
          state still needs a common model across Cortellis and graph syncs.
    - [x] Mark `/api/health/data` degraded when a source exceeds its lag budget.
@@ -39,6 +41,9 @@ and fast retrieval before adding more external data volume.
    - [x] Add deduplicated warning/critical/recovery events for failed or stale
          Cortellis, EDGAR, and graph jobs, with optional webhook/email delivery
          and durable in-app history when no delivery channel is configured.
+   - [x] Add a credential-free external operations channel: a scheduled GitHub
+         workflow opens one deduplicated source-health issue and closes it on
+         recovery; webhook/email delivery remains available when configured.
 
 4. **Verify and harden Cortellis incremental synchronization**
    - [x] Compare the API's newest modified deals with the local watermark.
@@ -48,6 +53,14 @@ and fast retrieval before adding more external data volume.
    - [x] Mark omitted/failed API batches partial so the last successful watermark
          remains eligible for retry, and expose the batch error from the worker.
    - [x] Add regression tests for midnight, same-day, timezone, and retry boundaries.
+   - [x] Compare the advertised API catalog count with the local count on every
+         incremental run and mark a mismatch partial instead of claiming success.
+   - [x] Add a weekly full-ID reconciliation that restores historical omissions
+         in bounded API batches without deleting local-only records.
+   - [ ] Complete the first reconciliation: the 2026-07-13 audit found 149,006
+         source deals versus 146,931 local deals (2,075 missing before repair).
+   - [ ] Complete a durable all-deal contract metadata scan; 41,626 contracts are
+         local, but only 16,194 deals currently have a persisted checked state.
 
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
