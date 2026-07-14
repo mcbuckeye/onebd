@@ -8,10 +8,14 @@ from unified_api.services.governed_metrics import (
 
 
 def test_upfront_is_not_substituted_with_total_value():
-    limitation = metric_limitation("Deals with disclosed upfront over $100M")
+    limitation = metric_limitation("What was the upfront for an unspecified deal?")
 
-    assert "not available" in limitation
-    assert "will not substitute" in limitation
+    assert "available" in limitation
+    assert "will not" in limitation
+
+
+def test_governed_upfront_listing_is_not_refused():
+    assert metric_limitation("Deals with disclosed upfront over $100M") is None
 
 
 def test_aggregate_results_receive_query_provenance():

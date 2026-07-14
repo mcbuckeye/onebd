@@ -265,6 +265,14 @@ def _is_deal_pattern_query(message: str) -> bool:
 
 def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional[str]:
     """Build deterministic SQL for supported, high-value question patterns."""
+    from unified_api.services.governed_financial_queries import (
+        build_governed_financial_sql,
+    )
+
+    financial_sql = build_governed_financial_sql(message)
+    if financial_sql is not None:
+        return financial_sql
+
     resolved = [
         entity for entity in resolved_entities
         if entity.get("status") == "resolved" and entity.get("company_id")

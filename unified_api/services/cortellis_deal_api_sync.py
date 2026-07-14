@@ -15,6 +15,7 @@ from src.cortellis_catalog import (
 )
 from src.config import CortellisConfig
 from src.cortellis_archive import archive_expanded_deal_record
+from src.deal_phases import derive_deal_phases
 from unified_api.config import settings
 from unified_api.services.database import (
     get_cortellis_engine,
@@ -229,6 +230,17 @@ def _record_success(
         )
         if not expanded_sha256:
             raise ValueError(f"Expanded response for deal {deal_id} was empty")
+        phase_start, phase_now = derive_deal_phases(expanded_record.parsed_data)
+        session.execute(text("""
+            UPDATE deals
+            SET phase_highest_start = :phase_start,
+                phase_highest_now = :phase_now
+            WHERE id = :deal_id
+        """), {
+            "deal_id": deal_id,
+            "phase_start": phase_start,
+            "phase_now": phase_now,
+        })
         source_sha256 = _archive_source_response(session, sources_record)
         session.execute(text("""
             UPDATE cortellis_deal_sources

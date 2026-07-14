@@ -468,6 +468,70 @@ def rebuild_cortellis_financial_terms():
         return {"status": "failed", "error": str(exc)}
 
 
+@celery_app.task(name="unified_api.workers.tasks.enrichment.backfill_deal_phases")
+def backfill_cortellis_deal_phases():
+    """Run the archive-backed deal-phase repair serially to completion."""
+    logger.info("Starting Cortellis deal-phase backfill")
+    try:
+        import time
+
+        from unified_api.services.database import get_cortellis_session
+        from unified_api.services.deal_phase_backfill import (
+            backfill_deal_phase_batch,
+        )
+
+        totals = {
+            "batches": 0,
+            "processed": 0,
+            "updated": 0,
+            "without_phase": 0,
+            "errors": 0,
+        }
+        busy_retries = 0
+        after_deal_id = 0
+        with get_cortellis_session() as session:
+            for _ in range(300):
+                result = backfill_deal_phase_batch(
+                    session,
+                    batch_size=1000,
+                    after_deal_id=after_deal_id,
+                )
+                if result.get("status") == "busy":
+                    session.rollback()
+                    busy_retries += 1
+                    if busy_retries > 40:
+                        return {
+                            **totals,
+                            "status": "busy",
+                            "busy_retries": busy_retries,
+                        }
+                    time.sleep(0.25)
+                    continue
+                busy_retries = 0
+                session.commit()
+                processed = int(result.get("processed") or 0)
+                totals["batches"] += 1
+                totals["processed"] += processed
+                totals["updated"] += int(result.get("updated") or 0)
+                totals["without_phase"] += int(
+                    result.get("without_phase") or 0
+                )
+                totals["errors"] += int(result.get("errors") or 0)
+                if processed == 0:
+                    break
+                after_deal_id = int(result.get("last_deal_id") or after_deal_id)
+        result = {
+            **totals,
+            "status": "completed",
+            "busy_retries": busy_retries,
+        }
+        logger.info("Cortellis deal-phase backfill complete", **result)
+        return result
+    except Exception as exc:
+        logger.error("Cortellis deal-phase backfill failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
 @celery_app.task(
     name=(
         "unified_api.workers.tasks.enrichment."
