@@ -268,13 +268,17 @@ and fast retrieval before adding more external data volume.
 - [x] Return source IDs/query provenance and evidence status from Chat v2.
 - [x] Validate the full catalog and regression harness in CI.
 - [x] Require every Strong-rated case to compare the deployed response with a
-      read-only database truth query. Fourteen Strong cases now meet this
+      read-only database truth query. Sixteen Strong cases now meet this
       standard; six optimistic/context-dependent ratings were downgraded pending
       real proof.
 - [x] Replace each remaining catalog probe's basic response assertion with
       deterministic truth or an evidence-scored narrative rubric. All 65 cases
-      now have an oracle: 15 run read-only database truth comparisons and 55 run
-      scored grounding/provenance rubrics (five cases use both).
+      now have an oracle: 17 run read-only database truth comparisons and 54 run
+      scored grounding/provenance rubrics (six cases use both).
+- [x] Replace the four empty due-diligence placeholders with source-backed SEC
+      filings, contract text and clause evidence, agreement territory scope, and
+      deterministic comparable transactions. Direct and Chat DD cases now compare
+      section coverage with independent Cortellis and EDGAR database truth.
 
 ## Implementation Status vs PRD
 

@@ -196,6 +196,14 @@ curl -H "X-API-Key: $ONEBD_API_KEY" \
 - `disabled_datasets`: can disable individual API dataset groups without
   changing the advisory license catalog.
 
+License documentation never changes these switches automatically. The owner can
+run the colleague API with no technical data restriction (`open`, no disabled
+datasets, and scope enforcement off), require scoped keys, or choose any state in
+between. The same choice can be extended to existing application data routes with
+`protect_existing_api`. This technical control does not itself change the
+organization's contractual or legal obligations; it ensures those obligations
+are documented without hard-coding an access decision the owner cannot change.
+
 The versioned colleague API and MCP adapter always follow this policy.
 Application login and administrative policy routes remain reachable so the
 owner cannot lock out the control plane. Health checks remain public. Existing

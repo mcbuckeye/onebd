@@ -9,9 +9,9 @@
 2026-07-14 production database
 
 **Status:** All 65 questions are versioned, executable, and have deterministic
-pass/fail oracles. Five are blocking production regressions. Fifteen cases compare
-the deployed response with direct, read-only database truth; 55 use scored
-grounding/provenance rubrics (five cases use both).
+pass/fail oracles. Seven are blocking production regressions. Seventeen cases
+compare the deployed response with direct, read-only database truth; 54 use
+scored grounding/provenance rubrics (six cases use both).
 
 ## Purpose
 
@@ -81,8 +81,9 @@ they are not descriptions of the current deployment.
 5. **EDGAR form filtering was incorrect.** Actual forms are stored in
    `documents.subtype`, while list/search routes filter `documents.doc_type`
    (`filing`). A live `doc_type=8-K` search returned no results.
-6. **DD output remains incomplete.** SEC filings, contracts, territory rights, and
-   comparable-transaction sections are currently empty placeholders.
+6. **DD output was incomplete.** SEC filings, contracts, territory rights, and
+   comparable-transaction sections were empty placeholders in the reviewed
+   baseline.
 7. **Comp modality was scored but not used to select candidates.** High-value
    nonmatching candidates can crowd out the relevant modality before ranking.
 8. **The agentic-RAG suite was not green.** Eight tests failed around async
@@ -127,6 +128,11 @@ The deployed implementation addresses the most consequential baseline failures:
 - Full/incremental Cortellis syncs and raw-response scans now populate
   phase-at-deal fields; the production archive repair inspected 172,638 records
   with zero failures.
+- Due-diligence generation now resolves source-backed SEC filings, contract text
+  and parser-v11 clause candidates, agreement territory scope, and deterministically
+  scored comparable transactions. Direct DD and Chat DD routes expose section
+  provenance, coverage totals, and methodology caveats and are checked against
+  independent Cortellis and EDGAR truth queries.
 
 The original five seeded cases passed against deployed commit `314efda` on
 2026-07-11:
@@ -269,11 +275,11 @@ limitation, not a confidence score to hide.
 | 25 | Build, buy, or partner for solid-tumor ADC assets? | ❌ | Requires internal R&D, strategic fit, cost, and risk inputs that are not present. |
 | 26 | Which companies are divesting oncology assets? | 🟡 | Queryable candidates, but divestiture intent/classification is not governed. |
 | 27 | Expected acquisition premium for a Phase 3 company? | 🟡 | Deal values exist; pre-announcement market capitalization/stock prices do not. |
-| 28 | Generate a DD package on Company X. | 🟡 | Six useful sections exist; four advertised sections are empty placeholders. |
+| 28 | Generate a DD package on Pfizer. | ✅ | The direct DD workflow populates all ten advertised sections. SEC, contract, territory-scope, and comparable records retain source, coverage, and methodology metadata; aggregate counts match independent Cortellis and EDGAR truth. |
 | 29 | Warm introduction paths between us and Company Y. | 🟡 | Deal-network paths exist; personal relationship data does not. |
 | 30 | Recommend deals/targets I have not seen. | 🟡 | Recommendation endpoint is primarily recency/value based, not behavioral personalization. |
 
-**Catalog rating: 8 Partial, 1 Needs Work, 1 Cannot**
+**Catalog rating: 1 Strong, 7 Partial, 1 Needs Work, 1 Cannot**
 
 ---
 
@@ -300,18 +306,18 @@ limitation, not a confidence score to hide.
 
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
-| 41 | Full DD on Company X. | 🟡 | Overview, deals, drugs, partners, financials, and basic risks are populated; four sections are empty. |
+| 41 | Full DD on Pfizer. | ✅ | Chat recognizes explicit DD intent, resolves canonical Pfizer ID 18767, invokes the governed ten-section package instead of generated SQL, cites Cortellis and SEC, and exposes truth-checked section totals. |
 | 42 | What territories are available for Drug Y? | 🟡 | Territory-rights endpoint works for a concrete drug ID; the placeholder question has no resolvable asset. |
 | 43 | Contracts mentioning royalty rates for this drug. | 🟡 | 25,977 contracts/897,041 chunks are searchable; exact drug scoping and structured extraction need validation. |
-| 44 | Risk flags for this acquisition target. | 🟡 | Basic heuristic flags exist, but litigation, filings, contracts, clinical, and financial-risk evidence are absent. |
+| 44 | Risk flags for this acquisition target. | 🟡 | Basic heuristic flags exist and filings/contracts are available elsewhere in the package, but risk synthesis does not yet integrate litigation, clinical, contract, filing, and financial-risk evidence. |
 | 45 | Export a comp set with deal values to Excel. | 🔧 | Comp PowerPoint export is shipped; comp-specific Excel export is not. |
-| 46 | What SEC filings relate to this deal? | 🟡 | 66,980 candidate links exist, but only 692 CIK mappings and date-proximity matching needs precision review. |
+| 46 | What SEC filings relate to this deal? | 🟡 | 76,448 candidate links exist, but only 692 CIK mappings and date-proximity matching needs precision review. |
 | 47 | Milestone structure for comparable deals. | 🔧 | No milestone-specific comp view or governed extraction table. |
 | 48 | IP landscape for KRAS inhibitors. | ❌ | Limited deal-linked patent metadata exists, but not claims/families/status/assignee coverage for an IP landscape. |
 | 49 | Timeline of all deals for this target company. | 🟡 | Company timeline is supported after an explicit entity selection; the standalone placeholder has no target context. |
 | 50 | Who else licensed this company's technology? | 🟡 | Partner history is available after an explicit company selection; conversational referent handling is not deterministic. |
 
-**Catalog rating: 7 Partial, 2 Needs Work, 1 Cannot**
+**Catalog rating: 1 Strong, 6 Partial, 2 Needs Work, 1 Cannot**
 
 ---
 
@@ -340,7 +346,7 @@ limitation, not a confidence score to hide.
 |---|---|---:|---|
 | 61 | Find 8-K filings mentioning ADC partnerships. | 🟡 | Form-aware full-text filtering works, the historical backlog is caught up, and the regression is green; ADC-partnership-specific precision truth is still broader than the current form-filter oracle. |
 | 62 | Show Pfizer's 10-K risk factors. | 🟡 | Generic sections and a section endpoint exist; reliable form-aware Item 1A extraction/filtering is incomplete. |
-| 63 | Cross-reference this Cortellis deal with SEC filings. | 🟡 | Matcher is implemented with 66,980 links; company/date candidates need content-based ranking and precision evaluation. |
+| 63 | Cross-reference this Cortellis deal with SEC filings. | 🟡 | Matcher is implemented with 76,448 links; company/date candidates need content-based ranking and precision evaluation. |
 | 64 | Material contracts from recent 8-K filings. | 🟡 | Recent ingestion extracts EX-10 exhibits, form filtering works, and the backlog is current; structured contract classification and precision truth remain incomplete. |
 | 65 | S-1 analysis for a pre-IPO biotech. | 🟡 | S-1 text is searchable; structured pipeline/financial/risk extraction is incomplete. |
 
@@ -356,14 +362,14 @@ This score is generated from the ratings in the executable 65-case catalog.
 |---|---:|---:|---:|---:|---:|
 | Quick Factual | 3 | 6 | 1 | 0 | 10 |
 | Analytical | 7 | 3 | 0 | 0 | 10 |
-| Strategic | 0 | 8 | 1 | 1 | 10 |
+| Strategic | 1 | 7 | 1 | 1 | 10 |
 | Competitive Intelligence | 1 | 6 | 2 | 1 | 10 |
-| Due Diligence | 0 | 7 | 2 | 1 | 10 |
+| Due Diligence | 1 | 6 | 2 | 1 | 10 |
 | Market Landscape | 3 | 6 | 0 | 1 | 10 |
 | SEC Filings | 0 | 5 | 0 | 0 | 5 |
-| **Total** | **14** | **41** | **6** | **4** | **65** |
+| **Total** | **16** | **39** | **6** | **4** | **65** |
 
-**Measured catalog rating: 14/65 Strong (21.5%); 55/65 at least Partial
+**Measured catalog rating: 16/65 Strong (24.6%); 55/65 at least Partial
 (84.6%).** This corrects arithmetic drift in the previous hand-maintained
 scorecard and should be regenerated from YAML after future rating changes.
 
@@ -373,10 +379,11 @@ the limiting factors.
 ## Executable Evaluation Specification
 
 All 65 questions are versioned in `unified_api/evals/question_cases.yaml`. The
-five regression-tier cases have deterministic production assertions. Fifteen
-cases compare response fields to read-only SQL truth, while 55 cases have weighted
-evidence rubrics. Exact truth should continue to replace narrative rubrics as
-governed query shapes are added. A completed truth case must include:
+seven regression-tier cases have deterministic production assertions. Seventeen
+cases compare response fields to read-only SQL truth, while 54 cases have weighted
+evidence rubrics; six cases use both. Exact truth should continue to replace
+narrative rubrics as governed query shapes are added. A completed truth case must
+include:
 
 ```yaml
 id: 1
@@ -426,7 +433,8 @@ Evaluation rules:
 6. ✅ EDGAR form filtering uses `subtype`, and recent/historical lanes are caught
    up through the current production snapshot.
 7. ✅ Apply modality during comp candidate retrieval.
-8. Populate DD SEC filing, contract, territory, and comparable-transaction sections.
+8. ✅ Populate DD SEC filing, contract, territory, and comparable-transaction
+   sections, including governed Chat routing and independent multi-database truth.
 9. Add content-based validation/ranking to deal–filing links.
 10. ✅ Fix the agentic-RAG tests and tool async boundaries.
 

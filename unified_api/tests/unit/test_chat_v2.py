@@ -1,9 +1,6 @@
 """
 TDD: Chat v2 synthesis tests — write these FIRST, then implement.
 """
-import pytest
-
-
 class TestFollowUpSuggestions:
     """Test contextual follow-up generation."""
 
@@ -39,3 +36,102 @@ class TestFollowUpSuggestions:
         from unified_api.services.llm import _suggest_follow_ups
         suggestions = _suggest_follow_ups("Pfizer oncology deals")
         assert len(suggestions) == len(set(suggestions))
+
+
+def test_due_diligence_intent_is_detected_deterministically():
+    from unified_api.routers.chat import _is_due_diligence_query
+
+    assert _is_due_diligence_query("Full DD on Pfizer")
+    assert _is_due_diligence_query("Generate a due diligence package for Pfizer")
+    assert _is_due_diligence_query("DD report on Pfizer")
+    assert not _is_due_diligence_query("How many deals has Pfizer completed?")
+
+
+async def test_due_diligence_chat_uses_governed_package():
+    from unified_api.routers.chat import _handle_due_diligence_query
+
+    async def generator(company_id):
+        assert company_id == 42
+        return {
+            "company": {"id": 42, "name": "Example Bio"},
+            "metadata": {"financial_disclosure_rate": "40.0%"},
+            "sections": [
+                {
+                    "type": "company_overview",
+                    "title": "Company Overview",
+                    "content": {"total_deals": 10},
+                    "status": "available",
+                    "source": "Cortellis Deals",
+                },
+                {
+                    "type": "sec_filings",
+                    "title": "SEC Filings",
+                    "content": [{
+                        "id": 9,
+                        "title": "Current report",
+                        "source_url": "https://www.sec.gov/example",
+                    }],
+                    "status": "available",
+                    "source": "SEC EDGAR",
+                    "coverage": {"returned_filings": 1},
+                },
+                {
+                    "type": "contracts",
+                    "title": "Key Contracts",
+                    "content": [{"deal_id": 100, "deal_title": "License"}],
+                    "status": "available",
+                    "source": "Cortellis contract metadata",
+                    "coverage": {"returned_contracts": 1},
+                },
+                {
+                    "type": "territory_rights",
+                    "title": "Territory Rights",
+                    "content": [{"deal_id": 100, "territory": "United States"}],
+                    "status": "available",
+                    "source": "Cortellis territory scope",
+                    "coverage": {"returned_scope_records": 1},
+                },
+                {
+                    "type": "comparable_transactions",
+                    "title": "Comparable Transactions",
+                    "content": [{"id": 200, "title": "Peer License"}],
+                    "status": "available",
+                    "source": "Cortellis Deals",
+                    "coverage": {
+                        "total_comparable_candidates": 25,
+                        "returned_comparables": 1,
+                    },
+                },
+            ],
+        }
+
+    response = await _handle_due_diligence_query(
+        "Full DD on Example Bio",
+        resolver=lambda _message: [{
+            "mention": "Example Bio",
+            "status": "resolved",
+            "company_id": 42,
+            "canonical_name": "Example Bio",
+        }],
+        generator=generator,
+    )
+
+    assert response.mode_used == "due_diligence"
+    assert "10 Cortellis deals" in response.response
+    assert "territory-scope records" in response.response
+    assert len(response.data) == 5
+    assert response.data[-1]["total_available"] == 25
+    assert response.citations[0]["source"] == "SEC EDGAR"
+    assert any(citation["record_id"] == 100 for citation in response.citations)
+
+
+async def test_due_diligence_chat_requires_one_resolved_company():
+    from unified_api.routers.chat import _handle_due_diligence_query
+
+    response = await _handle_due_diligence_query(
+        "Generate a DD package",
+        resolver=lambda _message: [],
+    )
+
+    assert response.data == []
+    assert "one specific company" in response.response

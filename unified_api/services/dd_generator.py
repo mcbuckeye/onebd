@@ -2,7 +2,7 @@
 Due Diligence package generator.
 Orchestrates data from multiple sources into a comprehensive DD report.
 """
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -25,79 +25,54 @@ def build_section(section_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
     """Build a single DD section from data."""
     title = DD_SECTIONS.get(section_type, section_type.replace("_", " ").title())
 
-    if section_type == "company_overview":
-        return {
+    def section(content: Any) -> Dict[str, Any]:
+        result = {
             "type": section_type,
             "title": title,
-            "content": {
+            "content": content,
+            "status": data.get(
+                "status",
+                "available" if content else "no_data",
+            ),
+        }
+        for key in ("source", "coverage", "methodology"):
+            if data.get(key) is not None:
+                result[key] = data[key]
+        return result
+
+    if section_type == "company_overview":
+        return section({
                 "name": data.get("name"),
                 "company_type": data.get("company_type"),
                 "ticker": data.get("ticker"),
                 "hq_location": data.get("hq_location"),
                 "total_deals": data.get("total_deals", 0),
-            },
-        }
+        })
     elif section_type == "deal_history":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("deals", []),
-        }
+        return section(data.get("deals", []))
     elif section_type == "drug_portfolio":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("drugs", []),
-        }
+        return section(data.get("drugs", []))
     elif section_type == "partnerships":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("partners", []),
-        }
+        return section(data.get("partners", []))
     elif section_type == "financials":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": {
+        return section({
                 "total_deal_value": data.get("total_deal_value"),
                 "avg_deal_value": data.get("avg_deal_value"),
                 "largest_deal": data.get("largest_deal"),
                 "deal_count_with_financials": data.get("disclosed_count", 0),
-            },
-        }
+        })
     elif section_type == "sec_filings":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("filings", []),
-        }
+        return section(data.get("filings", []))
     elif section_type == "contracts":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("contracts", []),
-        }
+        return section(data.get("contracts", []))
     elif section_type == "territory_rights":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("territories", []),
-        }
+        return section(data.get("territories", []))
     elif section_type == "comparable_transactions":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("comps", []),
-        }
+        return section(data.get("comps", []))
     elif section_type == "risk_assessment":
-        return {
-            "type": section_type,
-            "title": title,
-            "content": data.get("risk_flags", []),
-        }
+        return section(data.get("risk_flags", []))
     else:
-        return {"type": section_type, "title": title, "content": None}
+        return section(None)
 
 
 def detect_risk_flags(data: Dict[str, Any]) -> List[Dict[str, Any]]:

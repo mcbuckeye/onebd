@@ -110,6 +110,38 @@ truth_queries:
     GROUP BY t.id, t.name
     ORDER BY deal_count DESC, t.id
     LIMIT 20
+  pfizer_dd_cortellis: &pfizer_dd_cortellis |
+    WITH target_deals AS MATERIALIZED (
+      SELECT DISTINCT deal.id
+      FROM deal_companies company_link
+      JOIN deals deal ON deal.id = company_link.deal_id
+      WHERE company_link.company_id = 18767
+    ), territory_scope AS (
+      SELECT deal_territory.territory_id,
+             deal_territory.territory_type,
+             deal.id AS deal_id,
+             company_link.role
+      FROM deal_companies company_link
+      JOIN deals deal ON deal.id = company_link.deal_id
+      JOIN deal_territories deal_territory
+        ON deal_territory.deal_id = deal.id
+      WHERE company_link.company_id = 18767
+      GROUP BY deal_territory.territory_id,
+               deal_territory.territory_type,
+               deal.id,
+               company_link.role
+    )
+    SELECT (SELECT COUNT(*) FROM target_deals)::int AS total_deals,
+           (SELECT COUNT(*) FROM deal_contracts contract
+            JOIN target_deals target ON target.id = contract.deal_id)::int
+              AS total_contracts,
+           (SELECT COUNT(*) FROM territory_scope)::int
+              AS total_scope_records
+  pfizer_dd_edgar: &pfizer_dd_edgar |
+    SELECT COUNT(*)::int AS total_filings
+    FROM documents document
+    JOIN raw_documents raw ON raw.id = document.raw_document_id
+    WHERE raw.company_id = 524
   roche_oncology_deal_pattern: &roche_oncology_deal_pattern |
     SELECT COALESCE(d.agreement_type, 'Unknown') AS agreement_type,
            COUNT(DISTINCT d.id) AS deal_count,
@@ -953,23 +985,55 @@ cases:
         value: encountered an error
 
   - id: 28
-    tier: catalog
-    rating: partial
-    question: 'Generate a DD package on Company X.'
-    rubric: *chat_evidence
+    tier: regression
+    rating: strong
+    question: 'Generate a DD package on Pfizer.'
     request:
       method: POST
-      path: /api/chat/v2
+      path: /api/dd/generate
       json:
-        message: 'Generate a DD package on Company X.'
-        mode: auto
+        company_id: 18767
     assertions:
+      - type: equals
+        path: company.id
+        value: 18767
+      - type: equals
+        path: sections.5.type
+        value: sec_filings
       - type: min_length
-        path: answer
+        path: sections.5.content
         value: 1
-      - type: excludes
-        path: answer
-        value: encountered an error
+      - type: min_length
+        path: sections.6.content
+        value: 1
+      - type: min_length
+        path: sections.7.content
+        value: 1
+      - type: min_length
+        path: sections.8.content
+        value: 1
+      - type: equals
+        path: sections.5.status
+        value: available
+    truths:
+      - source: cortellis
+        query: *pfizer_dd_cortellis
+        assertions:
+          - type: equals
+            response_path: metadata.total_deals_analyzed
+            truth_path: rows.0.total_deals
+          - type: equals
+            response_path: sections.6.coverage.total_contracts
+            truth_path: rows.0.total_contracts
+          - type: equals
+            response_path: sections.7.coverage.total_scope_records
+            truth_path: rows.0.total_scope_records
+      - source: edgar
+        query: *pfizer_dd_edgar
+        assertions:
+          - type: equals
+            response_path: sections.5.coverage.total_filings
+            truth_path: rows.0.total_filings
 
   - id: 29
     tier: catalog
@@ -1188,23 +1252,51 @@ cases:
         value: encountered an error
 
   - id: 41
-    tier: catalog
-    rating: partial
-    question: 'Full DD on Company X.'
+    tier: regression
+    rating: strong
+    question: 'Full DD on Pfizer.'
     rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
       json:
-        message: 'Full DD on Company X.'
+        message: 'Full DD on Pfizer.'
         mode: auto
     assertions:
+      - type: equals
+        path: intent
+        value: due_diligence
+      - type: equals
+        path: resolved_entities.0.company_id
+        value: 18767
+      - type: equals
+        path: data.5.section
+        value: sec_filings
       - type: min_length
-        path: answer
+        path: citations
         value: 1
-      - type: excludes
-        path: answer
-        value: encountered an error
+      - type: equals
+        path: confidence.evidence_status
+        value: grounded
+    truths:
+      - source: cortellis
+        query: *pfizer_dd_cortellis
+        assertions:
+          - type: equals
+            response_path: data.0.total_available
+            truth_path: rows.0.total_deals
+          - type: equals
+            response_path: data.6.total_available
+            truth_path: rows.0.total_contracts
+          - type: equals
+            response_path: data.7.total_available
+            truth_path: rows.0.total_scope_records
+      - source: edgar
+        query: *pfizer_dd_edgar
+        assertions:
+          - type: equals
+            response_path: data.5.total_available
+            truth_path: rows.0.total_filings
 
   - id: 42
     tier: catalog

@@ -11,6 +11,10 @@ def test_source_catalog_separates_cortellis_from_public_enrichment():
 
     assert sources["cortellis_deals"]["kind"] == "commercial"
     assert "separately licensed" in sources["cortellis_deals"]["not_in_scope"]
+    assert "advisory" in sources["cortellis_deals"]["license_note"]
+    assert "owner policy controls technical enforcement" in (
+        sources["cortellis_deals"]["license_note"]
+    )
     assert sources["open_targets"]["kind"] == "open_data"
     assert sources["clinicaltrials_gov"]["id"] != "cortellis_deals"
 

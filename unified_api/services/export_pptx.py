@@ -1,15 +1,45 @@
 """Export comp sets and DD packages to PowerPoint and PDF."""
+from html import escape
 import io
 import structlog
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 logger = structlog.get_logger(__name__)
+
+
+def _pdf_text(value: Any) -> str:
+    """Escape source text before handing it to ReportLab's XML-like parser."""
+    return escape(str(value), quote=False)
+
+
+def _dd_item_summary(item: Dict[str, Any]) -> str:
+    """Build a useful bounded label for heterogeneous DD evidence records."""
+    label = (
+        item.get("title")
+        or item.get("name")
+        or item.get("deal_title")
+        or item.get("form")
+        or f"Record {item.get('id') or item.get('deal_id') or '—'}"
+    )
+    details = []
+    for key, caption in (
+        ("filing_date", "Filed"),
+        ("date_start", "Date"),
+        ("agreement_type", "Type"),
+        ("territory", "Territory"),
+        ("scope_type", "Scope"),
+        ("match_score", "Comparable score"),
+    ):
+        value = item.get(key)
+        if value not in (None, ""):
+            details.append(f"{caption}: {value}")
+    return f"{label} — {'; '.join(details)}" if details else str(label)
 
 
 def generate_comp_pptx(title: str, criteria: Dict, deals: List[Dict], stats: Dict) -> bytes:
     """Generate a PowerPoint presentation for a comp set."""
     from pptx import Presentation
-    from pptx.util import Inches, Pt, Emu
+    from pptx.util import Inches, Pt
     from pptx.enum.text import PP_ALIGN
     from pptx.dml.color import RGBColor
     
@@ -33,7 +63,7 @@ def generate_comp_pptx(title: str, criteria: Dict, deals: List[Dict], stats: Dic
     p.alignment = PP_ALIGN.CENTER
     
     p2 = tf.add_paragraph()
-    p2.text = f"Comparable Deal Analysis"
+    p2.text = "Comparable Deal Analysis"
     p2.font.size = Pt(18)
     p2.font.color.rgb = RGBColor(0x94, 0xa3, 0xb8)
     p2.alignment = PP_ALIGN.CENTER
@@ -124,7 +154,7 @@ def generate_dd_pdf(company_name: str, dd_package: Dict) -> bytes:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.colors import HexColor
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.units import inch
     
     buf = io.BytesIO()
@@ -139,7 +169,10 @@ def generate_dd_pdf(company_name: str, dd_package: Dict) -> bytes:
     story = []
     
     # Title
-    story.append(Paragraph(f"Due Diligence Report: {company_name}", title_style))
+    story.append(Paragraph(
+        f"Due Diligence Report: {_pdf_text(company_name)}",
+        title_style,
+    ))
     story.append(Spacer(1, 24))
     
     # Risk flags
@@ -149,25 +182,47 @@ def generate_dd_pdf(company_name: str, dd_package: Dict) -> bytes:
         for flag in risk_flags:
             severity = flag.get('severity', 'info')
             prefix = {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(severity, 'ℹ️')
-            story.append(Paragraph(f"{prefix} {flag.get('flag', '')}", body_style))
+            story.append(Paragraph(
+                f"{prefix} {_pdf_text(flag.get('flag', ''))}",
+                body_style,
+            ))
         story.append(Spacer(1, 16))
     
     # Sections
     for section in dd_package.get('sections', []):
-        story.append(Paragraph(section.get('title', ''), heading_style))
+        story.append(Paragraph(_pdf_text(section.get('title', '')), heading_style))
+
+        source = section.get('source')
+        methodology = section.get('methodology')
+        if source:
+            story.append(Paragraph(
+                f"<b>Source:</b> {_pdf_text(source)}",
+                body_style,
+            ))
+        if methodology:
+            story.append(Paragraph(
+                f"<b>Methodology:</b> {_pdf_text(methodology)}",
+                body_style,
+            ))
         
         content = section.get('content')
         if isinstance(content, str):
-            story.append(Paragraph(content, body_style))
+            story.append(Paragraph(_pdf_text(content), body_style))
         elif isinstance(content, dict):
             for key, val in content.items():
                 if key != 'id':
-                    story.append(Paragraph(f"<b>{key.replace('_', ' ').title()}:</b> {val or '—'}", body_style))
+                    story.append(Paragraph(
+                        f"<b>{_pdf_text(key.replace('_', ' ').title())}:</b> "
+                        f"{_pdf_text(val or '—')}",
+                        body_style,
+                    ))
         elif isinstance(content, list):
             for item in content[:20]:
                 if isinstance(item, dict):
-                    text = item.get('title') or item.get('name') or str(item)
-                    story.append(Paragraph(f"• {text}", body_style))
+                    story.append(Paragraph(
+                        f"• {_pdf_text(_dd_item_summary(item))}",
+                        body_style,
+                    ))
         
         story.append(Spacer(1, 12))
     

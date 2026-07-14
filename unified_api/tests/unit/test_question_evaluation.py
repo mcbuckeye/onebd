@@ -65,3 +65,17 @@ def test_versioned_suite_covers_all_65_questions():
 
     assert validate_suite(suite) == []
     assert len(suite["cases"]) == 65
+
+
+def test_strong_dd_cases_compare_cortellis_and_edgar_truth():
+    path = Path(__file__).parents[2] / "evals" / "question_cases.yaml"
+    suite = yaml.safe_load(path.read_text())
+    cases = {case["id"]: case for case in suite["cases"]}
+
+    for case_id in (28, 41):
+        assert cases[case_id]["rating"] == "strong"
+        assert [truth["source"] for truth in cases[case_id]["truths"]] == [
+            "cortellis",
+            "edgar",
+        ]
+        assert all(truth["assertions"] for truth in cases[case_id]["truths"])
