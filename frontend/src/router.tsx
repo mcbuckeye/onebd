@@ -11,6 +11,7 @@ const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const SearchPage = lazy(() => import('./pages/SearchPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
+const CatalystCalendarPage = lazy(() => import('./pages/CatalystCalendarPage'));
 const CompetitorsPage = lazy(() => import('./pages/CompetitorsPage'));
 const GraphPage = lazy(() => import('./pages/GraphPage'));
 const FilingsPage = lazy(() => import('./pages/FilingsPage'));
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
       { index: true, element: withErrorBoundary(DashboardPage) },
       { path: 'search', element: withErrorBoundary(SearchPage) },
       { path: 'analytics', element: withErrorBoundary(AnalyticsPage) },
+      { path: 'catalysts', element: withErrorBoundary(CatalystCalendarPage) },
       { path: 'competitors', element: withErrorBoundary(CompetitorsPage) },
       { path: 'graph', element: withErrorBoundary(GraphPage) },
       { path: 'filings', element: withErrorBoundary(FilingsPage) },

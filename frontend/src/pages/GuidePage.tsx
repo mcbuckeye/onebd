@@ -1,4 +1,4 @@
-import { BookOpen, Search, MessageSquare, BarChart3, Scale, Building2, Pill, Shield, MapPin, FileText, ScrollText, Network, Star, TrendingUp, Lightbulb } from 'lucide-react';
+import { BookOpen, Search, MessageSquare, BarChart3, Scale, Building2, Pill, Shield, MapPin, FileText, ScrollText, Network, Star, TrendingUp, Lightbulb, CalendarDays } from 'lucide-react';
 
 export default function GuidePage() {
   return (
@@ -21,6 +21,7 @@ export default function GuidePage() {
             <a href="#ask-mode" className="text-blue-400 hover:text-blue-300">Ask Mode (Chat)</a>
             <a href="#search" className="text-blue-400 hover:text-blue-300">Search</a>
             <a href="#analytics" className="text-blue-400 hover:text-blue-300">Analytics</a>
+            <a href="#catalyst-calendar" className="text-blue-400 hover:text-blue-300">Catalyst Calendar</a>
             <a href="#comp-builder" className="text-blue-400 hover:text-blue-300">Comp Builder</a>
             <a href="#company-profiles" className="text-blue-400 hover:text-blue-300">Company Profiles</a>
             <a href="#drug-profiles" className="text-blue-400 hover:text-blue-300">Drug Profiles</a>
@@ -51,6 +52,7 @@ export default function GuidePage() {
             <li>Dashboard — overview and recent activity</li>
             <li>Search — find deals by multiple criteria</li>
             <li>Analytics — market trends and insights</li>
+            <li>Catalysts — trial completion calendar and exports</li>
             <li>Competitors — track competitor activity</li>
             <li>Network — explore partnership relationships</li>
             <li>Filings — search EDGAR filings</li>
@@ -146,6 +148,19 @@ export default function GuidePage() {
           <p className="text-slate-400 mb-4">Compare activity across companies. See who's most active in licensing-in vs. licensing-out, and in which areas.</p>
           
           <ProTip>Hover over charts for exact values. Click legend items to toggle series on/off.</ProTip>
+        </Section>
+
+        {/* Catalyst Calendar */}
+        <Section id="catalyst-calendar" icon={CalendarDays} title="Catalyst Calendar">
+          <p className="text-slate-300 mb-4">Track upcoming clinical-trial primary-completion dates reported by ClinicalTrials.gov.</p>
+
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Filtering and Evidence</h3>
+          <p className="text-slate-400 mb-4">Filter by date, phase, status, title, sponsor, drug, condition, or NCT number. Company, drug, and indication badges appear only where OneBD has an exact normalized link; source date precision and estimated versus actual labels remain visible.</p>
+
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Exports and Scheduled Reports</h3>
+          <p className="text-slate-400 mb-4">Export the current filters to CSV for analysis or iCalendar for Outlook, Google Calendar, and Apple Calendar. In Settings, enable a daily or weekly intelligence digest and choose a 14–180 day catalyst look-ahead window.</p>
+
+          <ProTip>Treat a primary-completion date as a monitoring signal, not a guaranteed readout date. Open the ClinicalTrials.gov source before making a decision.</ProTip>
         </Section>
 
         {/* Comp Builder */}

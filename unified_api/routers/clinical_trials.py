@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 import json
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy import text
 
+from unified_api.services.catalyst_calendar import (
+    MAX_EXPORT_ROWS,
+    CatalystCalendarFilters,
+    catalyst_calendar_csv,
+    catalyst_calendar_ics,
+    fetch_catalyst_calendar,
+)
 from unified_api.services.clinical_trials import (
     clinical_trials_status,
     ensure_clinical_trials_schema,
@@ -15,6 +23,37 @@ from unified_api.services.database import get_cortellis_session
 
 
 router = APIRouter()
+
+
+def _calendar_filters(
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    status: str | None,
+    phase: str | None,
+    company_id: int | None,
+    drug_id: int | None,
+    indication_id: int | None,
+    query: str | None,
+    include_inactive: bool,
+) -> CatalystCalendarFilters:
+    start = date_from or date.today()
+    end = date_to or start + timedelta(days=365)
+    if end < start:
+        raise HTTPException(status_code=422, detail="date_to must be on or after date_from")
+    if (end - start).days > 1825:
+        raise HTTPException(status_code=422, detail="Calendar range cannot exceed 1,825 days")
+    return CatalystCalendarFilters(
+        date_from=start,
+        date_to=end,
+        status=status,
+        phase=phase,
+        company_id=company_id,
+        drug_id=drug_id,
+        indication_id=indication_id,
+        query=query,
+        include_inactive=include_inactive,
+    )
 
 
 @router.get("/clinical-trials/status")
@@ -167,6 +206,133 @@ async def clinical_trial_catalysts(
         "changed_since_days": changed_since_days,
         "source": "clinicaltrials.gov_api_v2",
     }
+
+
+@router.get("/clinical-trials/calendar")
+async def clinical_trial_calendar(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    phase: str | None = None,
+    company_id: int | None = None,
+    drug_id: int | None = None,
+    indication_id: int | None = None,
+    q: str | None = Query(default=None, min_length=2, max_length=200),
+    include_inactive: bool = False,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return a filterable primary-completion calendar with exact entity links."""
+    ensure_clinical_trials_schema()
+    filters = _calendar_filters(
+        date_from=date_from,
+        date_to=date_to,
+        status=status,
+        phase=phase,
+        company_id=company_id,
+        drug_id=drug_id,
+        indication_id=indication_id,
+        query=q,
+        include_inactive=include_inactive,
+    )
+    with get_cortellis_session() as session:
+        return fetch_catalyst_calendar(session, filters, limit=limit, offset=offset)
+
+
+@router.get("/clinical-trials/calendar.csv")
+async def export_clinical_trial_calendar_csv(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    phase: str | None = None,
+    company_id: int | None = None,
+    drug_id: int | None = None,
+    indication_id: int | None = None,
+    q: str | None = Query(default=None, min_length=2, max_length=200),
+    include_inactive: bool = False,
+):
+    """Export the filtered catalyst calendar as analysis-ready CSV."""
+    ensure_clinical_trials_schema()
+    filters = _calendar_filters(
+        date_from=date_from,
+        date_to=date_to,
+        status=status,
+        phase=phase,
+        company_id=company_id,
+        drug_id=drug_id,
+        indication_id=indication_id,
+        query=q,
+        include_inactive=include_inactive,
+    )
+    with get_cortellis_session() as session:
+        result = fetch_catalyst_calendar(
+            session,
+            filters,
+            limit=MAX_EXPORT_ROWS,
+            offset=0,
+        )
+    if result["total"] > MAX_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Export contains {result['total']:,} events; narrow the filters "
+                f"to {MAX_EXPORT_ROWS:,} or fewer"
+            ),
+        )
+    filename = f"clinical-trial-catalysts-{filters.date_from}-{filters.date_to}.csv"
+    return Response(
+        content=catalyst_calendar_csv(result["events"]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/clinical-trials/calendar.ics")
+async def export_clinical_trial_calendar_ics(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    status: str | None = None,
+    phase: str | None = None,
+    company_id: int | None = None,
+    drug_id: int | None = None,
+    indication_id: int | None = None,
+    q: str | None = Query(default=None, min_length=2, max_length=200),
+    include_inactive: bool = False,
+):
+    """Export the filtered catalyst calendar for Outlook, Google, or Apple Calendar."""
+    ensure_clinical_trials_schema()
+    filters = _calendar_filters(
+        date_from=date_from,
+        date_to=date_to,
+        status=status,
+        phase=phase,
+        company_id=company_id,
+        drug_id=drug_id,
+        indication_id=indication_id,
+        query=q,
+        include_inactive=include_inactive,
+    )
+    with get_cortellis_session() as session:
+        result = fetch_catalyst_calendar(
+            session,
+            filters,
+            limit=MAX_EXPORT_ROWS,
+            offset=0,
+        )
+    if result["total"] > MAX_EXPORT_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Export contains {result['total']:,} events; narrow the filters "
+                f"to {MAX_EXPORT_ROWS:,} or fewer"
+            ),
+        )
+    filename = f"clinical-trial-catalysts-{filters.date_from}-{filters.date_to}.ics"
+    return Response(
+        content=catalyst_calendar_ics(result["events"]),
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/clinical-trials/{nct_id}")

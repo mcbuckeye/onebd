@@ -258,7 +258,7 @@ question-specific database truths are added.
 | 37 | Show Pfizer's partnership network. | 🔧 | The direct ID endpoint works, but chat currently extracts the company name heuristically rather than binding canonical ID 18767. |
 | 38 | How does AbbVie's deal structure differ from Gilead's? | 🟡 | Distributions can be retrieved; grounded comparison synthesis is not proven. |
 | 39 | Are competitors building ADC portfolios faster than us? | ❌ | “Us,” portfolio boundaries, and velocity metric are not defined. |
-| 40 | Weekly competitive briefing for oncology. | 🟡 | Weekly personalized email digests now exist; competitor-focused narrative and delivery QA remain incomplete. |
+| 40 | Weekly competitive briefing for oncology. | 🟡 | Weekly personalized intelligence digests now use correct seven-day and therapy/company filters and can include sourced upcoming clinical catalysts; competitor-focused narrative and delivery QA remain incomplete. |
 
 **Provisional score: 1 Strong, 6 Partial, 2 Needs Work, 1 Cannot**
 

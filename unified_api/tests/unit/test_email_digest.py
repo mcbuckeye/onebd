@@ -1,9 +1,6 @@
 """
 TDD: Email digest tests.
 """
-import pytest
-
-
 class TestEmailDigestBuilder:
     """Test email digest HTML generation."""
 
@@ -50,3 +47,29 @@ class TestEmailDigestBuilder:
         })
         assert isinstance(row, str)
         assert "Pfizer" in row
+
+    def test_build_digest_formats_sourced_catalyst_section(self):
+        from unified_api.services.email_digest import build_digest_html
+
+        html = build_digest_html(
+            title="Weekly Intelligence Digest",
+            sections=[{
+                "title": "Upcoming Clinical Catalysts",
+                "type": "catalysts",
+                "items": [{
+                    "title": "Pivotal <Trial>",
+                    "nct_id": "NCT12345678",
+                    "date": "2026-10-05",
+                    "phase": "PHASE3",
+                    "sponsor": "Example Bio",
+                    "companies": "Example Bio",
+                    "source_url": "https://clinicaltrials.gov/study/NCT12345678",
+                }],
+            }],
+        )
+
+        assert "Upcoming Clinical Catalysts" in html
+        assert "NCT12345678" in html
+        assert "2026-10-05" in html
+        assert "clinicaltrials.gov/study/NCT12345678" in html
+        assert "Pivotal &lt;Trial&gt;" in html
