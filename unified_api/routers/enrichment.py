@@ -38,6 +38,10 @@ from unified_api.services.public_drug_enrichment import (
 )
 from unified_api.services.uniprot_enrichment import uniprot_enrichment_status
 from unified_api.services.europe_pmc_enrichment import europe_pmc_enrichment_status
+from unified_api.services.sec_company_identity import (
+    audit_sec_company_identities,
+    sec_company_identity_status,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["enrichment"])
@@ -95,6 +99,25 @@ async def link_deal_clinical_trials(
         return extract_deal_trial_link_batch(session, batch_size=batch_size)
 
 
+@router.post("/api/enrichment/audit-sec-company-identities")
+async def audit_sec_company_identity_batch(
+    batch_size: int = Query(100, ge=1, le=500),
+    refresh: bool = Query(False),
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Verify CIK ownership before retaining SEC-reported identity fields."""
+    return audit_sec_company_identities(
+        batch_size=batch_size,
+        refresh=refresh,
+    )
+
+
+@router.get("/api/enrichment/company-identities/status")
+async def company_identity_enrichment_status():
+    """Return CIK audit coverage, mismatches, and retained identifiers."""
+    return sec_company_identity_status()
+
+
 @router.get("/api/enrichment/status")
 async def enrichment_status():
     """Get current enrichment status across all data sources."""
@@ -108,6 +131,7 @@ async def enrichment_status():
     public_drug_status = public_drug_enrichment_status()
     uniprot_status = uniprot_enrichment_status()
     europe_pmc_status = europe_pmc_enrichment_status()
+    company_identity_status = sec_company_identity_status()
 
     return {
         "finance_enrichment": finance_status,
@@ -119,6 +143,7 @@ async def enrichment_status():
         "public_drug_target_enrichment": public_drug_status,
         "uniprot_target_enrichment": uniprot_status,
         "europe_pmc_target_literature_enrichment": europe_pmc_status,
+        "sec_company_identity_enrichment": company_identity_status,
     }
 
 
