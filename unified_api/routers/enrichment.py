@@ -17,6 +17,7 @@ from unified_api.services.contract_financial_clauses import (
     extract_contract_financial_clause_batch,
     review_contract_financial_clause,
 )
+from unified_api.services.clinical_trials import reconcile_clinical_trial_drug_links
 from unified_api.services.deal_evidence_timeline import (
     deal_trial_link_validation_status,
     deal_trial_link_status,
@@ -192,6 +193,14 @@ async def backfill_chembl_typed_drug_alias_batch(
         after_drug_id=after_drug_id,
         after_chembl_id=after_chembl_id,
     )
+
+
+@router.post("/api/enrichment/reconcile-clinical-trial-drug-links")
+async def reconcile_trial_drug_links(
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Retain only source-backed aliases that resolve to one local drug."""
+    return reconcile_clinical_trial_drug_links()
 
 
 @router.get("/api/enrichment/status")

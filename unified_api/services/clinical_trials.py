@@ -384,6 +384,72 @@ def _unique_drug_alias_match(matches: list[dict[str, Any]]) -> dict[str, Any] | 
     return next(iter(by_drug.values()))
 
 
+def reconcile_clinical_trial_drug_links() -> dict[str, Any]:
+    """Remove historical links whose exact alias is missing or cross-drug ambiguous."""
+    ensure_clinical_trials_schema()
+    lock = get_cortellis_engine().connect()
+    acquired = bool(lock.execute(text(
+        "SELECT pg_try_advisory_lock(hashtext('onebd_clinical_trials_sync'))"
+    )).scalar())
+    if not acquired:
+        lock.close()
+        return {
+            "status": "skipped",
+            "reason": "ClinicalTrials.gov sync already running",
+        }
+    try:
+        with get_cortellis_session() as session:
+            before = int(session.execute(text("""
+                SELECT COUNT(*) FROM clinical_trial_drugs
+                WHERE source = :source
+            """), {"source": CLINICALTRIALS_SOURCE}).scalar() or 0)
+            deleted = session.execute(text("""
+                WITH alias_resolution AS (
+                    SELECT normalized_value,
+                           COUNT(DISTINCT drug_id) AS choices,
+                           MIN(drug_id) AS only_drug_id
+                    FROM drug_aliases
+                    WHERE confidence >= 0.7
+                    GROUP BY normalized_value
+                )
+                DELETE FROM clinical_trial_drugs link
+                WHERE link.source = :source
+                  AND NOT EXISTS (
+                    SELECT 1 FROM alias_resolution resolution
+                    WHERE resolution.normalized_value = LOWER(
+                        REGEXP_REPLACE(TRIM(link.intervention_name),
+                                       '\\s+', ' ', 'g')
+                    )
+                      AND resolution.choices = 1
+                      AND resolution.only_drug_id = link.drug_id
+                  )
+            """), {"source": CLINICALTRIALS_SOURCE}).rowcount
+            promoted = session.execute(text("""
+                UPDATE clinical_trial_drugs
+                SET match_method = 'normalized_exact_unique_alias'
+                WHERE source = :source
+                  AND match_method IS DISTINCT FROM 'normalized_exact_unique_alias'
+            """), {"source": CLINICALTRIALS_SOURCE}).rowcount
+            after = int(session.execute(text("""
+                SELECT COUNT(*) FROM clinical_trial_drugs
+                WHERE source = :source
+            """), {"source": CLINICALTRIALS_SOURCE}).scalar() or 0)
+        return {
+            "status": "completed",
+            "before": before,
+            "deleted_unverifiable_or_ambiguous": int(deleted or 0),
+            "promoted_unique_exact": int(promoted or 0),
+            "retained": after,
+        }
+    finally:
+        try:
+            lock.execute(text(
+                "SELECT pg_advisory_unlock(hashtext('onebd_clinical_trials_sync'))"
+            ))
+        finally:
+            lock.close()
+
+
 def _link_study_entities(session, fields: dict[str, Any]) -> int:
     nct_id = fields["nct_id"]
     relationships = 0
