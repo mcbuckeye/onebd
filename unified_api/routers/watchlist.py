@@ -2,9 +2,12 @@
 Watchlist and Notes endpoints for tracking deals.
 """
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, Path
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
+from pydantic import BaseModel, Field
 import structlog
+
+from unified_api.routers.auth import get_current_user
+from unified_api.services.auth import TokenData
 
 logger = structlog.get_logger(__name__)
 
@@ -21,7 +24,7 @@ class WatchlistItem(BaseModel):
     deal_id: int
     deal_title: Optional[str] = None
     status: str = "watching"
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list)
     added_at: Optional[str] = None
     updated_at: Optional[str] = None
     # Deal summary data
@@ -37,7 +40,7 @@ class WatchlistAddRequest(BaseModel):
     """Request to add deal to watchlist."""
     deal_id: int
     status: str = "watching"
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list)
 
 
 class WatchlistUpdateRequest(BaseModel):
@@ -100,11 +103,11 @@ class SavedSearchCreateRequest(BaseModel):
 
 @router.get("/watchlist", response_model=WatchlistResponse)
 async def get_watchlist(
-    user_id: str = Query("default", description="User ID"),
     status: Optional[str] = Query(None, description="Filter by status"),
     tag: Optional[str] = Query(None, description="Filter by tag"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Get user's watchlist with deal summaries.
@@ -114,6 +117,7 @@ async def get_watchlist(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Getting watchlist", user_id=user_id, status=status)
 
     conditions = ["w.user_id = :user_id"]
@@ -190,7 +194,7 @@ async def get_watchlist(
 @router.post("/watchlist")
 async def add_to_watchlist(
     request: WatchlistAddRequest,
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Add a deal to the watchlist.
@@ -200,6 +204,7 @@ async def add_to_watchlist(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Adding to watchlist", user_id=user_id, deal_id=request.deal_id)
 
     with get_cortellis_session() as session:
@@ -240,9 +245,9 @@ async def add_to_watchlist(
 
 @router.patch("/watchlist/{deal_id}")
 async def update_watchlist_item(
+    request: WatchlistUpdateRequest,
     deal_id: int = Path(..., gt=0),
-    request: WatchlistUpdateRequest = None,
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Update a watchlist item's status or tags.
@@ -250,6 +255,7 @@ async def update_watchlist_item(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Updating watchlist item", user_id=user_id, deal_id=deal_id)
 
     updates = []
@@ -294,7 +300,7 @@ async def update_watchlist_item(
 @router.delete("/watchlist/{deal_id}")
 async def remove_from_watchlist(
     deal_id: int = Path(..., gt=0),
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Remove a deal from the watchlist.
@@ -302,6 +308,7 @@ async def remove_from_watchlist(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Removing from watchlist", user_id=user_id, deal_id=deal_id)
 
     with get_cortellis_session() as session:
@@ -321,7 +328,7 @@ async def remove_from_watchlist(
 
 @router.get("/watchlist/stats")
 async def get_watchlist_stats(
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Get watchlist statistics by status.
@@ -329,6 +336,7 @@ async def get_watchlist_stats(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     with get_cortellis_session() as session:
         result = session.execute(text("""
             SELECT
@@ -352,7 +360,7 @@ async def get_watchlist_stats(
 @router.get("/deals/{deal_id}/notes", response_model=List[NoteItem])
 async def get_deal_notes(
     deal_id: int = Path(..., gt=0),
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Get all notes for a deal.
@@ -360,6 +368,7 @@ async def get_deal_notes(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Getting deal notes", deal_id=deal_id, user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -385,9 +394,9 @@ async def get_deal_notes(
 
 @router.post("/deals/{deal_id}/notes")
 async def create_note(
+    request: NoteCreateRequest,
     deal_id: int = Path(..., gt=0),
-    request: NoteCreateRequest = None,
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Add a note to a deal.
@@ -395,6 +404,7 @@ async def create_note(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Creating note", deal_id=deal_id, user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -429,9 +439,9 @@ async def create_note(
 
 @router.patch("/notes/{note_id}")
 async def update_note(
+    request: NoteUpdateRequest,
     note_id: int = Path(..., gt=0),
-    request: NoteUpdateRequest = None,
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Update a note.
@@ -439,6 +449,7 @@ async def update_note(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Updating note", note_id=note_id, user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -470,7 +481,7 @@ async def update_note(
 @router.delete("/notes/{note_id}")
 async def delete_note(
     note_id: int = Path(..., gt=0),
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Delete a note.
@@ -478,6 +489,7 @@ async def delete_note(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Deleting note", note_id=note_id, user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -501,8 +513,8 @@ async def delete_note(
 
 @router.get("/saved-searches", response_model=List[SavedSearch])
 async def get_saved_searches(
-    user_id: str = Query("default", description="User ID"),
     alerts_only: bool = Query(False, description="Only return alert subscriptions"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Get user's saved searches.
@@ -510,6 +522,7 @@ async def get_saved_searches(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Getting saved searches", user_id=user_id)
 
     conditions = ["user_id = :user_id"]
@@ -547,7 +560,7 @@ async def get_saved_searches(
 @router.post("/saved-searches")
 async def create_saved_search(
     request: SavedSearchCreateRequest,
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Create a saved search (optionally as an alert).
@@ -558,6 +571,7 @@ async def create_saved_search(
     import json
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Creating saved search", user_id=user_id, name=request.name)
 
     with get_cortellis_session() as session:
@@ -588,7 +602,7 @@ async def create_saved_search(
 @router.delete("/saved-searches/{search_id}")
 async def delete_saved_search(
     search_id: int = Path(..., gt=0),
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Delete a saved search.
@@ -596,6 +610,7 @@ async def delete_saved_search(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Deleting saved search", search_id=search_id, user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -640,9 +655,9 @@ class NotificationsResponse(BaseModel):
 
 @router.get("/notifications", response_model=NotificationsResponse)
 async def get_notifications(
-    user_id: str = Query("default", description="User ID"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Get alert notifications for user.
@@ -653,6 +668,7 @@ async def get_notifications(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Getting notifications", user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -718,7 +734,7 @@ async def get_notifications(
 @router.delete("/notifications/{notification_id}")
 async def dismiss_notification(
     notification_id: int = Path(..., gt=0),
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Dismiss (delete) a notification.
@@ -726,6 +742,7 @@ async def dismiss_notification(
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
+    user_id = str(user.user_id)
     logger.info("Dismissing notification", notification_id=notification_id, user_id=user_id)
 
     with get_cortellis_session() as session:
@@ -747,7 +764,7 @@ async def dismiss_notification(
 
 @router.post("/alerts/trigger")
 async def trigger_alerts_check(
-    user_id: str = Query("default", description="User ID (admin only)"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Manually trigger the alert check task.
@@ -757,6 +774,10 @@ async def trigger_alerts_check(
     """
     from unified_api.workers.celery_app import check_alerts
 
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    user_id = str(user.user_id)
     logger.info("Manually triggering alert check", user_id=user_id)
 
     # Queue the task asynchronously

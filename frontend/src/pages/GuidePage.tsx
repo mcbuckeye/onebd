@@ -58,6 +58,7 @@ export default function GuidePage() {
             <li>Filings — search EDGAR filings</li>
             <li>Contracts — search contract language</li>
             <li>My Deals — watchlist and saved searches</li>
+            <li>Teams — shared evidence, notes, and discussion</li>
             <li>Comps — build comparable deal sets</li>
             <li>Due Diligence — generate DD packages</li>
             <li>Ask — natural language queries</li>
@@ -354,6 +355,9 @@ export default function GuidePage() {
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Search History</h3>
           <p className="text-slate-400 mb-4">Last 30 days of search activity. Click any to re-run or refine.</p>
+
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Team Workspaces</h3>
+          <p className="text-slate-400 mb-4">Use Teams to share typed OneBD records or source links, explain why they matter, and keep colleague comments attached to the evidence. Owners control editor and viewer membership.</p>
           
           <ProTip>Name saved searches descriptively: "Q1 2025 Oncology Phase 2 Licensing" {'>'} "Search 1"</ProTip>
         </Section>

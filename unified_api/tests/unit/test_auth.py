@@ -4,6 +4,7 @@ TDD: Auth service tests — write these FIRST, then implement.
 import pytest
 from unittest.mock import patch, MagicMock
 import asyncio
+from contextlib import contextmanager
 from fastapi import HTTPException
 
 
@@ -119,3 +120,58 @@ class TestRegistrationPolicy:
             asyncio.run(auth.register(request))
 
         assert exc.value.status_code == 403
+
+
+class TestLiveAccountValidation:
+    """A valid JWT cannot outlive account disablement or role changes."""
+
+    def test_current_user_uses_live_role(self, monkeypatch):
+        from unified_api.routers import auth
+        from unified_api.services.auth import TokenData
+
+        row = MagicMock(id=7, email="person@example.com", role="analyst")
+        result = MagicMock()
+        result.fetchone.return_value = row
+        session = MagicMock()
+        session.execute.return_value = result
+
+        @contextmanager
+        def fake_session():
+            yield session
+
+        monkeypatch.setattr(
+            auth,
+            "decode_token",
+            lambda _token: TokenData(user_id=7, email="old@example.com", role="admin"),
+        )
+        monkeypatch.setattr(auth, "get_cortellis_session", fake_session)
+
+        user = auth.get_current_user("Bearer token")
+
+        assert user.email == "person@example.com"
+        assert user.role == "analyst"
+
+    def test_disabled_user_is_rejected(self, monkeypatch):
+        from unified_api.routers import auth
+        from unified_api.services.auth import TokenData
+
+        result = MagicMock()
+        result.fetchone.return_value = None
+        session = MagicMock()
+        session.execute.return_value = result
+
+        @contextmanager
+        def fake_session():
+            yield session
+
+        monkeypatch.setattr(
+            auth,
+            "decode_token",
+            lambda _token: TokenData(user_id=7, email="person@example.com", role="admin"),
+        )
+        monkeypatch.setattr(auth, "get_cortellis_session", fake_session)
+
+        with pytest.raises(HTTPException) as exc:
+            auth.get_current_user("Bearer token")
+
+        assert exc.value.status_code == 401

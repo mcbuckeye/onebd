@@ -269,7 +269,9 @@ and fast retrieval before adding more external data volume.
 - [x] SEC filing viewer (internal reader route, bounded chunk pagination,
       section navigation, search-result deep links/highlighting, SEC source link,
       and related-deal evidence; production-schema validated 2026-07-14)
-- [ ] User accounts
+- [x] User accounts (login, password reset, admin-managed users, live disabled/
+      role validation, case-insensitive identity, and authenticated isolation of
+      watchlists, notes, saved searches, and notifications)
 - [x] Export (Excel/CSV) - Added `/export/deals/excel`, `/export/search-results/excel`
 
 ### ✅ Phase 2-5: Mostly Complete
@@ -277,8 +279,9 @@ and fast retrieval before adding more external data volume.
 - [x] Network visualization API (`/graph/partnership-network/{id}`, `/graph/industry-network`)
 - [x] Watchlists/alerts (tables + endpoints created)
 - [x] Contract NLP extraction (GPT-4o clause extraction + term comparison)
-- [ ] Team collaboration
-- [ ] User accounts
+- [x] Team collaboration (team workspaces, owner/editor/viewer membership,
+      shared evidence links and notes, comments, and owner controls)
+- [x] User accounts (see Phase 1 account hardening above)
 
 ---
 
