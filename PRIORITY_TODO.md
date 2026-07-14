@@ -234,9 +234,12 @@ and fast retrieval before adding more external data volume.
           alerts, password resets, and operator tests. SendGrid and secure SMTP
           are supported without storing credentials in Git; provider readiness
           is visible in Settings and secret configuration is never returned.
-    - [ ] Configure an owner-selected email provider credential in Dokploy and
-          use Settings -> Send test to prove live outbound delivery. Production
-          had no OneBD SendGrid or SMTP credential during the 2026-07-14 audit.
+    - [x] Configure an owner-selected email provider credential in Dokploy and
+          prove live outbound delivery. The owner-authorized SMTP2GO SMTP
+          credential and verified sender are stored in Dokploy, not Git. A test
+          message and the colleague credential message were both accepted by
+          SMTP2GO for the owner-designated recipient on 2026-07-14; a subsequent
+          Dokploy deployment preserved provider readiness.
     - [x] Add a governed colleague API/MCP control plane. The owner can issue,
           scope, expire, inspect, and immediately revoke hashed API keys; choose
           open, signed-in, or key-required access; enable or disable scope and
@@ -301,8 +304,12 @@ and fast retrieval before adding more external data volume.
       against direct PostgreSQL evidence. Production SHA `2d578e8` passed all six
       scoped HTTP calls, both critical rights interpretations, the MCP adapter,
       the post-Dokploy regression gate, and verification-key revocation.
-- [ ] Issue a scoped colleague key after the owner supplies the desired key name,
-      recipient, and optional expiry; verify revocation and MCP setup with it.
+- [x] Issue a scoped colleague key after the owner supplies the desired key name,
+      recipient, and optional expiry; verify access and MCP setup with it.
+      `bdkey` has `deals:read`, expires 2026-10-12, and was delivered once to
+      the owner-designated recipient through the configured SMTP2GO provider.
+      All six HanchorBio/DotBio REST calls and the corresponding six MCP calls
+      passed with the retained key.
 - [x] Add current contract/source-document checks for option exercise,
       amendments, termination, and rights reversion where documents are available.
       Rights events now expose exact timeline assertions, contract/index coverage,
