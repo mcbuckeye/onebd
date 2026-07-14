@@ -72,6 +72,10 @@ Available tables and key columns:
   maximum_clinical_stage, source, source_version, source_url
 - public_targets: ensembl_id, approved_symbol, approved_name, biotype,
   protein_ids, source, source_version
+- public_target_uniprot_records: ensembl_id, requested_accession,
+  primary_accession, uniprot_id, protein_name, gene_symbol, function_text,
+  disease_annotations, subcellular_locations, sequence_length, source,
+  source_version, source_url
 - public_drug_target_links: drug_id, chembl_id, ensembl_id,
   mechanism_of_action, action_type, source, source_version
 - public_diseases: disease_id, name, source, source_version
@@ -123,8 +127,9 @@ IMPORTANT FORMATTING RULES:
 6. Add a brief summary sentence above the table
 7. If empty results, say "No results found" clearly
 8. For clinical-trial rows, lead with nct_id, title, status, phase, and source_url
-9. For biology rows, lead with drug_id/chembl_id and Ensembl or disease IDs,
-   mechanism/stage, source, and source_version; do not present them as deal rows
+9. For biology rows, lead with drug_id/chembl_id and Ensembl, UniProt, or disease
+   IDs, mechanism/function/stage, source, and source_version; do not present them
+   as deal rows
 
 Example table format:
 | id | title | date_start | amount ($M) |

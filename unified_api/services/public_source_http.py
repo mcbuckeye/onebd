@@ -27,6 +27,7 @@ class PublicSourceResponse:
     etag: str | None = None
     last_modified: str | None = None
     source_date: str | None = None
+    response_headers: Mapping[str, str] | None = None
     cache_hit: bool = False
 
 
@@ -203,6 +204,10 @@ class PublicSourceHttpClient:
                         etag=headers.get("ETag"),
                         last_modified=headers.get("Last-Modified"),
                         source_date=headers.get("Date"),
+                        response_headers={
+                            str(key).lower(): str(value)
+                            for key, value in headers.items()
+                        },
                     )
                     if use_cache and self.cache_ttl_seconds > 0:
                         self._cache[cache_key] = (self._monotonic(), result)

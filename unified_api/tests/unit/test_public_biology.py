@@ -44,7 +44,7 @@ def _client(monkeypatch, results):
 
     monkeypatch.setattr(
         public_biology,
-        "ensure_public_drug_schema",
+        "ensure_public_target_schema",
         lambda: None,
     )
     monkeypatch.setattr(public_biology, "get_cortellis_session", fake_session)
@@ -91,6 +91,12 @@ def test_target_detail_returns_exact_mechanism_evidence(monkeypatch):
             "mechanism_of_action": "Inhibitor",
             "source_references": [{"source": "FDA"}],
         }],
+        [{
+            "requested_accession": "P00533",
+            "primary_accession": "P00533",
+            "protein_name": "Epidermal growth factor receptor",
+            "source_version": "2026_02",
+        }],
     ])
 
     response = client.get("/api/public-biology/targets/ensg00000146648")
@@ -99,6 +105,7 @@ def test_target_detail_returns_exact_mechanism_evidence(monkeypatch):
     payload = response.json()
     assert payload["target"]["approved_symbol"] == "EGFR"
     assert payload["linked_drugs"][0]["chembl_id"] == "CHEMBL25"
+    assert payload["uniprot_records"][0]["primary_accession"] == "P00533"
 
 
 def test_missing_public_disease_is_404(monkeypatch):

@@ -190,6 +190,16 @@ export interface PublicDrugBiology {
     source_references: Array<Record<string, unknown>>;
     source: string;
     source_version: string;
+    uniprot_records: Array<{
+      requested_accession: string;
+      primary_accession: string;
+      uniprot_id: string | null;
+      protein_name: string | null;
+      gene_symbol: string | null;
+      function_text: string | null;
+      source_version: string;
+      source_url: string;
+    }>;
   }>;
   diseases: Array<{
     disease_id: string;

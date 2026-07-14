@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     chembl_request_interval_seconds: float = 0.2
     open_targets_base_url: str = "https://api.platform.opentargets.org/api/v4"
     open_targets_request_interval_seconds: float = 0.25
+    uniprot_base_url: str = "https://rest.uniprot.org"
+    uniprot_request_interval_seconds: float = 0.25
 
     # CORS
     allowed_origins: str = "*"

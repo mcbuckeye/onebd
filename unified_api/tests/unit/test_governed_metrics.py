@@ -66,3 +66,21 @@ def test_target_and_disease_rows_receive_open_targets_citations():
     assert citations[0]["source"] == "Open Targets"
     assert citations[0]["record_type"] == "drug_target"
     assert citations[1]["record_type"] == "drug_indication"
+
+
+def test_uniprot_rows_receive_protein_citations():
+    citations = build_citations("sql", [{
+        "ensembl_id": "ENSG00000142192",
+        "primary_accession": "P29274",
+        "gene_symbol": "ADORA2A",
+        "protein_name": "Adenosine receptor A2a",
+        "source": "uniprot_rest",
+    }])
+
+    assert citations == [{
+        "id": "C1",
+        "source": "UniProt",
+        "record_type": "protein",
+        "record_id": "P29274",
+        "label": "Adenosine receptor A2a",
+    }]
