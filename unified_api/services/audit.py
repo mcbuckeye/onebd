@@ -2,6 +2,7 @@
 Audit logging service
 Logs user actions for security and compliance.
 """
+import json
 from typing import Optional, Dict, Any
 from sqlalchemy import text
 import structlog
@@ -51,8 +52,9 @@ def log_audit(
                 text("""
                     INSERT INTO audit_log 
                         (user_id, action, entity_type, entity_id, ip_address, metadata)
-                    VALUES 
-                        (:user_id, :action, :entity_type, :entity_id, :ip_address, :metadata)
+                    VALUES
+                        (:user_id, :action, :entity_type, :entity_id, :ip_address,
+                         CAST(:metadata AS JSONB))
                 """),
                 {
                     "user_id": user_id,
@@ -60,7 +62,7 @@ def log_audit(
                     "entity_type": entity_type,
                     "entity_id": entity_id,
                     "ip_address": ip_address,
-                    "metadata": metadata,
+                    "metadata": json.dumps(metadata) if metadata is not None else None,
                 }
             )
             session.commit()

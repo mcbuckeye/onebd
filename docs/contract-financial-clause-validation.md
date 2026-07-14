@@ -40,6 +40,12 @@ Operational endpoints:
 - `GET /api/enrichment/contract-financial-clauses/review-sample`
 - `PATCH /api/enrichment/contract-financial-clauses/{id}/review`
 
+The parsing, validation, review-queue, and review-decision endpoints require an
+authenticated administrator. Review decisions derive the reviewer identity from
+the signed JWT rather than accepting a caller-supplied name, and each decision is
+also written to the application audit log. Administrators can work the queue in
+the **Clause Review** tab of the Admin panel.
+
 ## Release gates
 
 The validator checks full eligible-contract coverage, failed extractions,

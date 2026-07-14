@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import axios from 'axios';
-import { Users, Plus, Edit2, Trash2, Shield, FileText } from 'lucide-react';
+import api from '../lib/api';
+import ContractClauseReviewPanel from '../components/ContractClauseReviewPanel';
+import { Users, Plus, Edit2, Trash2, Shield, FileText, ClipboardCheck } from 'lucide-react';
 
 interface User {
   id: number;
@@ -30,7 +31,7 @@ interface UserFormData {
 
 export default function AdminPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'audit'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'clauses'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,7 +48,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (activeTab === 'users') {
       loadUsers();
-    } else {
+    } else if (activeTab === 'audit') {
       loadAuditLogs();
     }
   }, [activeTab]);
@@ -55,7 +56,7 @@ export default function AdminPage() {
   const loadUsers = async () => {
     setIsLoading(true);
     try {
-      const resp = await axios.get('/api/admin/users');
+      const resp = await api.get('/admin/users');
       setUsers(resp.data);
     } catch (err: any) {
       console.error('Failed to load users:', err);
@@ -67,7 +68,7 @@ export default function AdminPage() {
   const loadAuditLogs = async () => {
     setIsLoading(true);
     try {
-      const resp = await axios.get('/api/admin/audit-log?limit=100');
+      const resp = await api.get('/admin/audit-log?limit=100');
       setAuditLogs(resp.data.logs);
     } catch (err: any) {
       console.error('Failed to load audit logs:', err);
@@ -81,7 +82,7 @@ export default function AdminPage() {
     setError('');
 
     try {
-      await axios.post('/api/admin/users', formData);
+      await api.post('/admin/users', formData);
       setShowModal(false);
       resetForm();
       loadUsers();
@@ -97,7 +98,7 @@ export default function AdminPage() {
     if (!editingUser) return;
 
     try {
-      await axios.put(`/api/admin/users/${editingUser.id}`, {
+      await api.put(`/admin/users/${editingUser.id}`, {
         name: formData.name,
         role: formData.role,
       });
@@ -114,7 +115,7 @@ export default function AdminPage() {
     if (!confirm('Are you sure you want to disable this user?')) return;
 
     try {
-      await axios.delete(`/api/admin/users/${userId}`);
+      await api.delete(`/admin/users/${userId}`);
       loadUsers();
     } catch (err: any) {
       alert(err.response?.data?.detail || 'Failed to delete user');
@@ -169,7 +170,7 @@ export default function AdminPage() {
             <Users className="w-8 h-8 text-blue-500" />
             Admin Panel
           </h1>
-          <p className="text-slate-400 text-sm mt-1">Manage users and view system activity</p>
+          <p className="text-slate-400 text-sm mt-1">Manage users, audits, and governed extraction review</p>
         </div>
         {activeTab === 'users' && (
           <button
@@ -205,6 +206,17 @@ export default function AdminPage() {
         >
           <FileText className="w-4 h-4 inline mr-2" />
           Audit Log
+        </button>
+        <button
+          onClick={() => setActiveTab('clauses')}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'clauses'
+              ? 'text-blue-400 border-b-2 border-blue-400'
+              : 'text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          <ClipboardCheck className="w-4 h-4 inline mr-2" />
+          Clause Review
         </button>
       </div>
 
@@ -324,6 +336,8 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
+      {activeTab === 'clauses' && <ContractClauseReviewPanel />}
 
       {/* Create/Edit User Modal */}
       {showModal && (

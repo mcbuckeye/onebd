@@ -182,7 +182,8 @@ and fast retrieval before adding more external data volume.
     - [ ] Add contract-derived financial-clause extraction at scale and validate
           semantic precision before governed use. A deterministic, no-API-cost
           royalty/milestone/upfront candidate pipeline with exact excerpts,
-          replay validation, and a 100-clause human-review gate is in progress.
+          replay validation, authenticated admin review queue, immutable reviewer
+          identity, audit trail, and a 100-clause human-review gate is in progress.
     - [ ] Deal-to-trial and deal-to-regulatory-event timelines.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.

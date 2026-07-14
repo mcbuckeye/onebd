@@ -2,11 +2,14 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 import structlog
 
 from unified_api.services.database import get_cortellis_session
+from unified_api.routers.admin import require_admin
+from unified_api.services.auth import TokenData
+from unified_api.services.audit import log_audit
 from unified_api.services.contract_financial_clauses import (
     contract_financial_clause_review_sample,
     contract_financial_clause_status,
@@ -37,7 +40,6 @@ router = APIRouter(tags=["enrichment"])
 
 class ContractFinancialClauseReview(BaseModel):
     review_status: Literal["accepted", "rejected"]
-    reviewer: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -46,6 +48,7 @@ async def parse_financial_details(
     batch_size: int = Query(100, ge=1, le=1000),
     dry_run: bool = Query(False),
     force: bool = Query(False),
+    _current_user: TokenData = Depends(require_admin),
 ):
     """
     Parse finance_detail_raw fields into structured financial data.
@@ -65,6 +68,7 @@ async def parse_contract_financial_clauses(
     batch_size: int = Query(500, ge=1, le=1000),
     dry_run: bool = Query(False),
     force: bool = Query(False),
+    _current_user: TokenData = Depends(require_admin),
 ):
     """Extract explicit royalty, milestone, and upfront contract evidence."""
     with get_cortellis_session() as session:
@@ -130,6 +134,7 @@ async def pubchem_validation(
 @router.get("/api/enrichment/contract-financial-clauses/validation")
 async def contract_financial_clause_validation(
     sample_per_type: int = Query(25, ge=1, le=100),
+    _current_user: TokenData = Depends(require_admin),
 ):
     """Return population, replay, and manual-review readiness checks."""
     with get_cortellis_session() as session:
@@ -146,6 +151,7 @@ async def contract_financial_clause_validation(
 @router.get("/api/enrichment/contract-financial-clauses/review-sample")
 async def contract_financial_clause_sample(
     limit: int = Query(100, ge=1, le=500),
+    _current_user: TokenData = Depends(require_admin),
 ):
     """Return a deterministic, type-balanced manual-review queue."""
     with get_cortellis_session() as session:
@@ -161,6 +167,7 @@ async def contract_financial_clause_sample(
 async def review_contract_clause(
     clause_id: int,
     request: ContractFinancialClauseReview,
+    current_user: TokenData = Depends(require_admin),
 ):
     """Accept or reject one candidate with reviewer provenance."""
     with get_cortellis_session() as session:
@@ -168,9 +175,19 @@ async def review_contract_clause(
             session,
             clause_id=clause_id,
             review_status=request.review_status,
-            reviewer=request.reviewer,
+            reviewer=current_user.email,
             note=request.note,
         )
     if reviewed is None:
         raise HTTPException(status_code=404, detail="Clause candidate not found")
+    log_audit(
+        "contract_financial_clause_review",
+        user_id=current_user.user_id,
+        entity_type="contract_financial_clause",
+        entity_id=str(clause_id),
+        metadata={
+            "review_status": request.review_status,
+            "parser_version": reviewed["review_parser_version"],
+        },
+    )
     return reviewed

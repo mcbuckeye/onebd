@@ -26,7 +26,13 @@ class TestPhase4Endpoints:
         assert resp.status_code == 200
 
     def test_parse_financials_dry_run(self, client):
-        resp = client.post("/api/enrichment/parse-financials?dry_run=true&batch_size=5")
+        from unified_api.services.auth import create_access_token
+
+        token = create_access_token(1, "admin@example.com", "admin")
+        resp = client.post(
+            "/api/enrichment/parse-financials?dry_run=true&batch_size=5",
+            headers={"Authorization": f"Bearer {token}"},
+        )
         assert resp.status_code == 200
         assert resp.json()["dry_run"] is True
 
