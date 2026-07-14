@@ -57,28 +57,35 @@ async def add_missing_companies():
             ).fetchone()
 
             if existing:
-                logger.info(f"Company {company['name']} already exists in Edgar")
-                continue
+                company_id = existing.id
+                logger.info(
+                    f"Company {company['name']} already exists in Edgar "
+                    f"(id={company_id}); checking filings"
+                )
+            else:
+                # Add to companies table
+                result = session.execute(
+                    text("""
+                        INSERT INTO companies (
+                            cik, ticker, name, country, sector, aliases
+                        ) VALUES (
+                            :cik, :ticker, :name, :country, :sector, '[]'::jsonb
+                        ) RETURNING id
+                    """),
+                    {
+                        "cik": cik,
+                        "ticker": company["ticker"],
+                        "name": company["name"],
+                        "country": company["country"],
+                        "sector": company["sector"],
+                    }
+                )
+                company_id = result.fetchone().id
+                session.commit()
 
-            # Add to companies table
-            result = session.execute(
-                text("""
-                    INSERT INTO companies (cik, ticker, name, country, sector, aliases)
-                    VALUES (:cik, :ticker, :name, :country, :sector, '[]'::jsonb)
-                    RETURNING id
-                """),
-                {
-                    "cik": cik,
-                    "ticker": company["ticker"],
-                    "name": company["name"],
-                    "country": company["country"],
-                    "sector": company["sector"],
-                }
-            )
-            company_id = result.fetchone().id
-            session.commit()
-
-            logger.info(f"Added {company['name']} to Edgar companies (id={company_id})")
+                logger.info(
+                    f"Added {company['name']} to Edgar companies (id={company_id})"
+                )
 
         # Fetch filings metadata
         # For foreign filers, we want 20-F (annual) and 6-K (current reports)
