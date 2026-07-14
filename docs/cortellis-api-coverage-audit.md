@@ -6,26 +6,30 @@ Deals API
 
 ## Conclusion
 
-The local database is **not** a complete, field-for-field copy of everything
-exposed by the configured credential.
+The local database now contains every deal record that an exhaustive audit can
+retrieve through the configured Deals credential, but it is **not yet** a
+complete, field-for-field copy of every response surface exposed by that
+credential.
 
 1. `deals-v2/deal/expanded/search` advertises **149,028** deals, but its count
    is not the credential's full retrievable surface. Exhaustively requesting
    every integer ID across the stable advertised bounds 100,063 through
    506,108 returned **172,638 unique deals with zero request errors**. The
-   local `deals` table has **149,035** rows: **23,608 retrievable records are
-   missing locally**, and five local IDs now return successful empty responses.
+   durable reconciliation restored all **23,608** previously missing records.
+   The local `deals` table now has **172,643** rows: all 172,638 currently
+   retrievable IDs plus five preserved historical records that now return
+   successful empty responses.
 2. Sampled missing IDs return complete historical expanded records through
    direct retrieval while exact `dealId` searches report zero hits. These are
    hidden or archived records excluded from search, not pagination artifacts.
 3. Lossless retention and deal-source citation ingestion are deployed, but the
-   backfill is incomplete. PostgreSQL currently holds **2,510 exact individual
-   expanded responses**, 94 batch-response deal fragments, **2,510 exact source
-   responses**, and 7,947 normalized citations for 2,510 deals.
+   backfill is incomplete. PostgreSQL currently holds **4,010 exact individual
+   expanded responses**, 23,702 batch-response deal fragments, **4,010 exact
+   source responses**, and 11,716 current normalized citations.
 4. Contract coverage is not complete. The durable scanner has checked
-   **46,780 of 149,035 local deals (31.39%)** and currently holds 41,892
-   contract records. It reports 21,200 advertised PDFs versus 21,070 recorded
-   PDF paths, and 26,121 advertised text documents versus 26,098 paths.
+   **50,260 of 172,643 local deals (29.11%)** and currently holds 41,939
+   contract records. Its previously measured document-path gaps remain subject
+   to the continuing scan.
 5. The companies, drugs, indications, technologies, actions, therapy areas, and
    patents in the local database are entities embedded in deal responses. They
    are not standalone full copies of Clarivate's broader Companies or Drugs
@@ -35,18 +39,18 @@ exposed by the configured credential.
 
 | Local object | Rows | Scope |
 |---|---:|---|
-| Deals | 149,035 | Expanded Deals API projection; 23,608 directly retrievable IDs missing |
-| Companies | 53,662 | Companies referenced by deals |
-| Drugs/assets | 33,892 | Drugs referenced by deals; display name and phase fields |
-| Indications | 2,597 | Indications referenced by deals |
-| Technologies | 673 | Technologies referenced by deals |
-| Actions/targets | 7,932 | Actions referenced by deals |
-| Therapy areas | 20 | Therapy areas referenced by deals |
-| Patents | 2,156 | Limited patent references embedded in deals |
-| Timeline events | 206,265 | Deal timeline events and embedded payment JSON |
-| Contract metadata | 41,892 | Contract endpoint results obtained to date |
-| Exact expanded responses | 2,510 | Individual-response backfill; 94 additional batch fragments retained |
-| Deal source citations | 7,947 | Normalized citations covering 2,510 deals; exact source XML retained |
+| Deals | 172,643 | All 172,638 directly retrievable IDs plus five preserved retired records |
+| Companies | 67,177 | Companies referenced by deals |
+| Drugs/assets | 33,912 | Drugs referenced by deals; display name and phase fields |
+| Indications | 2,654 | Indications referenced by deals |
+| Technologies | 705 | Technologies referenced by deals |
+| Actions/targets | 7,934 | Actions referenced by deals |
+| Therapy areas | 21 | Therapy areas referenced by deals |
+| Patents | 2,157 | Limited patent references embedded in deals |
+| Timeline events | 232,058 | Deal timeline events and embedded payment JSON |
+| Contract metadata | 41,939 | Contract endpoint results obtained to date |
+| Exact expanded responses | 4,010 | Individual-response backfill; 23,702 additional batch fragments retained |
+| Deal source citations | 11,716 | Current normalized citations covering 4,010 deals; exact source XML retained |
 
 ## First reconciliation result
 
@@ -90,6 +94,15 @@ returned 172,638 unique requested IDs with zero request errors. Comparing that
 set with PostgreSQL found 23,608 remote-only IDs and the same five local-only
 IDs.
 
+The deployed durable repair repeated the same exhaustive discovery and finished
+at 2026-07-14 02:02 UTC. It restored all 23,608 remote-only IDs in committed
+30-record batches. Its before/after search snapshots were identical, all
+406,046 integer IDs in the inclusive bounds were attempted, all 13,535 API
+batches succeeded, and the post-repair exact-set comparison reported zero
+missing IDs. PostgreSQL therefore contains the complete directly retrievable
+deal membership observed for this credential. The five local-only IDs remain
+preserved and explicitly reported rather than deleted.
+
 Spot checks of remote-only IDs, including 110202, 111083, 114499, 126831, and
 128220, returned populated historical deal records through direct retrieval
 while `dealId:<id>` searches returned zero hits. The expanded retrieval surface
@@ -130,10 +143,11 @@ product entitlements.
 
 - The daily incremental worker now compares the advertised source count with
   the local count and marks the source partial on a mismatch.
-- The weekly reconciliation no longer accepts offset-pagination results as a
-  membership proof and preserves local-only IDs for review rather than deleting
-  them. Its next required change is to promote the successful bounded numeric-ID
-  enumeration into the durable repair path and ingest the 23,608 missing rows.
+- The weekly reconciliation now uses bounded numeric-ID enumeration as its
+  membership proof, repairs missing records in committed batches, validates
+  stable bounds before accepting success, and preserves local-only IDs for
+  review rather than deleting them. A PostgreSQL advisory lock prevents two
+  worker invocations from running the expensive audit concurrently.
 - Both parallel scans exposed unstable offset pagination: the unsorted pass
   produced 148,754 unique IDs and the `dealId`-sorted pass produced 148,910.
   The reconciler rejects either result because neither equals the advertised
