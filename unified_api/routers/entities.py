@@ -2,11 +2,12 @@
 Entity endpoints for companies, drugs, indications, technologies.
 """
 from typing import Optional, List, Literal
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel
 import structlog
 
 from unified_api.services.deal_evidence_timeline import deal_evidence_timeline
+from unified_api.services.company_strategy import company_strategy_intelligence
 
 logger = structlog.get_logger(__name__)
 
@@ -22,6 +23,8 @@ class DealSummary(BaseModel):
     status: Optional[str] = None
     date_start: Optional[str] = None
     total_value: Optional[float] = None
+    deal_type: Optional[str] = None
+    agreement_type: Optional[str] = None
 
 
 class EntityDetail(BaseModel):
@@ -859,6 +862,8 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
                 d.title,
                 d.status,
                 d.date_start::text,
+                d.deal_type,
+                d.agreement_type,
                 f.total_projected_current_amount as total_value
             FROM deal_companies dc
             JOIN deals d ON d.id = dc.deal_id
@@ -875,7 +880,9 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
                 title=row.title or "Untitled",
                 status=row.status,
                 date_start=row.date_start,
-                total_value=row.total_value
+                total_value=row.total_value,
+                deal_type=row.deal_type,
+                agreement_type=row.agreement_type,
             )
             for row in recent_deals_result
         ]
@@ -1007,6 +1014,29 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
             recent_sec_filings=recent_sec_filings,
             edgar_deals=edgar_deals,
         )
+
+
+@router.get("/company/{company_id}/strategy-intelligence")
+async def get_company_strategy_intelligence(
+    company_id: int = Path(..., gt=0),
+    years: int = Query(default=5, ge=1, le=20),
+    peer_limit: int = Query(default=10, ge=1, le=25),
+    entrant_days: int = Query(default=365, ge=30, le=1825),
+):
+    """Return grounded deal patterns, overlap peers, and observed entrants."""
+    from unified_api.services.database import get_cortellis_session
+
+    with get_cortellis_session() as session:
+        result = company_strategy_intelligence(
+            session,
+            company_id,
+            years=years,
+            peer_limit=peer_limit,
+            entrant_days=entrant_days,
+        )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return result
 
 
 # ============================================

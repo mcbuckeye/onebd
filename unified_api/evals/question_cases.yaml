@@ -254,7 +254,7 @@ cases:
 
   - id: 35
     tier: regression
-    rating: needs_work
+    rating: partial
     question: What is Roche's oncology strategy from its deal pattern?
     rubric: *chat_evidence
     request:

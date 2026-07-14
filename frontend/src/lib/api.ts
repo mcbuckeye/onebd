@@ -83,25 +83,136 @@ export interface FilterOptions {
 }
 
 export interface CompanyProfile {
+  id: number;
+  name: string;
+  company_type: string | null;
+  hq_location: string | null;
+  cik: string | null;
+  ticker: string | null;
+  total_deals: number;
+  deals_as_principal: number;
+  deals_as_partner: number;
+  avg_deal_value: number | null;
+  total_deal_value: number | null;
+  deals_with_disclosed_value: number;
+  deals_by_year: Array<{
+    year: number;
+    deal_count: number;
+    total_value: number | null;
+  }>;
+  top_partners: Array<{
+    company_id: number;
+    company_name: string;
+    deal_count: number;
+    total_value: number | null;
+  }>;
+  therapeutic_focus: Array<{ indication: string; deal_count: number }>;
+  recent_deals: DealSummary[];
+  drugs: Array<{
+    id: number;
+    name: string;
+    phase_current: string | null;
+    deal_count: number;
+  }>;
+  edgar_company_id: number | null;
+  sec_filings_count: number;
+  recent_sec_filings: Array<{
+    id: number;
+    doc_type: string | null;
+    title: string | null;
+    filing_date: string | null;
+    url: string | null;
+  }>;
+}
+
+export interface CompanyStrategyIntelligence {
   company: {
     id: number;
     name: string;
-    company_type: string;
+    company_type: string | null;
+    hq_location: string | null;
     ticker: string | null;
   };
-  deal_summary: {
-    total_deals: number;
-    as_principal: number;
-    as_partner: number;
-    avg_deal_value: number | null;
-    total_deal_value: number | null;
+  window: {
+    years: number;
+    first_deal_date: string | null;
+    last_deal_date: string | null;
   };
-  deal_timeline: Array<{ year: number; count: number }>;
-  top_partners: Array<{ name: string; deal_count: number }>;
-  therapeutic_focus: Array<{ indication: string; count: number }>;
-  recent_deals: DealSummary[];
-  drugs: Array<{ id: number; name: string; phase: string }>;
-  sec_filings: Array<{ id: number; doc_type: string; filing_date: string }>;
+  activity: {
+    deal_count: number;
+    principal_deals: number;
+    partner_deals: number;
+    recent_12_month_deals: number;
+    prior_12_month_deals: number;
+    disclosed_value_deals: number;
+    average_deal_value: number | null;
+    momentum: string;
+    momentum_change_pct: number | null;
+  };
+  strategy_statements: Array<{
+    claim: string;
+    evidence_type: string;
+    evidence_deal_ids?: number[];
+  }>;
+  focus: {
+    indications: Array<{
+      id: number;
+      name: string;
+      deal_count: number;
+      evidence_deal_ids: number[];
+    }>;
+    technologies: Array<{
+      id: number;
+      name: string;
+      deal_count: number;
+      evidence_deal_ids: number[];
+    }>;
+    agreement_types: Array<{
+      name: string;
+      deal_count: number;
+      evidence_deal_ids: number[];
+    }>;
+    assets: Array<{
+      id: number;
+      name: string;
+      phase_highest_now: string | null;
+      deal_count: number;
+      evidence_deal_ids: number[];
+    }>;
+    partners: Array<{
+      id: number;
+      name: string;
+      deal_count: number;
+      evidence_deal_ids: number[];
+    }>;
+  };
+  competitive_map: Array<{
+    company_id: number;
+    company_name: string;
+    company_type: string | null;
+    overlap_score: number;
+    direct_partner_deals: number;
+    shared_indications: Array<{ id: number; name: string }>;
+    shared_technologies: Array<{ id: number; name: string }>;
+    shared_assets: Array<{ id: number; name: string }>;
+    evidence_deal_ids: number[];
+  }>;
+  new_indication_entrants: Array<{
+    company_id: number;
+    company_name: string;
+    company_type: string | null;
+    indication_id: number;
+    indication_name: string;
+    first_observed_date: string;
+    observed_deals: number;
+    evidence_deal_ids: number[];
+  }>;
+  methodology: {
+    strategy_scope: string;
+    competitive_map: string;
+    new_entrant: string;
+    source: string;
+  };
 }
 
 export interface DrugProfile {
