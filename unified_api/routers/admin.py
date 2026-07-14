@@ -3,13 +3,24 @@ Admin endpoints: user management
 Only accessible to users with role='admin'
 """
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import text
 import structlog
 
 from unified_api.services.database import get_cortellis_session
 from unified_api.services.auth import hash_password
+from unified_api.services.api_credentials import (
+    ACCESS_MODES,
+    ALLOWED_SCOPES,
+    DATASETS,
+    create_api_credential,
+    get_data_access_policy,
+    list_api_credentials,
+    revoke_api_credential,
+    update_data_access_policy,
+)
 from unified_api.routers.auth import get_current_user, TokenData, UserResponse
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +41,20 @@ class UpdateUserRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class CreateAPICredentialRequest(BaseModel):
+    name: str
+    scopes: List[str] = Field(default_factory=lambda: ["data:read"])
+    expires_at: Optional[datetime] = None
+
+
+class DataAccessPolicyRequest(BaseModel):
+    access_mode: str = "key_required"
+    enforce_scopes: bool = True
+    allow_self_registration: bool = False
+    protect_existing_api: bool = False
+    disabled_datasets: List[str] = Field(default_factory=list)
 
 
 class AuditLogEntry(BaseModel):
@@ -79,6 +104,77 @@ def _ensure_audit_log_table(session):
         CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)
     """))
     session.commit()
+
+
+@router.get("/api-credentials")
+async def get_api_credentials(
+    _current_user: TokenData = Depends(require_admin),
+):
+    """List API credentials without ever returning their secret values."""
+    return {
+        "allowed_scopes": sorted(ALLOWED_SCOPES),
+        "credentials": list_api_credentials(),
+    }
+
+
+@router.post("/api-credentials", status_code=201)
+async def issue_api_credential(
+    req: CreateAPICredentialRequest,
+    current_user: TokenData = Depends(require_admin),
+):
+    """Issue a scoped API key; the plaintext is returned exactly once."""
+    try:
+        return create_api_credential(
+            name=req.name,
+            scopes=req.scopes,
+            created_by=current_user.user_id,
+            expires_at=req.expires_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.delete("/api-credentials/{credential_id}", response_model=MessageResponse)
+async def revoke_credential(
+    credential_id: int,
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Immediately revoke a colleague or integration API key."""
+    if not revoke_api_credential(credential_id):
+        raise HTTPException(status_code=404, detail="API credential not found")
+    return MessageResponse(message=f"API credential {credential_id} revoked")
+
+
+@router.get("/data-access-policy")
+async def read_data_access_policy(
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Return the owner-controlled enforcement policy and valid options."""
+    return {
+        "policy": get_data_access_policy(),
+        "allowed_access_modes": sorted(ACCESS_MODES),
+        "available_datasets": sorted(DATASETS),
+        "license_metadata_is_advisory": True,
+    }
+
+
+@router.put("/data-access-policy")
+async def set_data_access_policy(
+    req: DataAccessPolicyRequest,
+    current_user: TokenData = Depends(require_admin),
+):
+    """Choose open, signed-in, or API-key access and dataset/scope enforcement."""
+    try:
+        return update_data_access_policy(
+            access_mode=req.access_mode,
+            enforce_scopes=req.enforce_scopes,
+            allow_self_registration=req.allow_self_registration,
+            protect_existing_api=req.protect_existing_api,
+            disabled_datasets=req.disabled_datasets,
+            updated_by=current_user.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/users", response_model=List[UserResponse])

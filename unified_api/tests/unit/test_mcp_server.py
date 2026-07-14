@@ -1,0 +1,147 @@
+"""Protocol and HTTP-boundary tests for the OneBD MCP adapter."""
+
+import json
+
+import httpx
+
+from unified_api.mcp_server import OneBDMCPServer
+
+
+def test_initialize_and_tool_listing_are_valid_json_rpc():
+    server = OneBDMCPServer(client=httpx.Client(transport=httpx.MockTransport(
+        lambda _request: httpx.Response(500)
+    )))
+
+    initialized = server.handle({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18"},
+    })
+    tools = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+
+    assert initialized["result"]["serverInfo"]["name"] == "onebd"
+    assert initialized["result"]["protocolVersion"] == "2025-06-18"
+    names = {tool["name"] for tool in tools["result"]["tools"]}
+    assert {"get_data_catalog", "search_deals", "get_deal"} <= names
+
+
+def test_initialize_negotiates_a_supported_version_and_notifications_are_silent():
+    server = OneBDMCPServer(client=httpx.Client(transport=httpx.MockTransport(
+        lambda _request: httpx.Response(500)
+    )))
+
+    initialized = server.handle({
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "initialize",
+        "params": {"protocolVersion": "2099-01-01"},
+    })
+
+    assert initialized["result"]["protocolVersion"] == "2025-06-18"
+    assert server.handle({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+    }) is None
+
+
+def test_tool_arguments_are_validated_before_http_call():
+    called = False
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={})
+
+    server = OneBDMCPServer(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {
+            "name": "search_deals",
+            "arguments": {"limit": 101, "unrecognized": "value"},
+        },
+    })
+
+    assert response["error"]["code"] == -32602
+    assert called is False
+
+
+def test_tool_call_uses_governed_api_key_and_query_parameters():
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        observed["key"] = request.headers.get("X-API-Key")
+        return httpx.Response(200, json={"items": [{"id": 42}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    server = OneBDMCPServer(
+        base_url="https://onebd.example/api/v1",
+        api_key="onebd_secret",
+        client=client,
+    )
+
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "search_deals",
+            "arguments": {"query": "oncology", "limit": 10},
+        },
+    })
+
+    result = response["result"]
+    assert result["structuredContent"] == {"items": [{"id": 42}]}
+    assert json.loads(result["content"][0]["text"])["items"][0]["id"] == 42
+    assert observed["key"] == "onebd_secret"
+    assert "query=oncology" in observed["url"]
+    assert "limit=10" in observed["url"]
+
+
+def test_get_deal_moves_identifier_into_path():
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        return httpx.Response(200, json={"id": 123})
+
+    server = OneBDMCPServer(
+        base_url="https://onebd.example/api/v1",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {"name": "get_deal", "arguments": {"deal_id": 123}},
+    })
+
+    assert response["result"]["structuredContent"]["id"] == 123
+    assert observed["url"] == "https://onebd.example/api/v1/deals/123"
+
+
+def test_http_errors_do_not_echo_api_key():
+    server = OneBDMCPServer(
+        api_key="onebd_do_not_leak",
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                403, request=request, json={"detail": "Dataset disabled"}
+            )
+        )),
+    )
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {"name": "get_data_catalog", "arguments": {}},
+    })
+
+    text = response["result"]["content"][0]["text"]
+    assert response["result"]["isError"] is True
+    assert "Dataset disabled" in text
+    assert "onebd_do_not_leak" not in text

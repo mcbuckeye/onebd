@@ -8,7 +8,11 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 import os
 
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "bd-intelligence-secret-change-in-production")
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
+if not SECRET_KEY:
+    if os.path.exists("/.dockerenv") and os.environ.get("TESTING") != "true":
+        raise RuntimeError("JWT_SECRET_KEY is required in container deployments")
+    SECRET_KEY = "bd-intelligence-local-development-only"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 

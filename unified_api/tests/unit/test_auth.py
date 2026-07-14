@@ -3,6 +3,8 @@ TDD: Auth service tests — write these FIRST, then implement.
 """
 import pytest
 from unittest.mock import patch, MagicMock
+import asyncio
+from fastapi import HTTPException
 
 
 class TestPasswordHashing:
@@ -82,3 +84,38 @@ class TestJWTTokens:
         assert payload["email"] == "analyst@company.com"
         assert payload["role"] == "analyst"
         assert "exp" in payload
+
+
+class TestRegistrationPolicy:
+    """Registration cannot create an admin or bypass owner policy."""
+
+    def test_register_payload_cannot_choose_a_role(self):
+        from unified_api.routers.auth import RegisterRequest
+
+        request = RegisterRequest(
+            email="attacker@example.com",
+            password="not-used",
+            name="Attacker",
+            role="admin",
+        )
+
+        assert not hasattr(request, "role")
+
+    def test_owner_can_disable_self_registration(self, monkeypatch):
+        from unified_api.routers import auth
+
+        monkeypatch.setattr(
+            auth,
+            "get_data_access_policy",
+            lambda: {"allow_self_registration": False},
+        )
+        request = auth.RegisterRequest(
+            email="analyst@example.com",
+            password="not-used",
+            name="Analyst",
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(auth.register(request))
+
+        assert exc.value.status_code == 403

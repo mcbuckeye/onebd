@@ -24,6 +24,7 @@ from unified_api.routers import (
     competitors,
     contracts,
     conversations,
+    data_access,
     dashboard,
     dd,
     edgar,
@@ -82,6 +83,33 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={"detail": "Internal server error", "type": type(e).__name__},
             )
+
+
+class OwnerAccessPolicyMiddleware(BaseHTTPMiddleware):
+    """Optionally extend the owner access policy to existing application APIs."""
+
+    _EXEMPT_PREFIXES = ("/api/auth", "/api/admin", "/api/v1")
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        if path.startswith("/api") and not path.startswith(self._EXEMPT_PREFIXES):
+            from unified_api.services.api_credentials import (
+                authorize_existing_api_request,
+            )
+
+            try:
+                authorize_existing_api_request(request)
+            except Exception as exc:
+                from fastapi import HTTPException
+
+                if isinstance(exc, HTTPException):
+                    return JSONResponse(
+                        status_code=exc.status_code,
+                        content={"detail": exc.detail},
+                        headers=exc.headers,
+                    )
+                raise
+        return await call_next(request)
 
 
 class AuditLoggingMiddleware(BaseHTTPMiddleware):
@@ -151,6 +179,12 @@ async def lifespan(app: FastAPI):
         ensure_deal_api_scan_schema()
     except Exception as exc:
         logger.warning("Cortellis archive schema initialization failed", error=str(exc))
+    try:
+        from unified_api.services.api_credentials import ensure_api_access_schema
+
+        ensure_api_access_schema()
+    except Exception as exc:
+        logger.warning("Governed data API schema initialization failed", error=str(exc))
 
     yield
 
@@ -172,8 +206,8 @@ app = FastAPI(
     **BD Intelligence Platform** - Unified pharmaceutical deals intelligence.
 
     Combines:
-    - **Cortellis Deals Database**: 145K+ pharmaceutical deals with companies, drugs, indications
-    - **SEC EDGAR Filings**: 314K+ SEC filings with material contracts
+    - **Cortellis Deals Database**: 172K+ pharmaceutical deals with related entities
+    - **SEC EDGAR Filings**: 330K+ SEC filing documents with material contracts
     - **Neo4j Graph**: Relationship queries and partnership network analysis
 
     ## Features
@@ -200,6 +234,7 @@ app.add_middleware(
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(ErrorHandlingMiddleware)
 app.add_middleware(AuditLoggingMiddleware)
+app.add_middleware(OwnerAccessPolicyMiddleware)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
@@ -224,6 +259,7 @@ app.include_router(
 app.include_router(watchlist.router, prefix="/api", tags=["Watchlist"])
 app.include_router(competitors.router, prefix="/api", tags=["Competitors"])
 app.include_router(conversations.router, prefix="/api", tags=["Conversations"])
+app.include_router(data_access.router, prefix="/api", tags=["Governed Data API"])
 app.include_router(contracts.router, prefix="/api", tags=["Contract Intelligence"])
 app.include_router(comps.router, prefix="/api", tags=["Comps"])
 app.include_router(dd.router, prefix="/api", tags=["Due Diligence"])
