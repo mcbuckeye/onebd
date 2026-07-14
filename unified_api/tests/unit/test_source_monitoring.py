@@ -113,6 +113,25 @@ def test_contract_scan_counts_have_stable_vocabulary():
     }
 
 
+def test_deal_api_scan_counts_have_stable_vocabulary():
+    counts = _source_counts("cortellis_deal_api", {
+        "eligible_deals": 149_028,
+        "processed": 500,
+        "completed": 499,
+        "sources_observed": 675,
+    })
+
+    assert counts == {
+        "records_seen": 149_028,
+        "records_processed": 500,
+        "records_created": None,
+        "records_updated": 499,
+        "documents_created": 675,
+        "chunks_created": None,
+        "relationships_processed": None,
+    }
+
+
 def test_common_source_payload_reports_cursor_lag_duration_and_counts():
     payload = source_job_payload({
         "source_key": "edgar_backfill",

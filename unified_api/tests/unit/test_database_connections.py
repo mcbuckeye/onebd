@@ -132,6 +132,10 @@ class TestDatabaseSchema:
             "contract_chunks",
             "deal_finance_summary",
             "company_xref",
+            "cortellis_expanded_response_history",
+            "cortellis_deal_source_response_history",
+            "cortellis_deal_sources",
+            "cortellis_deal_api_scan_state",
         ]
 
         result = cortellis_session.execute(text("""

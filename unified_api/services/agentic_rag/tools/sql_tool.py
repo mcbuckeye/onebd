@@ -50,6 +50,12 @@ class SQLTool(BaseTool):
       cik: character varying (SEC CIK number)
       ticker: character varying (stock symbol)
 
+    Table: cortellis_deal_sources
+      deal_id: integer (foreign key to deals.id)
+      source_id: character varying (Cortellis citation identifier)
+      source_type: character varying (citation/source category)
+      is_current: boolean (true for the latest source response)
+
     PostgreSQL Syntax Rules:
     - Use ILIKE for case-insensitive search: title ILIKE '%oncology%'
     - Boolean checks: is_merger_acquisition = true

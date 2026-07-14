@@ -116,6 +116,14 @@ async def lifespan(app: FastAPI):
         get_entity_resolution_service().ensure_identity_schema()
     except Exception as exc:
         logger.warning("Identity schema initialization failed", error=str(exc))
+    try:
+        from unified_api.services.cortellis_deal_api_sync import (
+            ensure_deal_api_scan_schema,
+        )
+
+        ensure_deal_api_scan_schema()
+    except Exception as exc:
+        logger.warning("Cortellis archive schema initialization failed", error=str(exc))
 
     yield
 

@@ -439,6 +439,31 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                 </section>
               )}
 
+              {/* Cortellis source citations */}
+              {(deal.sources?.length ?? 0) > 0 && (
+                <section>
+                  <h3 className="text-sm font-medium text-slate-400 flex items-center gap-2 mb-3">
+                    <FileText className="w-4 h-4" />
+                    Cortellis Citations
+                  </h3>
+                  <div className="space-y-2">
+                    {deal.sources?.map((source) => (
+                      <div
+                        key={`${source.source_type}:${source.source_id}`}
+                        className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg"
+                      >
+                        <div className="text-xs font-medium text-slate-200">
+                          {source.source_type || 'Cortellis source'}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          Source ID {source.source_id}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {/* Summary */}
               {deal.summary && (
                 <section>

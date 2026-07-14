@@ -32,6 +32,21 @@ class DealRecord:
     parsed_data: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class DealSourceReference:
+    """Source citation linked to a Cortellis deal."""
+    source_id: str
+    source_type: str
+
+
+@dataclass
+class DealSourcesRecord:
+    """Raw and normalized source citations for one deal."""
+    deal_id: int
+    raw_response: str
+    sources: List[DealSourceReference]
+
+
 class CortellisAPIError(Exception):
     """Exception raised for API errors."""
 
@@ -400,6 +415,48 @@ class CortellisClient:
             return self._parse_contracts_xml(response.text)
         else:
             return self._parse_contracts_json(response.json())
+
+    def get_deal_sources(
+        self,
+        deal_id: int,
+        fmt: str = "xml",
+    ) -> DealSourcesRecord:
+        """Get the source citations linked to a deal."""
+        url = f"{self.base_url}/deals-v2/deal/sources/{deal_id}"
+        response = self._request("GET", url, params={"fmt": fmt})
+        if fmt == "xml":
+            root = ET.fromstring(response.text)
+            sources = [
+                DealSourceReference(
+                    source_id=str(source.get("id") or ""),
+                    source_type=str(source.get("type") or ""),
+                )
+                for source in root.findall(".//Source")
+                if source.get("id")
+            ]
+            raw_response = response.text
+        else:
+            data = response.json()
+            source_values = data.get("Sources", {}).get("Source", [])
+            if isinstance(source_values, dict):
+                source_values = [source_values]
+            sources = [
+                DealSourceReference(
+                    source_id=str(source.get("id") or source.get("@id") or ""),
+                    source_type=str(
+                        source.get("type") or source.get("@type") or ""
+                    ),
+                )
+                for source in source_values
+                if isinstance(source, dict)
+                and (source.get("id") or source.get("@id"))
+            ]
+            raw_response = response.text
+        return DealSourcesRecord(
+            deal_id=int(deal_id),
+            raw_response=raw_response,
+            sources=sources,
+        )
 
     def _parse_contracts_xml(self, xml_text: str) -> List[Dict[str, Any]]:
         """Parse contracts XML response."""
