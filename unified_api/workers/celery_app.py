@@ -64,6 +64,10 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.enrichment.gleif_ownership",
             "schedule": crontab(minute="20,50"),
         },
+        "enrich-wikidata-company-domains": {
+            "task": "unified_api.workers.tasks.enrichment.wikidata_domains",
+            "schedule": crontab(minute="25,55"),
+        },
         # Current trial changes run after the documented weekday source refresh.
         "sync-clinicaltrials-recent": {
             "task": "unified_api.workers.tasks.clinicaltrials.recent",
@@ -350,6 +354,29 @@ def enrich_gleif_ownership_records():
         logger.error("GLEIF company ownership enrichment failed", error=str(exc))
         return _finish_source_job(
             "gleif_company_ownership",
+            {"status": "failed", "error": str(exc)},
+        )
+
+
+@celery_app.task(
+    name="unified_api.workers.tasks.enrichment.wikidata_domains"
+)
+def enrich_wikidata_company_domain_records():
+    """Advance exact-LEI Wikidata official-domain enrichment."""
+    logger.info("Starting Wikidata company domain enrichment")
+    _start_source_job("wikidata_company_domain")
+    try:
+        from unified_api.services.wikidata_company_domain import (
+            enrich_wikidata_company_domains,
+        )
+
+        result = enrich_wikidata_company_domains(batch_size=50)
+        logger.info("Wikidata company domain enrichment complete", **result)
+        return _finish_source_job("wikidata_company_domain", result)
+    except Exception as exc:
+        logger.error("Wikidata company domain enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "wikidata_company_domain",
             {"status": "failed", "error": str(exc)},
         )
 
