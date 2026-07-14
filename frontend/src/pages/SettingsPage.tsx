@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Mail, Bell, Check, X, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, Mail, Bell, Check, X, Loader2, AlertTriangle, Send } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -18,6 +18,13 @@ interface Company {
   name: string;
   company_type?: string;
   ticker?: string;
+}
+
+interface EmailDeliveryStatus {
+  configured: boolean;
+  provider: 'sendgrid' | 'smtp' | null;
+  from_email: string;
+  configuration_hint?: string;
 }
 
 export default function SettingsPage() {
@@ -39,20 +46,25 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [deliveryStatus, setDeliveryStatus] = useState<EmailDeliveryStatus | null>(null);
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [testMessage, setTestMessage] = useState('');
 
   // Load settings and therapy areas on mount
   useEffect(() => {
     Promise.all([
       api.get('/settings/digest'),
       api.get('/search/filters'),
+      api.get('/settings/email-delivery'),
     ])
-      .then(([settingsRes, filtersRes]) => {
+      .then(([settingsRes, filtersRes, deliveryRes]) => {
         const loadedSettings = settingsRes.data;
         setSettings({
           ...loadedSettings,
           email: loadedSettings.email || user?.email || null,
         });
         setTherapyAreaOptions(filtersRes.data.therapy_areas || []);
+        setDeliveryStatus(deliveryRes.data);
         
         // Load company names for selected company_ids
         if (loadedSettings.company_ids && loadedSettings.company_ids.length > 0) {
@@ -144,6 +156,19 @@ export default function SettingsPage() {
     }
   };
 
+  const handleTestEmail = async () => {
+    setTestingEmail(true);
+    setTestMessage('');
+    try {
+      const response = await api.post('/settings/email-test');
+      setTestMessage(`Test sent via ${response.data.provider} to ${response.data.recipient}`);
+    } catch (error: any) {
+      setTestMessage(error.response?.data?.detail || 'Test email failed');
+    } finally {
+      setTestingEmail(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -165,6 +190,39 @@ export default function SettingsPage() {
         <div className="flex items-center gap-3 mb-6">
           <Mail className="w-6 h-6 text-blue-400" />
           <h2 className="text-lg font-semibold text-slate-100">Email Digest</h2>
+        </div>
+
+        <div className={`mb-6 rounded-lg border p-4 ${
+          deliveryStatus?.configured
+            ? 'border-emerald-500/30 bg-emerald-500/10'
+            : 'border-amber-500/30 bg-amber-500/10'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              {deliveryStatus?.configured
+                ? <Check className="mt-0.5 h-5 w-5 text-emerald-400" />
+                : <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-400" />}
+              <div>
+                <p className={`text-sm font-medium ${deliveryStatus?.configured ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {deliveryStatus?.configured
+                    ? `${deliveryStatus.provider === 'sendgrid' ? 'SendGrid' : 'SMTP'} delivery configured`
+                    : 'Email delivery is not configured'}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {deliveryStatus?.configured
+                    ? `Messages are sent from ${deliveryStatus.from_email}.`
+                    : 'Preferences can be saved, but no messages will leave OneBD until an administrator adds a provider credential.'}
+                </p>
+              </div>
+            </div>
+            {deliveryStatus?.configured && (
+              <button type="button" onClick={handleTestEmail} disabled={testingEmail} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50">
+                {testingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send test
+              </button>
+            )}
+          </div>
+          {testMessage && <p className="mt-3 text-xs text-slate-400">{testMessage}</p>}
         </div>
 
         {/* Enable/Disable Toggle */}

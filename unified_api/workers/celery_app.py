@@ -1397,7 +1397,10 @@ def send_alert_email(user_id: str, alert_name: str, deals: list):
 
     # Get user email
     with get_cortellis_session() as session:
-        user = session.execute(text("SELECT email FROM users WHERE id = :id"), {"id": int(user_id)}).fetchone()
+        user = session.execute(text("""
+            SELECT email FROM users
+            WHERE id = :id AND disabled IS NOT TRUE
+        """), {"id": int(user_id)}).fetchone()
         if not user:
             return {"status": "skipped", "reason": "user not found"}
 
@@ -1447,7 +1450,7 @@ def send_daily_digest():
                    u.email as user_email
             FROM user_digest_settings uds
             JOIN users u ON u.id = uds.user_id
-            WHERE uds.enabled = true
+            WHERE uds.enabled = true AND u.disabled IS NOT TRUE
         """)).fetchall()
 
         sent = 0

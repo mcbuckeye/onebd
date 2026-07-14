@@ -5,9 +5,11 @@ from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 import structlog
 import secrets
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from unified_api.services.database import get_cortellis_session
 from unified_api.services.auth import (
@@ -185,8 +187,9 @@ async def forgot_password(req: ForgotPasswordRequest):
     """
     Request a password reset token.
     Returns success even if email doesn't exist (security best practice).
-    Token is logged for now (no email service yet).
+    Tokens are delivered by email and are never written to logs.
     """
+    reset_delivery = None
     with get_cortellis_session() as session:
         _ensure_users_table(session)
         _ensure_password_reset_tokens_table(session)
@@ -201,31 +204,67 @@ async def forgot_password(req: ForgotPasswordRequest):
         ).fetchone()
 
         if user_row:
-            # Generate reset token
-            reset_token = secrets.token_urlsafe(32)
-            expires_at = datetime.now() + timedelta(hours=1)  # Token valid for 1 hour
+            recent_request = session.execute(text("""
+                SELECT EXISTS (
+                    SELECT 1 FROM password_reset_tokens
+                    WHERE user_id = :user_id
+                      AND created_at >= NOW() - INTERVAL '60 seconds'
+                )
+            """), {"user_id": user_row.id}).scalar()
+            if recent_request:
+                logger.info("password_reset_rate_limited", user_id=user_row.id)
+            else:
+                # Generate reset token
+                reset_token = secrets.token_urlsafe(32)
+                expires_at = datetime.now() + timedelta(hours=1)
 
-            # Store token in database
-            session.execute(
-                text("""
-                    INSERT INTO password_reset_tokens (user_id, token, expires_at)
-                    VALUES (:user_id, :token, :expires_at)
-                """),
-                {
-                    "user_id": user_row.id,
-                    "token": reset_token,
-                    "expires_at": expires_at,
-                }
-            )
-            session.commit()
+                # Invalidate older links, then store the new single-use token.
+                session.execute(text("""
+                    UPDATE password_reset_tokens SET used = TRUE
+                    WHERE user_id = :user_id AND used IS NOT TRUE
+                """), {"user_id": user_row.id})
+                session.execute(
+                    text("""
+                        INSERT INTO password_reset_tokens (user_id, token, expires_at)
+                        VALUES (:user_id, :token, :expires_at)
+                    """),
+                    {
+                        "user_id": user_row.id,
+                        "token": reset_token,
+                        "expires_at": expires_at,
+                    }
+                )
+                session.commit()
+                reset_delivery = (user_row.id, user_row.email, reset_token)
 
-            # Log the token (no email service yet)
+    if reset_delivery:
+        user_id, email, reset_token = reset_delivery
+        from unified_api.services.email_digest import (
+            build_password_reset_email,
+            deliver_email,
+            get_email_delivery_status,
+        )
+
+        app_url = get_email_delivery_status()["app_url"].rstrip("/")
+        reset_url = f"{app_url}/reset-password?token={quote(reset_token)}"
+        delivery = await run_in_threadpool(
+            deliver_email,
+            email,
+            "Reset your OneBD password",
+            build_password_reset_email(reset_url),
+        )
+        if delivery.success:
             logger.info(
-                "password_reset_token_generated",
-                user_id=user_row.id,
-                email=user_row.email,
-                token=reset_token,
-                expires_at=expires_at.isoformat()
+                "password_reset_email_sent",
+                user_id=user_id,
+                provider=delivery.provider,
+            )
+        else:
+            logger.warning(
+                "password_reset_email_not_sent",
+                user_id=user_id,
+                provider=delivery.provider,
+                error=delivery.error,
             )
 
     # Always return success (don't reveal if email exists)
