@@ -220,6 +220,13 @@ and fast retrieval before adding more external data volume.
           window and exact-company filtering. The digest deal filter is also
           parameterized, uses the actual therapy-area schema, preserves the date
           boundary for company matches, and covers seven days for weekly reports.
+    - [x] Integrate owner-selected outbound email delivery for scheduled reports,
+          alerts, password resets, and operator tests. SendGrid and secure SMTP
+          are supported without storing credentials in Git; provider readiness
+          is visible in Settings and secret configuration is never returned.
+    - [ ] Configure an owner-selected email provider credential in Dokploy and
+          use Settings -> Send test to prove live outbound delivery. Production
+          had no OneBD SendGrid or SMTP credential during the 2026-07-14 audit.
 
 ### Immediate Reliability Sprint
 

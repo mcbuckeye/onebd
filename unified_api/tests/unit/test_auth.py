@@ -175,3 +175,105 @@ class TestLiveAccountValidation:
             auth.get_current_user("Bearer token")
 
         assert exc.value.status_code == 401
+
+
+class TestPasswordResetDelivery:
+    """Reset links are delivered safely after the database transaction closes."""
+
+    def test_forgot_password_delivers_without_logging_token(self, monkeypatch):
+        from unified_api.routers import auth
+        from unified_api.services import email_digest
+
+        user = MagicMock(id=23, email="person@example.test")
+        session = MagicMock()
+        session.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=user)),
+            MagicMock(scalar=MagicMock(return_value=False)),
+            MagicMock(),
+            MagicMock(),
+        ]
+        state = {"session_open": False}
+
+        @contextmanager
+        def fake_session():
+            state["session_open"] = True
+            try:
+                yield session
+            finally:
+                state["session_open"] = False
+
+        deliveries = []
+
+        async def fake_threadpool(function, *args):
+            assert state["session_open"] is False
+            return function(*args)
+
+        def fake_delivery(to_email, subject, html):
+            deliveries.append((to_email, subject, html))
+            return email_digest.EmailDeliveryResult(True, "smtp", 250)
+
+        log_info = MagicMock()
+        log_warning = MagicMock()
+        monkeypatch.setattr(auth, "get_cortellis_session", fake_session)
+        monkeypatch.setattr(auth, "_ensure_users_table", lambda _session: None)
+        monkeypatch.setattr(
+            auth, "_ensure_password_reset_tokens_table", lambda _session: None
+        )
+        monkeypatch.setattr(auth.secrets, "token_urlsafe", lambda _length: "private-token")
+        monkeypatch.setattr(auth, "run_in_threadpool", fake_threadpool)
+        monkeypatch.setattr(auth.logger, "info", log_info)
+        monkeypatch.setattr(auth.logger, "warning", log_warning)
+        monkeypatch.setattr(email_digest, "deliver_email", fake_delivery)
+        monkeypatch.setattr(
+            email_digest,
+            "get_email_delivery_status",
+            lambda: {"app_url": "https://onebd.example"},
+        )
+
+        response = asyncio.run(
+            auth.forgot_password(auth.ForgotPasswordRequest(email=user.email))
+        )
+
+        assert response.message.startswith("If that email exists")
+        assert session.commit.called
+        assert deliveries == [
+            (
+                user.email,
+                "Reset your OneBD password",
+                email_digest.build_password_reset_email(
+                    "https://onebd.example/reset-password?token=private-token"
+                ),
+            )
+        ]
+        logged = repr(log_info.call_args_list) + repr(log_warning.call_args_list)
+        assert "private-token" not in logged
+
+    def test_recent_request_does_not_create_or_deliver_token(self, monkeypatch):
+        from unified_api.routers import auth
+
+        user = MagicMock(id=23, email="person@example.test")
+        session = MagicMock()
+        session.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=user)),
+            MagicMock(scalar=MagicMock(return_value=True)),
+        ]
+
+        @contextmanager
+        def fake_session():
+            yield session
+
+        monkeypatch.setattr(auth, "get_cortellis_session", fake_session)
+        monkeypatch.setattr(auth, "_ensure_users_table", lambda _session: None)
+        monkeypatch.setattr(
+            auth, "_ensure_password_reset_tokens_table", lambda _session: None
+        )
+        token_generator = MagicMock(return_value="should-not-exist")
+        monkeypatch.setattr(auth.secrets, "token_urlsafe", token_generator)
+
+        response = asyncio.run(
+            auth.forgot_password(auth.ForgotPasswordRequest(email=user.email))
+        )
+
+        assert response.message.startswith("If that email exists")
+        token_generator.assert_not_called()
+        assert session.execute.call_count == 2
