@@ -79,12 +79,13 @@ def validate_catalog_membership_by_retrieval(
     batch_size: int = 30,
     workers: int = 1,
 ) -> dict[str, Any]:
-    """Prove that every local deal ID is retrievable from Cortellis.
+    """Determine which local deal IDs are retrievable from Cortellis.
 
     The search endpoint's offset pagination can repeat and omit IDs even with
     ``dealId`` sorting.  Batch retrieval is authoritative for a supplied ID,
     so retrieving the complete local set provides a dependable membership
-    proof when the API's advertised cardinality also equals the local count.
+    proof. Failed multi-ID requests are bisected to distinguish an unavailable
+    deal from a transient failure that would otherwise obscure valid neighbors.
     """
     requested = list(dict.fromkeys(int(deal_id) for deal_id in local_ids))
     batch_size = max(1, min(30, int(batch_size)))
@@ -98,9 +99,20 @@ def validate_catalog_membership_by_retrieval(
     unexpected_ids: set[int] = set()
     errors: list[str] = []
 
-    def fetch(batch: list[int]) -> tuple[list[int], list[int]]:
-        records = client.get_deal_records(batch)
-        return batch, [int(record.id) for record in records]
+    def fetch(
+        batch: list[int],
+    ) -> tuple[list[int], list[int], list[str]]:
+        try:
+            records = client.get_deal_records(batch)
+            return batch, [int(record.id) for record in records], []
+        except Exception as exc:
+            if len(batch) == 1:
+                return batch, [], [f"deal {batch[0]}: {exc}"]
+
+            midpoint = len(batch) // 2
+            _, left_ids, left_errors = fetch(batch[:midpoint])
+            _, right_ids, right_errors = fetch(batch[midpoint:])
+            return batch, left_ids + right_ids, left_errors + right_errors
 
     def record_result(batch: list[int], result_ids: list[int]) -> None:
         batch_set = set(batch)
@@ -119,8 +131,9 @@ def validate_catalog_membership_by_retrieval(
             for future in as_completed(futures):
                 batch = futures[future]
                 try:
-                    completed_batch, result_ids = future.result()
+                    completed_batch, result_ids, batch_errors = future.result()
                     record_result(completed_batch, result_ids)
+                    errors.extend(batch_errors)
                 except Exception as exc:
                     errors.append(
                         f"batch {batch[0]}..{batch[-1]}: {exc}"
@@ -128,8 +141,9 @@ def validate_catalog_membership_by_retrieval(
     else:
         for batch in batches:
             try:
-                completed_batch, result_ids = fetch(batch)
+                completed_batch, result_ids, batch_errors = fetch(batch)
                 record_result(completed_batch, result_ids)
+                errors.extend(batch_errors)
             except Exception as exc:
                 errors.append(f"batch {batch[0]}..{batch[-1]}: {exc}")
 
@@ -154,6 +168,28 @@ def validate_catalog_membership_by_retrieval(
         "duplicate_ids": duplicates,
         "errors": errors,
     }
+
+
+def retrieval_covers_advertised_catalog(
+    membership: dict[str, Any],
+    source_total_start: int,
+    source_total_end: int,
+) -> bool:
+    """Return whether local retrieval covers the API's stable active catalog.
+
+    A local database may retain deals removed from the current catalog. If the
+    API count is stable and the retrievable local subset exactly equals that
+    advertised count, every currently advertised deal is necessarily present
+    even though the local database is not an exact mirror.
+    """
+    return bool(
+        source_total_start > 0
+        and source_total_start == source_total_end
+        and membership["returned_unique_total"] == source_total_end
+        and not membership["errors"]
+        and not membership["unexpected_ids"]
+        and not membership["duplicate_ids"]
+    )
 
 
 class DealTransformer:
@@ -1221,23 +1257,26 @@ class SyncService:
             source_total_audit_start = client.search_deals(
                 query="*", offset=0, hits=1
             ).total_results
-            membership: dict[str, Any] | None = None
-            if source_total_audit_start == len(local_ids_after):
-                membership = validate_catalog_membership_by_retrieval(
-                    client,
-                    local_ids_after,
-                    batch_size=batch_size,
-                    workers=scan_workers,
-                )
-            source_total_after = (
-                client.search_deals(query="*", offset=0, hits=1).total_results
-                if membership is not None
-                else source_total_audit_start
+            membership = validate_catalog_membership_by_retrieval(
+                client,
+                local_ids_after,
+                batch_size=batch_size,
+                workers=scan_workers,
+            )
+            source_total_after = client.search_deals(
+                query="*", offset=0, hits=1
+            ).total_results
+            stable_source_cardinality = bool(
+                source_total_audit_start == source_total_after
             )
             stable_equal_cardinality = bool(
-                source_total_audit_start
-                == source_total_after
-                == len(local_ids_after)
+                stable_source_cardinality
+                and source_total_after == len(local_ids_after)
+            )
+            catalog_membership_complete = retrieval_covers_advertised_catalog(
+                membership,
+                source_total_audit_start,
+                source_total_after,
             )
 
         discovered_missing = len(coverage["missing_ids"]) if coverage else 0
@@ -1265,6 +1304,7 @@ class SyncService:
             "contracts_downloaded": contracts_downloaded,
             "membership_audit_run": membership is not None,
             "membership_complete": membership_complete,
+            "catalog_membership_complete": catalog_membership_complete,
             "membership_requested": (
                 membership["requested_total"] if membership else 0
             ),
@@ -1276,29 +1316,31 @@ class SyncService:
         }
         if coverage and coverage["extra_ids"]:
             result["extra_local_sample"] = coverage["extra_ids"][:20]
-        if membership:
-            if membership["missing_ids"]:
-                result["membership_missing_sample"] = membership["missing_ids"][:20]
-            if membership["unexpected_ids"]:
-                result["membership_unexpected_sample"] = (
-                    membership["unexpected_ids"][:20]
-                )
-            if membership["duplicate_ids"]:
-                result["membership_duplicate_sample"] = (
-                    membership["duplicate_ids"][:20]
-                )
-            errors.extend(membership["errors"])
+        if membership["missing_ids"]:
+            result["membership_missing_total"] = len(membership["missing_ids"])
+            result["membership_missing_sample"] = membership["missing_ids"][:20]
+        if membership["unexpected_ids"]:
+            result["membership_unexpected_sample"] = (
+                membership["unexpected_ids"][:20]
+            )
+        if membership["duplicate_ids"]:
+            result["membership_duplicate_sample"] = (
+                membership["duplicate_ids"][:20]
+            )
+        errors.extend(membership["errors"])
         if errors:
             result["error"] = "; ".join(errors)[:4000]
-        elif not stable_equal_cardinality:
+        elif not catalog_membership_complete:
             result["error"] = (
-                "Cortellis catalog cardinality was not stable and equal: "
+                "Retrieval did not cover the stable advertised Cortellis catalog: "
                 f"source_audit_start={source_total_audit_start}, "
-                f"source_after={source_total_after}, local={len(local_ids_after)}"
+                f"source_after={source_total_after}, "
+                f"retrieved={membership['returned_unique_total']}"
             )
         elif not membership_complete:
             result["error"] = (
-                "Retrieval membership audit did not return every local deal ID"
+                "The active Cortellis catalog is covered, but the local database "
+                "also retains IDs not returned by the current API"
             )
         return result
 
