@@ -297,8 +297,10 @@ and fast retrieval before adding more external data volume.
       verify no derived public records remain attached to CS-2012. The retained
       state is `context_conflict`, with zero identifiers, public profiles, target
       links, disease links, or downstream source states for drug `200067`.
-- [ ] Deploy the REST/MCP calls and validate live HanchorBio and DotBio responses
-      against direct PostgreSQL evidence.
+- [x] Deploy the REST/MCP calls and validate live HanchorBio and DotBio responses
+      against direct PostgreSQL evidence. Production SHA `2d578e8` passed all six
+      scoped HTTP calls, both critical rights interpretations, the MCP adapter,
+      the post-Dokploy regression gate, and verification-key revocation.
 - [ ] Issue a scoped colleague key after the owner supplies the desired key name,
       recipient, and optional expiry; verify revocation and MCP setup with it.
 - [ ] Add current contract/source-document checks for option exercise,
