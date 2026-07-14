@@ -95,6 +95,8 @@ ordering. It should not be confused with a separate, global current asset phase.
   `unified_api.workers.tasks.enrichment.backfill_deal_phases`
 - Status endpoint: `/api/enrichment/status`
 - Validation endpoint: `/api/enrichment/financial-terms/validation`
+- Governed pageable terms: `/api/v1/financial-terms`
+- MCP tool: `search_financial_terms`
 - Metric definitions: `/api/analytics/metric-definitions`
 - Executable truth suite: `unified_api/evals/question_cases.yaml`
 

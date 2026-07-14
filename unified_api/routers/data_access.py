@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from unified_api.services.api_credentials import DataPrincipal, require_data_access
 from unified_api.services.database import get_cortellis_session, get_edgar_session
+from unified_api.services.finance_parser import FINANCE_PARSER_VERSION
 
 
 router = APIRouter(prefix="/v1", tags=["Governed Data API"])
@@ -167,6 +168,9 @@ async def data_catalog(
               (SELECT COUNT(*) FROM deal_contracts) AS contract_metadata,
               (SELECT COUNT(*) FROM contract_content) AS searchable_contracts,
               (SELECT COUNT(*) FROM contract_chunks) AS contract_chunks,
+              (SELECT COUNT(*) FROM deal_financial_terms
+               WHERE parser_version=:finance_parser_version)
+                AS normalized_financial_terms,
               (SELECT COUNT(*) FROM cortellis_expanded_response_history)
                 AS expanded_response_versions,
               (SELECT COUNT(DISTINCT deal_id)
@@ -205,7 +209,9 @@ async def data_catalog(
                 AS catalog_verified_at,
               (SELECT COUNT(*) FROM cortellis_contract_scan_state)
                 AS contract_scan_states
-        """)).mappings().one())
+        """), {
+            "finance_parser_version": FINANCE_PARSER_VERSION,
+        }).mappings().one())
     with get_edgar_session() as session:
         edgar = dict(session.execute(text("""
             SELECT
@@ -396,6 +402,67 @@ async def deal_detail(
     result = dict(deal)
     result.update(relationships)
     return result
+
+
+@router.get("/financial-terms")
+async def list_financial_terms(
+    after_id: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    deal_id: int | None = Query(default=None, ge=1),
+    term_type: str | None = Query(default=None, max_length=100),
+    basis: str | None = Query(default=None, max_length=100),
+    disclosure_status: str | None = Query(default=None, max_length=100),
+    min_amount_usd_millions: float | None = Query(default=None, ge=0),
+    min_rate_pct: float | None = Query(default=None, ge=0, le=100),
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Cursor-page normalized Cortellis financial terms with provenance."""
+    filters = [
+        "term.id > :after_id",
+        "term.parser_version = :parser_version",
+    ]
+    params: dict[str, Any] = {
+        "after_id": after_id,
+        "limit": limit + 1,
+        "parser_version": FINANCE_PARSER_VERSION,
+    }
+    for field, value in (
+        ("deal_id", deal_id),
+        ("term_type", term_type),
+        ("basis", basis),
+        ("disclosure_status", disclosure_status),
+    ):
+        if value is not None:
+            filters.append(f"term.{field} = :{field}")
+            params[field] = value
+    if min_amount_usd_millions is not None:
+        filters.append("term.amount_usd_millions >= :min_amount_usd_millions")
+        params["min_amount_usd_millions"] = min_amount_usd_millions
+    if min_rate_pct is not None:
+        filters.append(
+            "GREATEST(term.rate_min_pct, term.rate_max_pct) >= :min_rate_pct"
+        )
+        params["min_rate_pct"] = min_rate_pct
+    with get_cortellis_session() as session:
+        rows = session.execute(text(f"""
+            SELECT term.id, term.deal_id, deal.title AS deal_title,
+                   term.recipient, term.basis, term.term_type,
+                   term.source_payment_type, term.payment_date,
+                   term.amount_reported_millions, term.reported_currency,
+                   term.reported_unit, term.amount_usd_millions,
+                   term.rate_min_pct, term.rate_max_pct, term.accuracy,
+                   term.disclosure_status, term.note, term.is_breakdown,
+                   term.confidence, term.source_path, term.source_hash,
+                   term.parser_version, term.extracted_at
+            FROM deal_financial_terms term
+            JOIN deals deal ON deal.id=term.deal_id
+            WHERE {' AND '.join(filters)}
+            ORDER BY term.id
+            LIMIT :limit
+        """), params).mappings().all()
+    return _page([dict(row) for row in rows], limit, "id")
 
 
 @router.get("/companies")
