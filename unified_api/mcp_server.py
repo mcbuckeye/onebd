@@ -96,7 +96,8 @@ TOOLS = [
         "name": "get_company_oncology_assets",
         "description": (
             "List a company's deal-referenced oncology biologics, modalities, "
-            "disease indications, and source evidence."
+            "disease indications, source evidence, and separately labeled "
+            "ClinicalTrials.gov intervention candidates."
         ),
         "inputSchema": {
             "type": "object",
@@ -109,7 +110,8 @@ TOOLS = [
         "name": "get_company_asset_rights",
         "description": (
             "Get observed out-license and territory scope for a company's "
-            "oncology assets without inferring current legal ownership."
+            "oncology assets plus timeline/contract evidence checks without "
+            "inferring current legal ownership."
         ),
         "inputSchema": {
             "type": "object",

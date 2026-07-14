@@ -303,11 +303,17 @@ and fast retrieval before adding more external data volume.
       the post-Dokploy regression gate, and verification-key revocation.
 - [ ] Issue a scoped colleague key after the owner supplies the desired key name,
       recipient, and optional expiry; verify revocation and MCP setup with it.
-- [ ] Add current contract/source-document checks for option exercise,
+- [x] Add current contract/source-document checks for option exercise,
       amendments, termination, and rights reversion where documents are available.
-- [ ] Expand portfolio coverage beyond deal-referenced assets with an explicitly
-      entitled pipeline source or selected public pipeline sources; preserve the
-      distinction from the Cortellis Deals credential.
+      Rights events now expose exact timeline assertions, contract/index coverage,
+      bounded contract-clause candidates for review, follow-up counts, latest
+      evidence dates, and explicit missing-source-text limitations without treating
+      a clause match or absence as proof of current legal status.
+- [x] Expand portfolio coverage beyond deal-referenced assets with an explicitly
+      entitled pipeline source or selected public pipeline sources. A separately
+      labeled ClinicalTrials.gov layer groups oncology trial interventions through
+      exact structured company links, identifies deal-asset matches, and never
+      treats interventions, combination partners, or comparators as owned assets.
 
 ## Implementation Status vs PRD
 
