@@ -108,6 +108,7 @@ class Settings(BaseSettings):
 
     # CORS
     allowed_origins: str = "*"
+    app_url: str = "https://onebd.pchomelab.com"
 
     class Config:
         env_file = ".env.unified"

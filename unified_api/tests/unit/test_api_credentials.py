@@ -146,6 +146,41 @@ def test_scope_enforcement_can_be_disabled_by_owner(monkeypatch):
     assert principal.name == "limited"
 
 
+def test_hosted_mcp_authenticates_key_before_tool_scope_selection(monkeypatch):
+    monkeypatch.setattr(api_credentials, "get_data_access_policy", lambda: {
+        "access_mode": "key_required",
+    })
+    observed = {}
+
+    def principal(api_key, path):
+        observed.update(api_key=api_key, path=path)
+        return api_credentials.DataPrincipal(
+            principal_type="api_key",
+            principal_id="14",
+            name="MCP colleague",
+            scopes=["deals:read"],
+        )
+
+    monkeypatch.setattr(api_credentials, "_api_key_principal", principal)
+
+    result = api_credentials.authorize_mcp_request(
+        _request("/mcp"), "onebd_test"
+    )
+
+    assert result.scopes == ["deals:read"]
+    assert observed == {"api_key": "onebd_test", "path": "/mcp"}
+
+
+def test_hosted_mcp_respects_owner_open_mode(monkeypatch):
+    monkeypatch.setattr(api_credentials, "get_data_access_policy", lambda: {
+        "access_mode": "open",
+    })
+
+    result = api_credentials.authorize_mcp_request(_request("/mcp"), None)
+
+    assert result.principal_type == "anonymous"
+
+
 def test_owner_can_disable_a_dataset_even_in_open_mode(monkeypatch):
     monkeypatch.setattr(api_credentials, "get_data_access_policy", lambda: {
         "access_mode": "open",

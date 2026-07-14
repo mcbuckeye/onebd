@@ -310,6 +310,9 @@ and fast retrieval before adding more external data volume.
       the owner-designated recipient through the configured SMTP2GO provider.
       All six HanchorBio/DotBio REST calls and the corresponding six MCP calls
       passed with the retained key.
+- [x] Host the MCP adapter at `/mcp` using stateless Streamable HTTP so
+      colleagues need only the endpoint and their governed API key, with no
+      repository checkout, source-code access, or local Python environment.
 - [x] Add current contract/source-document checks for option exercise,
       amendments, termination, and rights reversion where documents are available.
       Rights events now expose exact timeline assertions, contract/index coverage,
