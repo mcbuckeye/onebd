@@ -200,13 +200,9 @@ export default function CompanyProfilePage() {
             <div className="space-y-2">
               {sec_filings.slice(0, 10).map(f => (
                 <div key={f.id} className="flex items-center justify-between gap-3 text-sm">
-                  {f.url ? (
-                    <a href={f.url} target="_blank" rel="noreferrer" className="text-slate-300 hover:text-blue-400">
-                      {f.doc_type || 'Filing'}
-                    </a>
-                  ) : (
-                    <span className="text-slate-300">{f.doc_type || 'Filing'}</span>
-                  )}
+                  <Link to={`/filings/${f.id}`} className="text-slate-300 hover:text-blue-400">
+                    {f.doc_type || 'Filing'}
+                  </Link>
                   <span className="text-slate-500 text-xs">{f.filing_date}</span>
                 </div>
               ))}

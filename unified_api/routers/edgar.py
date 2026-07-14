@@ -15,6 +15,11 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+def _page_for_chunk(chunk_index: int, page_size: int) -> int:
+    """Return the one-based page containing a zero-based chunk index."""
+    return chunk_index // page_size + 1
+
+
 class EdgarCompanyResponse(BaseModel):
     """Edgar BD company information."""
     id: int
@@ -694,6 +699,11 @@ async def get_filing_content(
     mode: str = Query("full", enum=["full", "chunks"], description="full=doc_text, chunks=paginated chunks"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    chunk_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description="Focus a search-result chunk and return its containing page",
+    ),
 ):
     """
     Get the full text content of a SEC filing.
@@ -712,7 +722,8 @@ async def get_filing_content(
         doc = session.execute(text("""
             SELECT d.id, COALESCE(d.subtype, d.doc_type) AS doc_type,
                    d.title, d.accession_no, d.published_at,
-                   e.name as company_name, e.ticker, r.url
+                   e.name as company_name, e.ticker, e.cik,
+                   r.filing_date, r.url
             FROM documents d
             JOIN raw_documents r ON d.raw_document_id = r.id
             JOIN companies e ON r.company_id = e.id
@@ -728,8 +739,10 @@ async def get_filing_content(
             "title": doc.title,
             "accession_no": doc.accession_no,
             "published_at": str(doc.published_at) if doc.published_at else None,
+            "filing_date": str(doc.filing_date) if doc.filing_date else None,
             "company_name": doc.company_name,
             "company_ticker": doc.ticker,
+            "company_cik": doc.cik,
             "source_url": doc.url,
         }
 
@@ -765,6 +778,23 @@ async def get_filing_content(
 
         else:
             # Paginated chunks
+            focus_chunk_id = None
+            if chunk_id is not None:
+                focused = session.execute(text("""
+                    SELECT id, chunk_index
+                    FROM chunks
+                    WHERE id = :chunk_id AND document_id = :filing_id
+                """), {
+                    "chunk_id": chunk_id,
+                    "filing_id": filing_id,
+                }).fetchone()
+                if not focused:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Chunk not found in this filing",
+                    )
+                focus_chunk_id = focused.id
+                page = _page_for_chunk(focused.chunk_index, page_size)
             offset = (page - 1) * page_size
 
             total = session.execute(text("""
@@ -793,6 +823,7 @@ async def get_filing_content(
             return {
                 **filing_meta,
                 "chunks": chunk_list,
+                "focus_chunk_id": focus_chunk_id,
                 "pagination": {
                     "page": page,
                     "page_size": page_size,
