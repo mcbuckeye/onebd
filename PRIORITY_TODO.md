@@ -65,20 +65,23 @@ and fast retrieval before adding more external data volume.
          integer ID from the stable API minimum 100,063 through maximum 506,108.
          The credential returned 172,638 unique deals with zero errors even
          though search advertised 149,028; PostgreSQL had 149,035 rows.
-   - [ ] Promote numeric-ID enumeration into the durable reconciliation and
-         ingest the 23,608 directly retrievable hidden/archived deals missing
-         locally. Preserve for review the five local IDs now returning successful
-         empty responses; do not use the advertised search count as a coverage
-         denominator.
+   - [x] Promote numeric-ID enumeration into the durable reconciliation and
+         ingest all 23,608 directly retrievable hidden/archived deals missing
+         locally. The accepted 2026-07-14 run ended with zero remote IDs missing,
+         172,643 local rows, stable bounds/count snapshots, and five preserved
+         local-only IDs; the advertised search count is not the denominator.
+   - [x] Serialize exhaustive reconciliation with a PostgreSQL advisory lock so
+         manual and scheduled invocations cannot duplicate API traffic or
+         overwrite shared monitoring state.
    - [ ] Complete the durable all-deal contract metadata scan. The deployed
-         versioned PostgreSQL scanner has checked 46,780 of 149,035 current local
-         deals (31.39%), has no terminal failures, and holds 41,892 contract rows;
-         its denominator will grow when the hidden deals are ingested.
+         versioned PostgreSQL scanner has checked 50,260 of 172,643 current local
+         deals (29.11%), has no terminal failures, and holds 41,939 contract rows.
    - [x] Add lossless raw expanded-response/source retention and normalize the
          credentialed `deal/sources/{dealId}` citations with API provenance.
    - [ ] Complete the exact-response and source-citation backfill. As of the
-         2026-07-14 audit, it covers 2,510 deals and stores 7,947 normalized
-         citations; scheduled durable batches continue from PostgreSQL state.
+         2026-07-14 02:04 UTC audit, it covers 4,010 deals and stores 11,716
+         current normalized citations; scheduled durable batches continue from
+         PostgreSQL state.
 
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
