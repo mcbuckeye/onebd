@@ -11,6 +11,7 @@ from src.config import CortellisConfig
 from src.sync import (
     assess_catalog_coverage,
     assess_zero_result_window,
+    catalog_discovery_required,
     retrieval_covers_advertised_catalog,
     validate_catalog_membership_by_retrieval,
 )
@@ -208,6 +209,22 @@ def test_retrieval_coverage_rejects_count_drift_or_request_errors():
     assert retrieval_covers_advertised_catalog(membership, 3, 4) is False
     membership["errors"] = ["deal 9: temporary failure"]
     assert retrieval_covers_advertised_catalog(membership, 3, 3) is False
+
+
+@pytest.mark.parametrize(
+    ("local_total", "source_total", "expected"),
+    [
+        (2, 3, True),
+        (3, 3, False),
+        (4, 3, False),
+    ],
+)
+def test_catalog_discovery_only_runs_for_a_source_count_deficit(
+    local_total,
+    source_total,
+    expected,
+):
+    assert catalog_discovery_required(local_total, source_total) is expected
 
 
 def test_parallel_catalog_scan_fetches_every_page_once():
