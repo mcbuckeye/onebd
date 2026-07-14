@@ -286,6 +286,10 @@ def enrich_wikidata_company_domains(
                             source_key=str(candidate.get("lei") or candidate["company_id"]),
                             error=str(exc)[:2000],
                         )
+                # Each Wikidata lookup is an independent checkpoint. Release
+                # locks before waiting on the next external query so status
+                # and question traffic remain responsive during backfills.
+                session.commit()
         return {"status": "partial" if totals["failed"] else "completed", **totals}
     finally:
         try:
