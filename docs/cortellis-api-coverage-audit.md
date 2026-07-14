@@ -141,13 +141,17 @@ product entitlements.
 
 ## Remediation
 
-- The daily incremental worker now compares the advertised source count with
-  the local count and marks the source partial on a mismatch.
+- The daily incremental worker compares the locally eligible set with the
+  durable exhaustive numeric-ID proof. The five verified retired records are
+  excluded from that denominator, while the smaller advertised search count is
+  retained as a drift observation rather than treated as a false failure.
 - The weekly reconciliation now uses bounded numeric-ID enumeration as its
   membership proof, repairs missing records in committed batches, validates
   stable bounds before accepting success, and preserves local-only IDs for
-  review rather than deleting them. A PostgreSQL advisory lock prevents two
-  worker invocations from running the expensive audit concurrently.
+  review rather than deleting them. Successful proof cardinality and bounds
+  are stored in a dedicated singleton table, independently of mutable job
+  status. A PostgreSQL advisory lock prevents two worker invocations from
+  running the expensive audit concurrently.
 - Both parallel scans exposed unstable offset pagination: the unsorted pass
   produced 148,754 unique IDs and the `dealId`-sorted pass produced 148,910.
   The reconciler rejects either result because neither equals the advertised

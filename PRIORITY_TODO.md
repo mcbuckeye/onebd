@@ -25,9 +25,9 @@ and fast retrieval before adding more external data volume.
    - [x] A recent-data lane always processes the latest SEC business days.
    - [x] A separate resumable cursor advances the historical backlog.
    - [x] Both lanes remain idempotent and safe when their windows overlap.
-   - [ ] Run bounded catch-up jobs until the historical cursor reaches current data.
-         A verified manual run advanced 2025-11-23 through 2025-11-30 and added
-         139 filings, 275 documents, and 3,653 chunks without error.
+   - [x] Run bounded catch-up jobs until the historical cursor reaches current data.
+         The durable cursor reached 2026-07-13 with zero backlog days on
+         2026-07-14; the recent and historical lanes now maintain that position.
    - [x] Persist append-only recent/backfill run history and report observed
          cursor throughput, filings/hour, remaining runs, and estimated catch-up.
 
@@ -56,8 +56,9 @@ and fast retrieval before adding more external data volume.
    - [x] Mark omitted/failed API batches partial so the last successful watermark
          remains eligible for retry, and expose the batch error from the worker.
    - [x] Add regression tests for midnight, same-day, timezone, and retry boundaries.
-   - [x] Compare the advertised API catalog count with the local count on every
-         incremental run and mark a mismatch partial instead of claiming success.
+   - [x] Compare incremental catalog cardinality with the durable exhaustive
+         membership proof. Keep the smaller advertised search count as a drift
+         observation, not a false completeness denominator.
    - [x] Add a weekly full-ID reconciliation that restores historical omissions
          in bounded API batches without deleting local-only records.
    - [x] Complete an authoritative membership audit without offset pagination.
@@ -73,6 +74,8 @@ and fast retrieval before adding more external data volume.
    - [x] Serialize exhaustive reconciliation with a PostgreSQL advisory lock so
          manual and scheduled invocations cannot duplicate API traffic or
          overwrite shared monitoring state.
+   - [x] Persist every successful exhaustive numeric-ID proof independently of
+         mutable job-monitoring state and use it for incremental health checks.
    - [ ] Complete the durable all-deal contract metadata scan. The deployed
          versioned PostgreSQL scanner has checked 50,260 of 172,643 current local
          deals (29.11%), has no terminal failures, and holds 41,939 contract rows.

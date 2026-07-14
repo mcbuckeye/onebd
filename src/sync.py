@@ -17,7 +17,7 @@ from .cortellis_archive import (
     archive_expanded_deal_record,
     ensure_expanded_archive_schema,
 )
-from .cortellis_catalog import reconcile_catalog_exclusions
+from .cortellis_catalog import reconcile_catalog_exclusions, record_catalog_proof
 from .models import (
     Base, Deal, Company, DealCompany, Indication, Technology, Action,
     DealAction, Territory, DealTerritory, Drug, DealDrug, Patent,
@@ -1423,6 +1423,16 @@ class SyncService:
         )
         complete = bool(catalog_membership_complete and not errors)
         source_total_after = search_after["advertised_total_first"]
+        if complete:
+            with self.SessionLocal() as session:
+                record_catalog_proof(
+                    session,
+                    retrievable_total=len(remote_ids),
+                    numeric_id_min=minimum_id,
+                    numeric_id_max=maximum_id,
+                    advertised_total=source_total_after,
+                )
+                session.commit()
         result: Dict[str, Any] = {
             "status": "completed" if complete else "partial",
             "expected_remote_total": len(remote_ids),

@@ -9,7 +9,10 @@ from typing import Any
 from sqlalchemy import text
 
 from src.api_client import CortellisClient, DealRecord, DealSourcesRecord
-from src.cortellis_catalog import ensure_catalog_exclusion_schema
+from src.cortellis_catalog import (
+    ensure_catalog_exclusion_schema,
+    read_catalog_proof,
+)
 from src.config import CortellisConfig
 from src.cortellis_archive import archive_expanded_deal_record
 from unified_api.config import settings
@@ -401,14 +404,10 @@ def deal_api_scan_status() -> dict[str, Any]:
 def _latest_catalog_proof() -> dict[str, Any]:
     """Read the most recent successful exhaustive membership result."""
     with get_cortellis_session() as session:
-        row = session.execute(text("""
-            SELECT last_success_at,
-                   NULLIF(counts ->> 'records_seen', '')::BIGINT
-                       AS retrievable_total
-            FROM source_job_state
-            WHERE source_key = 'cortellis_catalog'
-        """)).mappings().first()
-    return dict(row) if row else {}
+        proof = read_catalog_proof(session)
+    if proof:
+        proof["last_success_at"] = proof.get("verified_at")
+    return proof
 
 
 def _attach_catalog_cardinality(result: dict[str, Any]) -> dict[str, Any]:
