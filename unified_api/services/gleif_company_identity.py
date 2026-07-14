@@ -569,6 +569,11 @@ def enrich_gleif_company_identities(
                             source_key=str(candidate["company_id"]),
                             error=str(exc)[:2000],
                         )
+                # Do not retain row or DDL-conflicting locks while the next
+                # company is fetched from the external API. Each candidate is
+                # an independent durable checkpoint, so a killed accelerator
+                # can resume without replaying the rest of this batch.
+                session.commit()
         return {"status": "partial" if totals["failed"] else "completed", **totals}
     finally:
         try:
@@ -847,6 +852,10 @@ def enrich_gleif_company_ownership(
                             source_key=str(candidate.get("lei") or candidate["company_id"]),
                             error=str(exc)[:2000],
                         )
+                # Level 2 lookups make multiple external requests. Release
+                # database locks between companies instead of holding one
+                # transaction for the entire scheduled batch.
+                session.commit()
         return {"status": "partial" if totals["failed"] else "completed", **totals}
     finally:
         try:

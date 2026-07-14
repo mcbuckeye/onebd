@@ -265,60 +265,112 @@ def repair_roche_wtw_misattribution(
     }
 
 
+def _identity_schema_is_current() -> bool:
+    """Check required identity columns without taking table-level DDL locks."""
+    required = {
+        ("company_aliases", "evidence"),
+        ("company_aliases", "review_status"),
+        ("company_aliases", "source_reference"),
+        ("company_identifiers", "normalized_value"),
+        ("company_identifiers", "review_status"),
+        ("company_identity_relationships", "evidence"),
+        ("company_identity_relationships", "review_status"),
+        ("company_identity_source_responses", "raw_response"),
+        ("company_identity_source_responses", "response_sha256"),
+        ("company_identity_source_state", "next_retry_at"),
+        ("company_identity_source_state", "response_sha256"),
+    }
+    with get_cortellis_engine().connect() as connection:
+        rows = connection.execute(text("""
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name IN (
+                  'company_aliases',
+                  'company_identifiers',
+                  'company_identity_relationships',
+                  'company_identity_source_responses',
+                  'company_identity_source_state'
+              )
+        """)).all()
+    return required.issubset({(str(row[0]), str(row[1])) for row in rows})
+
+
 def ensure_sec_company_identity_schema() -> None:
     """Create durable SEC identity source-response and scan-state tables."""
     global _identity_schema_ready
     if _identity_schema_ready:
         return
-    get_entity_resolution_service().ensure_identity_schema()
-    with get_cortellis_session() as session:
-        session.execute(text("""
-            CREATE TABLE IF NOT EXISTS company_identity_source_responses (
-                id BIGSERIAL PRIMARY KEY,
-                company_id INTEGER NOT NULL REFERENCES companies(id)
-                    ON DELETE CASCADE,
-                source VARCHAR(100) NOT NULL,
-                source_key VARCHAR(100) NOT NULL,
-                request_url TEXT NOT NULL,
-                fetched_at TIMESTAMPTZ NOT NULL,
-                source_date TEXT,
-                response_sha256 CHAR(64) NOT NULL,
-                raw_response JSONB NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (source, source_key, response_sha256)
-            )
-        """))
-        session.execute(text("""
-            CREATE INDEX IF NOT EXISTS ix_company_identity_responses_company
-            ON company_identity_source_responses (company_id, source, fetched_at)
-        """))
-        session.execute(text("""
-            CREATE TABLE IF NOT EXISTS company_identity_source_state (
-                source VARCHAR(100) NOT NULL,
-                company_id INTEGER NOT NULL REFERENCES companies(id)
-                    ON DELETE CASCADE,
-                source_key VARCHAR(100) NOT NULL,
-                status VARCHAR(30) NOT NULL,
-                attempts INTEGER NOT NULL DEFAULT 0,
-                source_name TEXT,
-                normalized_source_name TEXT,
-                matched_name TEXT,
-                identifiers_written INTEGER NOT NULL DEFAULT 0,
-                response_sha256 CHAR(64),
-                last_error TEXT,
-                last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                next_retry_at TIMESTAMPTZ,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (source, company_id)
-            )
-        """))
-        session.execute(text("""
-            CREATE INDEX IF NOT EXISTS ix_company_identity_state_queue
-            ON company_identity_source_state (
-                source, status, next_retry_at, company_id
-            )
-        """))
-    _identity_schema_ready = True
+    if _identity_schema_is_current():
+        _identity_schema_ready = True
+        return
+
+    # Only the rare migration path takes DDL locks. Recheck after acquiring a
+    # global schema lock so multiple freshly started workers cannot race here.
+    lock = get_cortellis_engine().connect()
+    lock.execute(text(
+        "SELECT pg_advisory_lock(hashtext('onebd_company_identity_schema'))"
+    ))
+    try:
+        if _identity_schema_is_current():
+            _identity_schema_ready = True
+            return
+        get_entity_resolution_service().ensure_identity_schema()
+        with get_cortellis_session() as session:
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS company_identity_source_responses (
+                    id BIGSERIAL PRIMARY KEY,
+                    company_id INTEGER NOT NULL REFERENCES companies(id)
+                        ON DELETE CASCADE,
+                    source VARCHAR(100) NOT NULL,
+                    source_key VARCHAR(100) NOT NULL,
+                    request_url TEXT NOT NULL,
+                    fetched_at TIMESTAMPTZ NOT NULL,
+                    source_date TEXT,
+                    response_sha256 CHAR(64) NOT NULL,
+                    raw_response JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source, source_key, response_sha256)
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_company_identity_responses_company
+                ON company_identity_source_responses (company_id, source, fetched_at)
+            """))
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS company_identity_source_state (
+                    source VARCHAR(100) NOT NULL,
+                    company_id INTEGER NOT NULL REFERENCES companies(id)
+                        ON DELETE CASCADE,
+                    source_key VARCHAR(100) NOT NULL,
+                    status VARCHAR(30) NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    source_name TEXT,
+                    normalized_source_name TEXT,
+                    matched_name TEXT,
+                    identifiers_written INTEGER NOT NULL DEFAULT 0,
+                    response_sha256 CHAR(64),
+                    last_error TEXT,
+                    last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    next_retry_at TIMESTAMPTZ,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (source, company_id)
+                )
+            """))
+            session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_company_identity_state_queue
+                ON company_identity_source_state (
+                    source, status, next_retry_at, company_id
+                )
+            """))
+        _identity_schema_ready = True
+    finally:
+        try:
+            lock.execute(text(
+                "SELECT pg_advisory_unlock(hashtext('onebd_company_identity_schema'))"
+            ))
+        finally:
+            lock.close()
 
 
 def _sec_candidates(batch_size: int, *, refresh: bool) -> list[dict[str, Any]]:
