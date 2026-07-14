@@ -1,7 +1,10 @@
 # OneBD data inventory and colleague access
 
-**Production snapshot:** 2026-07-14
+**Production snapshot:** 2026-07-14 18:38 UTC
 **Audience:** internal colleagues evaluating available data and programmatic access
+
+Counts are point-in-time because scheduled jobs continue to enrich the archive;
+`GET /api/v1/catalog` is the authoritative live inventory.
 
 ## Executive answer
 
@@ -46,11 +49,11 @@ source-attributed and should not be described to colleagues as Cortellis data.
 | Technology links | 400,709 | Deal-to-technology relationships, including principal flag |
 | Timeline events | 232,058 | Stage/status events and embedded payment/drug structures |
 | Finance summaries | 172,643 | Paid/projected amounts, currency, unit, disclosure status, raw detail |
-| Normalized financial terms | 445,904 | Parser-v4 upfront, milestone, royalty and related source-derived terms |
+| Normalized financial terms | 503,525 | Parser-v4 upfront, milestone, royalty and related source-derived terms |
 | M&A summaries | 11,277 | M&A-specific product, ownership, investor and financial fields |
 | Contract metadata | 42,573 | Complete per-deal metadata scan, PDF/text flags, dates and redaction |
-| Searchable contract texts | 25,978 | Downloaded and indexed full text |
-| Contract chunks | 897,130 | Full-text/RAG chunks for contract retrieval |
+| Searchable contract texts | 25,977 | Downloaded and indexed full text |
+| Contract chunks | 897,041 | Full-text/RAG chunks for contract retrieval |
 
 ### Deal fields
 
@@ -108,7 +111,7 @@ authoritative entitlement record.
 | ChEMBL 37 | 3,853 structure-confirmed drugs | ChEMBL ID, molecule fields, 3,851 typed INN aliases and 6,698 development codes |
 | Open Targets 26.06 | 3,118 drug profiles; 972 targets; 2,829 diseases | Drug descriptions, mechanisms, target/disease links and development stages |
 | UniProt | 973 target records | Reviewed accessions, proteins, genes, function, disease/location and sequence metadata |
-| Europe PMC | 20,432 publication records; 45,479 target links | Structured publication metadata and exact target/accession citations |
+| Europe PMC | 23,014 publication records; 54,073 target links | Structured publication metadata and exact target/accession citations |
 | GLEIF | 475 verified LEIs | Legal entity identity and verified direct/ultimate parent evidence |
 | Wikidata | 129 reviewable domains | Official websites matched only through exact verified LEIs |
 | Neo4j | Derived graph | Cross-database company/deal relationships for graph queries |

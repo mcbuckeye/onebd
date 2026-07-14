@@ -183,8 +183,8 @@ and fast retrieval before adding more external data volume.
     - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a
           provenance-preserving beta table with resumable scheduled extraction.
     - [x] Validate extracted Cortellis term precision/coverage before enabling
-          governed aggregate answers. Parser v4 covers all 125,360 source JSON
-          payloads and 445,904 terms; the production gate reports zero failures,
+          governed aggregate answers. Parser v4 covers all 150,898 source JSON
+          payloads and 503,525 terms; the production gate reports zero failures,
           invalid units/rates, or source mismatches, 100% percentage capture,
           100% replay accuracy across 475 stratified terms, and release ready.
     - [x] Enable the first governed financial analytics after the release gate.
