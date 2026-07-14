@@ -644,6 +644,7 @@ async def data_health_check():
         ("chembl", "ChEMBL Exact Identifier Enrichment"),
         ("open_targets", "Open Targets Drug/Target Enrichment"),
         ("uniprot", "UniProt Target Enrichment"),
+        ("europe_pmc", "Europe PMC Target Literature Enrichment"),
     ):
         source_state = common_states.get(source_key)
         if not source_state:

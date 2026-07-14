@@ -159,14 +159,17 @@ and fast retrieval before adding more external data volume.
          network retry, optional TTL caching, and response metadata to both the
          PubChem and ClinicalTrials.gov adapters; durable freshness and identifier
          normalization already use the shared source-monitor and identity layers.
-   - [ ] Adapt Open Targets, ChEMBL, PubChem, UniProt, Europe PMC, and
+   - [x] Adapt Open Targets, ChEMBL, PubChem, UniProt, Europe PMC, and
          ClinicalTrials.gov without coupling OneBD to BeOne-specific CSV outputs.
          PubChem, ClinicalTrials.gov, ChEMBL, and Open Targets now use the
          reusable primitives directly. Their retained profiles, disease links,
          and exact drug-target mechanisms are queryable through the public-
          biology API. UniProt now retains reviewed protein, gene, function,
          disease, location, sequence-metadata, release, raw-response, and history
-         records from exact Open Targets Swiss-Prot accessions; Europe PMC remains.
+         records from exact Open Targets Swiss-Prot accessions. Europe PMC now
+         retains cursor-complete publication metadata and raw response history
+         using exact structured UniProt/Ensembl citation queries, with no
+         target links inferred from titles or abstracts.
 
 10. **Build higher-value intelligence workflows after the foundation is stable**
     - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a

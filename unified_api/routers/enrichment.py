@@ -29,6 +29,7 @@ from unified_api.services.public_drug_enrichment import (
     public_drug_enrichment_status,
 )
 from unified_api.services.uniprot_enrichment import uniprot_enrichment_status
+from unified_api.services.europe_pmc_enrichment import europe_pmc_enrichment_status
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["enrichment"])
@@ -86,6 +87,7 @@ async def enrichment_status():
     pubchem_status = pubchem_enrichment_status()
     public_drug_status = public_drug_enrichment_status()
     uniprot_status = uniprot_enrichment_status()
+    europe_pmc_status = europe_pmc_enrichment_status()
 
     return {
         "finance_enrichment": finance_status,
@@ -95,6 +97,7 @@ async def enrichment_status():
         "pubchem_enrichment": pubchem_status,
         "public_drug_target_enrichment": public_drug_status,
         "uniprot_target_enrichment": uniprot_status,
+        "europe_pmc_target_literature_enrichment": europe_pmc_status,
     }
 
 

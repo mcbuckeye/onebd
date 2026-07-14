@@ -84,3 +84,20 @@ def test_uniprot_rows_receive_protein_citations():
         "record_id": "P29274",
         "label": "Adenosine receptor A2a",
     }]
+
+
+def test_europe_pmc_rows_receive_publication_citations():
+    citations = build_citations("sql", [{
+        "article_source": "MED",
+        "external_id": "18832607",
+        "title": "A2A receptor structure",
+        "ensembl_id": "ENSG00000128271",
+    }])
+
+    assert citations == [{
+        "id": "C1",
+        "source": "Europe PMC",
+        "record_type": "publication",
+        "record_id": "MED:18832607",
+        "label": "A2A receptor structure",
+    }]

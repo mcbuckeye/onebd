@@ -47,6 +47,11 @@ def _client(monkeypatch, results):
         "ensure_public_target_schema",
         lambda: None,
     )
+    monkeypatch.setattr(
+        public_biology,
+        "ensure_europe_pmc_schema",
+        lambda: None,
+    )
     monkeypatch.setattr(public_biology, "get_cortellis_session", fake_session)
     app = FastAPI()
     app.include_router(public_biology.router, prefix="/api")
@@ -115,6 +120,38 @@ def test_missing_public_disease_is_404(monkeypatch):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Public disease not found"
+
+
+def test_target_literature_returns_exact_query_provenance(monkeypatch):
+    client, session = _client(monkeypatch, [
+        {
+            "ensembl_id": "ENSG00000128271",
+            "approved_symbol": "ADORA2A",
+            "approved_name": "adenosine A2a receptor",
+        },
+        1,
+        [{
+            "article_source": "MED",
+            "external_id": "18832607",
+            "pmid": "18832607",
+            "title": "A2A receptor structure",
+            "requested_accessions": ["P29274"],
+            "match_methods": ["exact_structured_identifier_query"],
+            "source_queries": ["ACCESSION_ID:P29274"],
+        }],
+    ])
+
+    response = client.get(
+        "/api/public-biology/targets/ensg00000128271/literature",
+        params={"limit": 25},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["target"]["approved_symbol"] == "ADORA2A"
+    assert payload["total"] == 1
+    assert payload["publications"][0]["requested_accessions"] == ["P29274"]
+    assert session.calls[2][1]["limit"] == 25
 
 
 def test_drug_biology_exposes_identifiers_profiles_targets_and_diseases(

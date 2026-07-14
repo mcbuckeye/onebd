@@ -80,6 +80,11 @@ SOURCE_POLICIES = {
         6,
         12,
     ),
+    "europe_pmc": SourcePolicy(
+        "Europe PMC Target Literature Enrichment",
+        6,
+        12,
+    ),
     "neo4j": SourcePolicy(
         "Neo4j Graph Sync",
         settings.graph_freshness_warn_hours,
@@ -208,6 +213,13 @@ def _source_counts(source_key: str, result: Mapping[str, Any]) -> dict[str, int 
             "records_seen": result.get("processed"),
             "records_processed": result.get("processed"),
             "records_created": result.get("matched"),
+        })
+    elif source_key == "europe_pmc":
+        counts.update({
+            "records_seen": result.get("processed"),
+            "records_processed": result.get("processed"),
+            "records_created": result.get("publications_upserted"),
+            "relationships_processed": result.get("relationships_created"),
         })
     elif source_key == "neo4j":
         companies = int(result.get("cortellis_companies") or 0) + int(

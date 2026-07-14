@@ -71,15 +71,23 @@ class SQLTool(BaseTool):
       primary_accession, uniprot_id, protein_name, gene_symbol, function_text,
       disease_annotations, subcellular_locations, sequence_length, source,
       source_version, source_url
+    - public_literature_records: article_source, external_id, pmid, pmcid,
+      doi, title, abstract_text, journal_title, publication_year,
+      first_publication_date, cited_by_count, is_open_access, source,
+      source_version, source_url
+    - public_target_literature_links: ensembl_id, requested_accession,
+      article_source, external_id, match_method, source_query, source,
+      source_version
     - public_drug_target_links: drug_id, chembl_id, ensembl_id,
       mechanism_of_action, action_type, source, source_version
     - public_diseases: disease_id, name, source, source_version
     - public_drug_disease_links: drug_id, chembl_id, disease_id,
       maximum_clinical_stage, source, source_version
 
-    Use only these exact link tables for drug/trial/target/disease claims, and
-    join UniProt records to targets only through ensembl_id. Never infer links
-    from titles, descriptions, or free text.
+    Use only these exact link tables for drug/trial/target/disease claims. Join
+    UniProt records to targets through ensembl_id and literature through
+    public_target_literature_links. Never infer links from titles, abstracts,
+    descriptions, or other free text.
 
     PostgreSQL Syntax Rules:
     - Use ILIKE for case-insensitive search: title ILIKE '%oncology%'

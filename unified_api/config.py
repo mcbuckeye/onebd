@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     open_targets_request_interval_seconds: float = 0.25
     uniprot_base_url: str = "https://rest.uniprot.org"
     uniprot_request_interval_seconds: float = 0.25
+    europe_pmc_base_url: str = (
+        "https://www.ebi.ac.uk/europepmc/webservices/rest"
+    )
+    europe_pmc_request_interval_seconds: float = 0.25
+    europe_pmc_page_size: int = 100
 
     # CORS
     allowed_origins: str = "*"
