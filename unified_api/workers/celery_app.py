@@ -147,6 +147,11 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.enrichment.uniprot_targets",
             "schedule": crontab(minute="3,7,11,15,19,23,27,31,35,39,43,47,51,55,59"),
         },
+        # Structured UniProt/Ensembl citations become durable literature evidence.
+        "enrich-europe-pmc-target-literature": {
+            "task": "unified_api.workers.tasks.enrichment.europe_pmc_targets",
+            "schedule": crontab(minute="0,4,8,12,16,20,24,28,32,36,40,44,48,52,56"),
+        },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
             "task": "unified_api.workers.tasks.pageindex.batch_index_contracts",
@@ -494,6 +499,26 @@ def enrich_uniprot_target_records():
         logger.error("UniProt target enrichment failed", error=str(exc))
         return _finish_source_job(
             "uniprot", {"status": "failed", "error": str(exc)}
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.europe_pmc_targets")
+def enrich_europe_pmc_target_records():
+    """Advance one exact target-literature query by one durable page."""
+    logger.info("Starting Europe PMC target literature enrichment")
+    _start_source_job("europe_pmc")
+    try:
+        from unified_api.services.europe_pmc_enrichment import (
+            enrich_europe_pmc_target_literature,
+        )
+
+        result = enrich_europe_pmc_target_literature()
+        logger.info("Europe PMC target literature enrichment complete", **result)
+        return _finish_source_job("europe_pmc", result)
+    except Exception as exc:
+        logger.error("Europe PMC target literature enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "europe_pmc", {"status": "failed", "error": str(exc)}
         )
 
 

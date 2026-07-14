@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from unified_api.services.database import get_cortellis_session
+from unified_api.services.europe_pmc_enrichment import ensure_europe_pmc_schema
 from unified_api.services.uniprot_enrichment import ensure_public_target_schema
 
 
@@ -112,6 +113,72 @@ async def public_target_detail(ensembl_id: str):
     }
 
 
+@router.get("/public-biology/targets/{ensembl_id}/literature")
+async def public_target_literature(
+    ensembl_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Return publications linked by exact structured target identifiers."""
+    ensure_europe_pmc_schema()
+    ensembl_id = ensembl_id.upper()
+    with get_cortellis_session() as session:
+        target = session.execute(text("""
+            SELECT ensembl_id, approved_symbol, approved_name
+            FROM public_targets WHERE ensembl_id = :ensembl_id
+        """), {"ensembl_id": ensembl_id}).mappings().first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Public target not found")
+        total = session.execute(text("""
+            SELECT COUNT(DISTINCT (link.article_source, link.external_id))
+            FROM public_target_literature_links link
+            WHERE link.ensembl_id = :ensembl_id
+        """), {"ensembl_id": ensembl_id}).scalar_one()
+        rows = session.execute(text("""
+            SELECT publication.article_source, publication.external_id,
+                   publication.pmid, publication.pmcid, publication.doi,
+                   publication.title, publication.abstract_text,
+                   publication.author_string, publication.journal_title,
+                   publication.publication_year,
+                   publication.first_publication_date,
+                   publication.publication_types,
+                   publication.mesh_headings, publication.chemicals,
+                   publication.cited_by_count, publication.is_open_access,
+                   publication.in_europe_pmc, publication.source,
+                   publication.source_version, publication.source_url,
+                   link.requested_accessions, link.match_methods,
+                   link.source_queries
+            FROM (
+              SELECT article_source, external_id,
+                     ARRAY_AGG(DISTINCT requested_accession)
+                         AS requested_accessions,
+                     ARRAY_AGG(DISTINCT match_method) AS match_methods,
+                     ARRAY_AGG(DISTINCT source_query) AS source_queries
+              FROM public_target_literature_links
+              WHERE ensembl_id = :ensembl_id
+              GROUP BY article_source, external_id
+            ) link
+            JOIN public_literature_records publication
+              ON publication.article_source = link.article_source
+             AND publication.external_id = link.external_id
+            ORDER BY publication.cited_by_count DESC NULLS LAST,
+                     publication.first_publication_date DESC NULLS LAST,
+                     publication.article_source, publication.external_id
+            LIMIT :limit OFFSET :offset
+        """), {
+            "ensembl_id": ensembl_id,
+            "limit": limit,
+            "offset": offset,
+        }).mappings().all()
+    return {
+        "target": dict(target),
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+        "publications": [dict(row) for row in rows],
+    }
+
+
 @router.get("/public-biology/diseases")
 async def list_public_diseases(
     query: str | None = None,
@@ -194,7 +261,7 @@ async def drug_public_biology(
     include_raw: bool = Query(default=False),
 ):
     """Return exact public identifiers, profiles, targets, and indications."""
-    ensure_public_target_schema()
+    ensure_europe_pmc_schema()
     with get_cortellis_session() as session:
         drug = session.execute(text("""
             SELECT id, name_display FROM drugs WHERE id = :drug_id
@@ -256,7 +323,13 @@ async def drug_public_biology(
                      ) ORDER BY record.requested_accession)
                      FROM public_target_uniprot_records record
                      WHERE record.ensembl_id = target.ensembl_id
-                   ), '[]'::jsonb) AS uniprot_records
+                   ), '[]'::jsonb) AS uniprot_records,
+                   (SELECT COUNT(DISTINCT (
+                        literature.article_source, literature.external_id
+                    ))
+                    FROM public_target_literature_links literature
+                    WHERE literature.ensembl_id = target.ensembl_id)
+                       AS literature_count
             FROM public_drug_target_links link
             JOIN public_targets target
               ON target.ensembl_id = link.ensembl_id

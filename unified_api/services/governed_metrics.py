@@ -100,6 +100,21 @@ def build_citations(mode: str, data: list[dict], query: Optional[str] = None) ->
     seen = set()
     source = "Cortellis" if mode in {"sql", "rag"} else "Neo4j"
     for row in data:
+        if row.get("article_source") and row.get("external_id"):
+            record_id = f"{row['article_source']}:{row['external_id']}"
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            citations.append({
+                "id": f"C{len(citations) + 1}",
+                "source": "Europe PMC",
+                "record_type": "publication",
+                "record_id": record_id,
+                "label": row.get("title") or record_id,
+            })
+            if len(citations) == 10:
+                break
+            continue
         if row.get("nct_id"):
             record_id = row["nct_id"]
             if record_id in seen:

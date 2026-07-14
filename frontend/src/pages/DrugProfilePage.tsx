@@ -268,6 +268,11 @@ export default function DrugProfilePage() {
                             ))}
                           </div>
                         )}
+                        {target.literature_count > 0 && (
+                          <div className="mt-2 text-xs text-slate-500">
+                            {target.literature_count.toLocaleString()} exact-linked Europe PMC publication{target.literature_count === 1 ? '' : 's'}
+                          </div>
+                        )}
                       </div>
                     ))}
                     {biology.targets.length > 12 && <CountNote shown={12} total={biology.targets.length} />}

@@ -76,6 +76,13 @@ Available tables and key columns:
   primary_accession, uniprot_id, protein_name, gene_symbol, function_text,
   disease_annotations, subcellular_locations, sequence_length, source,
   source_version, source_url
+- public_literature_records: article_source, external_id, pmid, pmcid, doi,
+  title, abstract_text, author_string, journal_title, publication_year,
+  first_publication_date, cited_by_count, is_open_access, source,
+  source_version, source_url
+- public_target_literature_links: ensembl_id, requested_accession,
+  article_source, external_id, match_method, source_query, source,
+  source_version
 - public_drug_target_links: drug_id, chembl_id, ensembl_id,
   mechanism_of_action, action_type, source, source_version
 - public_diseases: disease_id, name, source, source_version
@@ -101,7 +108,8 @@ Important notes:
   not substitute a different financial field.
 - Never infer a drug, trial, target, or disease link from text. Use only the exact
   clinical_trial_drugs, public_drug_target_links, and public_drug_disease_links
-  relationships, and return their identifiers/source fields as evidence.
+  relationships. Use public_target_literature_links for literature-to-target
+  claims, and return identifiers/source fields as evidence.
 
 Resolved entities (JSON):
 {resolved_entities}

@@ -190,6 +190,7 @@ export interface PublicDrugBiology {
     source_references: Array<Record<string, unknown>>;
     source: string;
     source_version: string;
+    literature_count: number;
     uniprot_records: Array<{
       requested_accession: string;
       primary_accession: string;
