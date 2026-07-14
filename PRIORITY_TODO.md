@@ -150,10 +150,16 @@ and fast retrieval before adding more external data volume.
          programs, and status transitions observed by successive source syncs.
 
 9. **Refactor reusable Mammal public-data clients**
-   - [ ] Share rate limiting, caching, retry, identifier normalization, source
-         freshness, and provenance primitives.
+   - [x] Share rate limiting, caching, retry, identifier normalization, source
+         freshness, and provenance primitives. A common provenance-bearing JSON
+         HTTP client now supplies throttling, Retry-After/backoff, transient
+         network retry, optional TTL caching, and response metadata to both the
+         PubChem and ClinicalTrials.gov adapters; durable freshness and identifier
+         normalization already use the shared source-monitor and identity layers.
    - [ ] Adapt Open Targets, ChEMBL, PubChem, UniProt, Europe PMC, and
          ClinicalTrials.gov without coupling OneBD to BeOne-specific CSV outputs.
+         PubChem and ClinicalTrials.gov now use the reusable primitives directly;
+         Open Targets, ChEMBL, UniProt, and Europe PMC remain.
 
 10. **Build higher-value intelligence workflows after the foundation is stable**
     - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a
