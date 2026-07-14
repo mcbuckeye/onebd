@@ -17,7 +17,6 @@ from unified_api.services.database import (
     get_cortellis_session,
 )
 from unified_api.services.entity_resolution import (
-    get_entity_resolution_service,
     normalize_identifier_value,
 )
 from unified_api.services.public_source_http import (
@@ -861,7 +860,6 @@ def enrich_gleif_company_ownership(
 def gleif_company_identity_status() -> dict[str, Any]:
     """Return GLEIF LEI/ownership coverage and review-state counts."""
     ensure_sec_company_identity_schema()
-    get_entity_resolution_service().ensure_identity_schema()
     with get_cortellis_session() as session:
         identity = session.execute(text("""
             SELECT
