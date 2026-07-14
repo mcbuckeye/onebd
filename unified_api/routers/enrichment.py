@@ -42,6 +42,11 @@ from unified_api.services.sec_company_identity import (
     audit_sec_company_identities,
     sec_company_identity_status,
 )
+from unified_api.services.gleif_company_identity import (
+    enrich_gleif_company_identities,
+    enrich_gleif_company_ownership,
+    gleif_company_identity_status,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["enrichment"])
@@ -118,6 +123,38 @@ async def company_identity_enrichment_status():
     return sec_company_identity_status()
 
 
+@router.post("/api/enrichment/gleif-company-identities")
+async def enrich_gleif_company_identity_batch(
+    batch_size: int = Query(25, ge=1, le=100),
+    refresh: bool = Query(False),
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Retain unique exact-name GLEIF LEI matches with full provenance."""
+    return enrich_gleif_company_identities(
+        batch_size=batch_size,
+        refresh=refresh,
+    )
+
+
+@router.post("/api/enrichment/gleif-company-ownership")
+async def enrich_gleif_company_ownership_batch(
+    batch_size: int = Query(50, ge=1, le=100),
+    refresh: bool = Query(False),
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Retain GLEIF Level 2 direct parents that map to local LEIs."""
+    return enrich_gleif_company_ownership(
+        batch_size=batch_size,
+        refresh=refresh,
+    )
+
+
+@router.get("/api/enrichment/gleif-company-identities/status")
+async def gleif_company_enrichment_status():
+    """Return GLEIF LEI and ownership coverage/review status."""
+    return gleif_company_identity_status()
+
+
 @router.get("/api/enrichment/status")
 async def enrichment_status():
     """Get current enrichment status across all data sources."""
@@ -132,6 +169,7 @@ async def enrichment_status():
     uniprot_status = uniprot_enrichment_status()
     europe_pmc_status = europe_pmc_enrichment_status()
     company_identity_status = sec_company_identity_status()
+    gleif_identity_status = gleif_company_identity_status()
 
     return {
         "finance_enrichment": finance_status,
@@ -144,6 +182,7 @@ async def enrichment_status():
         "uniprot_target_enrichment": uniprot_status,
         "europe_pmc_target_literature_enrichment": europe_pmc_status,
         "sec_company_identity_enrichment": company_identity_status,
+        "gleif_company_identity_enrichment": gleif_identity_status,
     }
 
 

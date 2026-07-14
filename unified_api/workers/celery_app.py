@@ -55,6 +55,15 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.edgar.company_identities",
             "schedule": crontab(hour=3, minute=45),
         },
+        # Add unique exact-name LEIs, then resolve Level 2 accounting parents.
+        "enrich-gleif-company-identities": {
+            "task": "unified_api.workers.tasks.enrichment.gleif_identities",
+            "schedule": crontab(minute="10,40"),
+        },
+        "enrich-gleif-company-ownership": {
+            "task": "unified_api.workers.tasks.enrichment.gleif_ownership",
+            "schedule": crontab(minute="20,50"),
+        },
         # Current trial changes run after the documented weekday source refresh.
         "sync-clinicaltrials-recent": {
             "task": "unified_api.workers.tasks.clinicaltrials.recent",
@@ -295,6 +304,52 @@ def audit_sec_company_identity_records():
         logger.error("SEC company identity audit failed", error=str(exc))
         return _finish_source_job(
             "sec_company_identity",
+            {"status": "failed", "error": str(exc)},
+        )
+
+
+@celery_app.task(
+    name="unified_api.workers.tasks.enrichment.gleif_identities"
+)
+def enrich_gleif_identity_records():
+    """Advance a bounded exact-name GLEIF LEI batch."""
+    logger.info("Starting GLEIF company identity enrichment")
+    _start_source_job("gleif_company_identity")
+    try:
+        from unified_api.services.gleif_company_identity import (
+            enrich_gleif_company_identities,
+        )
+
+        result = enrich_gleif_company_identities(batch_size=25)
+        logger.info("GLEIF company identity enrichment complete", **result)
+        return _finish_source_job("gleif_company_identity", result)
+    except Exception as exc:
+        logger.error("GLEIF company identity enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "gleif_company_identity",
+            {"status": "failed", "error": str(exc)},
+        )
+
+
+@celery_app.task(
+    name="unified_api.workers.tasks.enrichment.gleif_ownership"
+)
+def enrich_gleif_ownership_records():
+    """Advance a bounded GLEIF Level 2 direct-parent batch."""
+    logger.info("Starting GLEIF company ownership enrichment")
+    _start_source_job("gleif_company_ownership")
+    try:
+        from unified_api.services.gleif_company_identity import (
+            enrich_gleif_company_ownership,
+        )
+
+        result = enrich_gleif_company_ownership(batch_size=50)
+        logger.info("GLEIF company ownership enrichment complete", **result)
+        return _finish_source_job("gleif_company_ownership", result)
+    except Exception as exc:
+        logger.error("GLEIF company ownership enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "gleif_company_ownership",
             {"status": "failed", "error": str(exc)},
         )
 
