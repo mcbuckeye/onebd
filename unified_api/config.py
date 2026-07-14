@@ -73,6 +73,17 @@ class Settings(BaseSettings):
     cortellis_freshness_warn_hours: int = 36
     cortellis_freshness_critical_hours: int = 72
 
+    # ClinicalTrials.gov API v2 (free public source)
+    clinicaltrials_base_url: str = "https://clinicaltrials.gov/api/v2"
+    clinicaltrials_user_agent: str = (
+        "OneBD onebd.pchomelab.com admin@pchomelab.com"
+    )
+    clinicaltrials_page_size: int = 500
+    clinicaltrials_recent_overlap_days: int = 7
+    clinicaltrials_recent_max_pages: int = 10
+    clinicaltrials_backfill_window_days: int = 90
+    clinicaltrials_backfill_max_pages: int = 5
+
     # CORS
     allowed_origins: str = "*"
 

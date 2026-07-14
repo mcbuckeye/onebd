@@ -136,9 +136,16 @@ and fast retrieval before adding more external data volume.
 
 8. **Add ClinicalTrials.gov/AACT as the first new external source**
    - [ ] Link trials to existing companies, assets, indications, and targets.
-   - [ ] Preserve sponsor, phase, status history, endpoints, enrollment, dates,
+         Exact, provenance-bearing company, drug/biologic, and indication links
+         are implemented; target linking awaits a canonical target model and
+         Open Targets/ChEMBL identifiers.
+   - [x] Preserve sponsor, phase, status history, endpoints, enrollment, dates,
          results, collaborators, and locations with source provenance.
-   - [ ] Detect upcoming catalysts, stopped programs, and status changes.
+         The official API-v2 adapter retains every raw response version and uses
+         two durable, globally serialized recent/history cursors.
+   - [x] Detect upcoming catalysts, stopped programs, and status changes.
+         The catalyst API exposes upcoming primary completions, recent stopped
+         programs, and status transitions observed by successive source syncs.
 
 9. **Refactor reusable Mammal public-data clients**
    - [ ] Share rate limiting, caching, retry, identifier normalization, source

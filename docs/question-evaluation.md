@@ -400,4 +400,7 @@ Evaluation rules:
 12. Dynamic company comparison and “my company” configuration.
 13. Target screening, new-entrant detection, and strategy summaries after grounding.
 14. Board/quarterly report templates and analytics PDF export.
-15. ClinicalTrials.gov/AACT and broader asset/indication enrichment.
+15. 🟡 ClinicalTrials.gov API-v2 current/history ingestion, provenance, exact
+    company/asset/indication links, and catalyst endpoints are implemented;
+    complete the production backfill, add canonical target identifiers, and
+    integrate trial evidence into governed chat/profile workflows.

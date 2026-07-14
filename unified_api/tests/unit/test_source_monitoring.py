@@ -132,6 +132,25 @@ def test_deal_api_scan_counts_have_stable_vocabulary():
     }
 
 
+def test_clinical_trials_counts_have_stable_vocabulary():
+    counts = _source_counts("clinicaltrials_backfill", {
+        "studies_seen": 500,
+        "studies_created": 490,
+        "studies_updated": 7,
+        "relationships_created": 82,
+    })
+
+    assert counts == {
+        "records_seen": 500,
+        "records_processed": 500,
+        "records_created": 490,
+        "records_updated": 7,
+        "documents_created": None,
+        "chunks_created": None,
+        "relationships_processed": 82,
+    }
+
+
 def test_common_source_payload_reports_cursor_lag_duration_and_counts():
     payload = source_job_payload({
         "source_key": "edgar_backfill",
