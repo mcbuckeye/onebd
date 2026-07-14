@@ -200,7 +200,15 @@ and fast retrieval before adding more external data volume.
           user/detection, and exposes per-company pause/resume plus read/dismiss
           review controls. Exact company-ID bulk retrieval replaces the prior
           fuzzy-name/N+1 competitor activity requests.
-    - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.
+    - [x] Catalyst calendars, scheduled reports, and decision-ready exports.
+          A server-paginated primary-completion agenda preserves source date
+          precision and exact company/drug/indication links, supports phase,
+          status, date, entity-ID, and text filters, and exports the same evidence
+          set to analysis-ready CSV or RFC 5545 iCalendar. Daily/weekly scheduled
+          intelligence digests can now include a configurable catalyst look-ahead
+          window and exact-company filtering. The digest deal filter is also
+          parameterized, uses the actual therapy-area schema, preserves the date
+          boundary for company matches, and covers seven days for weekly reports.
 
 ### Immediate Reliability Sprint
 

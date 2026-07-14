@@ -3,8 +3,9 @@ Email digest builder and sender.
 Generates HTML email digests for daily/weekly briefings.
 Supports SendGrid and SMTP delivery.
 """
+from html import escape
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +38,31 @@ def format_deal_row(deal: Dict[str, Any]) -> str:
     """
 
 
+def format_catalyst_row(catalyst: Dict[str, Any]) -> str:
+    """Format a sourced clinical-trial catalyst as an HTML table row."""
+    title = escape(str(catalyst.get("title") or catalyst.get("nct_id") or "N/A"))
+    nct_id = escape(str(catalyst.get("nct_id") or ""))
+    phase = escape(str(catalyst.get("phase") or "Phase not reported"))
+    sponsor = escape(str(catalyst.get("sponsor") or "Sponsor not reported"))
+    companies = escape(str(catalyst.get("companies") or "No exact company link"))
+    catalyst_date = escape(str(catalyst.get("date") or "—"))
+    source_url = escape(str(catalyst.get("source_url") or ""), quote=True)
+    title_cell = title
+    if source_url:
+        title_cell = (
+            f'<a href="{source_url}" style="color: #93c5fd; '
+            f'text-decoration: none;">{title}</a>'
+        )
+    return f"""
+    <tr style="border-bottom: 1px solid #334155;">
+        <td style="padding: 8px 12px; color: #cbd5e1; font-size: 13px; white-space: nowrap;">{catalyst_date}</td>
+        <td style="padding: 8px 12px; color: #e2e8f0; font-size: 14px;">{title_cell}<br><span style="color: #64748b; font-size: 11px;">{nct_id}</span></td>
+        <td style="padding: 8px 12px; color: #94a3b8; font-size: 12px;">{phase}<br>{sponsor}</td>
+        <td style="padding: 8px 12px; color: #94a3b8; font-size: 12px;">{companies}</td>
+    </tr>
+    """
+
+
 def build_digest_html(title: str, sections: List[Dict[str, Any]], app_url: str = "https://cortellis.machomelab.com") -> str:
     """
     Build a complete HTML email digest.
@@ -55,7 +81,23 @@ def build_digest_html(title: str, sections: List[Dict[str, Any]], app_url: str =
         if section.get("content"):
             section_html += f'<p style="color: #cbd5e1; font-size: 14px; line-height: 1.6;">{section["content"]}</p>'
 
-        if section.get("items"):
+        if section.get("type") == "catalysts" and section.get("items"):
+            section_html += """
+            <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid #334155;">
+                        <th style="padding: 6px 12px; color: #64748b; font-size: 12px; text-align: left;">Date</th>
+                        <th style="padding: 6px 12px; color: #64748b; font-size: 12px; text-align: left;">Trial</th>
+                        <th style="padding: 6px 12px; color: #64748b; font-size: 12px; text-align: left;">Phase / Sponsor</th>
+                        <th style="padding: 6px 12px; color: #64748b; font-size: 12px; text-align: left;">Exact-linked companies</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            for item in section["items"]:
+                section_html += format_catalyst_row(item)
+            section_html += "</tbody></table>"
+        elif section.get("items"):
             section_html += """
             <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
                 <thead>

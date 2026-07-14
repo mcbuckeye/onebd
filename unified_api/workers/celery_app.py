@@ -1312,11 +1312,13 @@ def send_alert_email(user_id: str, alert_name: str, deals: list):
 
 @celery_app.task(name="unified_api.workers.tasks.digest.send_daily_digest")
 def send_daily_digest():
-    """Generate and send personalized deal digests to all subscribed users."""
+    """Generate and send personalized deal and catalyst reports."""
     import datetime
     import json
     from sqlalchemy import text
+    from unified_api.services.catalyst_calendar import ACTIVE_TRIAL_STATUSES
     from unified_api.services.database import get_cortellis_session
+    from unified_api.services.digest_settings import ensure_digest_settings_schema
     from unified_api.services.email_digest import build_digest_html, send_digest_email
 
     logger.info("Generating personalized deal digests")
@@ -1325,25 +1327,14 @@ def send_daily_digest():
     is_monday = datetime.datetime.utcnow().weekday() == 0
 
     with get_cortellis_session() as session:
-        # Ensure user_digest_settings table exists
-        session.execute(text("""
-            CREATE TABLE IF NOT EXISTS user_digest_settings (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL UNIQUE,
-                enabled BOOLEAN DEFAULT FALSE,
-                frequency VARCHAR(20) DEFAULT 'weekly',
-                therapy_areas JSONB DEFAULT '[]',
-                company_ids JSONB DEFAULT '[]',
-                email VARCHAR(255),
-                updated_at TIMESTAMP DEFAULT NOW()
-            )
-        """))
+        ensure_digest_settings_schema(session)
         session.commit()
 
         # Get users with digest enabled
         users = session.execute(text("""
             SELECT uds.user_id, uds.email as digest_email, uds.frequency,
                    uds.therapy_areas, uds.company_ids,
+                   uds.include_catalysts, uds.catalyst_days,
                    u.email as user_email
             FROM user_digest_settings uds
             JOIN users u ON u.id = uds.user_id
@@ -1368,29 +1359,48 @@ def send_daily_digest():
             therapy_areas = user.therapy_areas if isinstance(user.therapy_areas, list) else json.loads(user.therapy_areas or '[]')
             company_ids = user.company_ids if isinstance(user.company_ids, list) else json.loads(user.company_ids or '[]')
 
-            # Build personalized deal query based on user preferences
-            therapy_filter = ""
-            company_filter = ""
-            
-            if therapy_areas and len(therapy_areas) > 0:
-                # Convert Python list to PostgreSQL array format
-                areas_array = "{" + ",".join(f'"{a}"' for a in therapy_areas) + "}"
-                therapy_filter = f"AND EXISTS (SELECT 1 FROM deal_therapy_areas dta JOIN therapy_areas ta ON ta.id = dta.therapy_area_id WHERE dta.deal_id = d.id AND ta.name = ANY(ARRAY{areas_array}::text[]))"
-            
-            if company_ids and len(company_ids) > 0:
-                # Add deals involving tracked companies
-                company_filter = f"OR d.id IN (SELECT dc.deal_id FROM deal_companies dc WHERE dc.company_id = ANY(ARRAY{company_ids}::integer[]))"
-
-            # Construct the full WHERE clause
-            if therapy_filter or company_filter:
-                # User has preferences - filter by them
-                where_clause = f"""
-                    WHERE (d.date_start >= CURRENT_DATE - INTERVAL '1 day' {therapy_filter})
-                    {company_filter}
-                """
-            else:
-                # No preferences - show all recent deals
-                where_clause = "WHERE d.date_start >= CURRENT_DATE - INTERVAL '1 day'"
+            # Weekly reports cover seven days; daily reports cover one. Keep all
+            # preference values bound so names cannot alter the SQL statement.
+            period_days = 1 if user.frequency == 'daily' else 7
+            deal_params = {
+                "period_days": period_days,
+                "therapy_areas": json.dumps(therapy_areas),
+                "company_ids": json.dumps(company_ids),
+            }
+            preference_filters = []
+            if therapy_areas:
+                preference_filters.append("""
+                    d.therapy_area_id IN (
+                        SELECT therapy.id
+                        FROM therapy_areas therapy
+                        WHERE therapy.name IN (
+                            SELECT selected.value
+                            FROM JSONB_ARRAY_ELEMENTS_TEXT(
+                                CAST(:therapy_areas AS JSONB)
+                            ) AS selected(value)
+                        )
+                    )
+                """)
+            if company_ids:
+                preference_filters.append("""
+                    EXISTS (
+                        SELECT 1 FROM deal_companies company_link
+                        WHERE company_link.deal_id = d.id
+                          AND company_link.company_id IN (
+                              SELECT selected.value::INTEGER
+                              FROM JSONB_ARRAY_ELEMENTS_TEXT(
+                                  CAST(:company_ids AS JSONB)
+                              ) AS selected(value)
+                          )
+                    )
+                """)
+            preference_clause = ""
+            if preference_filters:
+                preference_clause = " AND (" + " OR ".join(preference_filters) + ")"
+            where_clause = (
+                "WHERE d.date_start >= CURRENT_DATE - "
+                "CAST(:period_days AS INTEGER)" + preference_clause
+            )
 
             # Query for personalized deals
             deals = session.execute(text(f"""
@@ -1405,14 +1415,73 @@ def send_daily_digest():
                 {where_clause}
                 ORDER BY f.total_projected_current_amount DESC NULLS LAST
                 LIMIT 15
-            """)).fetchall()
+            """), deal_params).fetchall()
 
             # Count total matching deals
             deal_count = session.execute(text(f"""
                 SELECT COUNT(DISTINCT d.id)
                 FROM deals d
                 {where_clause}
-            """)).scalar()
+            """), deal_params).scalar()
+
+            catalysts = []
+            catalyst_count = 0
+            if user.include_catalysts:
+                catalyst_params = {
+                    "catalyst_days": user.catalyst_days,
+                    "active_statuses": list(ACTIVE_TRIAL_STATUSES),
+                    "company_ids": json.dumps(company_ids),
+                }
+                catalyst_company_filter = ""
+                if company_ids:
+                    catalyst_company_filter = """
+                        AND EXISTS (
+                            SELECT 1 FROM clinical_trial_companies company_link
+                            WHERE company_link.nct_id = trial.nct_id
+                              AND company_link.company_id IN (
+                                  SELECT selected.value::INTEGER
+                                  FROM JSONB_ARRAY_ELEMENTS_TEXT(
+                                      CAST(:company_ids AS JSONB)
+                                  ) AS selected(value)
+                              )
+                        )
+                    """
+                catalyst_where = f"""
+                    WHERE trial.primary_completion_date BETWEEN CURRENT_DATE
+                          AND CURRENT_DATE + CAST(:catalyst_days AS INTEGER)
+                      AND trial.overall_status = ANY(
+                          CAST(:active_statuses AS TEXT[])
+                      )
+                      {catalyst_company_filter}
+                """
+                catalysts = session.execute(text(f"""
+                    SELECT trial.nct_id, trial.brief_title,
+                           trial.primary_completion_date::TEXT AS date,
+                           trial.primary_completion_date_type AS date_type,
+                           trial.phases, trial.lead_sponsor_name,
+                           trial.source_url,
+                           STRING_AGG(
+                               DISTINCT linked_company.name, ', '
+                               ORDER BY linked_company.name
+                           ) AS companies
+                    FROM clinical_trials trial
+                    LEFT JOIN clinical_trial_companies company_link
+                           ON company_link.nct_id = trial.nct_id
+                    LEFT JOIN companies linked_company
+                           ON linked_company.id = company_link.company_id
+                    {catalyst_where}
+                    GROUP BY trial.nct_id, trial.brief_title,
+                             trial.primary_completion_date,
+                             trial.primary_completion_date_type,
+                             trial.phases, trial.lead_sponsor_name,
+                             trial.source_url
+                    ORDER BY trial.primary_completion_date, trial.nct_id
+                    LIMIT 15
+                """), catalyst_params).fetchall()
+                catalyst_count = session.execute(text(f"""
+                    SELECT COUNT(*) FROM clinical_trials trial
+                    {catalyst_where}
+                """), catalyst_params).scalar()
 
             # Build sections
             digest_type = "Daily" if user.frequency == 'daily' else "Weekly"
@@ -1421,6 +1490,10 @@ def send_daily_digest():
                     "title": f"{digest_type} Summary",
                     "stats": [
                         {"label": "New Deals", "value": str(deal_count)},
+                        *([{
+                            "label": f"Catalysts (next {user.catalyst_days} days)",
+                            "value": str(catalyst_count),
+                        }] if user.include_catalysts else []),
                     ],
                 },
                 {
@@ -1435,12 +1508,38 @@ def send_daily_digest():
                 },
             ]
 
-            html = build_digest_html(f"Your {digest_type} Deal Digest", sections)
+            if user.include_catalysts:
+                sections.append({
+                    "title": (
+                        f"Upcoming Clinical Catalysts — Next "
+                        f"{user.catalyst_days} Days"
+                    ),
+                    "type": "catalysts",
+                    "items": [{
+                        "title": catalyst.brief_title,
+                        "nct_id": catalyst.nct_id,
+                        "date": catalyst.date,
+                        "date_type": catalyst.date_type,
+                        "phase": ", ".join(catalyst.phases or []),
+                        "sponsor": catalyst.lead_sponsor_name,
+                        "companies": catalyst.companies,
+                        "source_url": catalyst.source_url,
+                    } for catalyst in catalysts],
+                })
+
+            html = build_digest_html(
+                f"Your {digest_type} Intelligence Digest",
+                sections,
+            )
 
             # Use digest_email if set, otherwise fall back to user_email
             recipient_email = user.digest_email if user.digest_email else user.user_email
 
-            if send_digest_email(recipient_email, f"BD Intelligence — {digest_type} Digest", html):
+            if send_digest_email(
+                recipient_email,
+                f"BD Intelligence — {digest_type} Intelligence Digest",
+                html,
+            ):
                 sent += 1
                 total_deals_sent += deal_count
                 logger.info("Digest sent", user_id=user.user_id, email=recipient_email, deals=deal_count, frequency=user.frequency)

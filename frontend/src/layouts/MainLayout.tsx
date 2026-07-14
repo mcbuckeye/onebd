@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Search, BarChart3, Building2,
   Network, FileText, ScrollText, Star, MessageSquare,
   Menu, LogOut, ChevronLeft, Scale, Shield, HelpCircle,
-  Users, Brain, Settings
+  Users, Brain, Settings, CalendarDays
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
+  { to: '/catalysts', icon: CalendarDays, label: 'Catalysts' },
   { to: '/competitors', icon: Building2, label: 'Competitors' },
   { to: '/graph', icon: Network, label: 'Network' },
   { to: '/filings', icon: FileText, label: 'Filings' },

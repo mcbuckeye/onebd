@@ -9,6 +9,8 @@ interface DigestSettings {
   therapy_areas: string[];
   company_ids: number[];
   email: string | null;
+  include_catalysts: boolean;
+  catalyst_days: number;
 }
 
 interface Company {
@@ -26,6 +28,8 @@ export default function SettingsPage() {
     therapy_areas: [],
     company_ids: [],
     email: user?.email || null,
+    include_catalysts: true,
+    catalyst_days: 30,
   });
   
   const [therapyAreaOptions, setTherapyAreaOptions] = useState<string[]>([]);
@@ -199,6 +203,47 @@ export default function SettingsPage() {
             <option value="weekly">Weekly</option>
             <option value="off">Off</option>
           </select>
+        </div>
+
+        {/* Catalyst Schedule */}
+        <div className="mb-6 rounded-lg border border-slate-700 bg-slate-800/40 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="font-medium text-slate-200">Include upcoming clinical catalysts</div>
+              <div className="mt-1 text-sm text-slate-500">
+                Add sourced trial primary-completion dates to this scheduled report.
+              </div>
+            </div>
+            <button
+              onClick={() => setSettings({ ...settings, include_catalysts: !settings.include_catalysts })}
+              disabled={!settings.enabled}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                settings.include_catalysts ? 'bg-blue-600' : 'bg-slate-700'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                settings.include_catalysts ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+          <label className="mt-4 block text-sm font-medium text-slate-300">
+            Look-ahead window
+            <select
+              value={settings.catalyst_days}
+              onChange={(e) => setSettings({ ...settings, catalyst_days: Number(e.target.value) })}
+              disabled={!settings.enabled || !settings.include_catalysts}
+              className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-200 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            >
+              <option value={14}>Next 14 days</option>
+              <option value={30}>Next 30 days</option>
+              <option value={60}>Next 60 days</option>
+              <option value={90}>Next 90 days</option>
+              <option value={180}>Next 180 days</option>
+            </select>
+          </label>
+          <p className="mt-2 text-xs text-slate-500">
+            When tracked companies are selected, catalyst rows require an exact normalized company link.
+          </p>
         </div>
 
         {/* Email Address */}
