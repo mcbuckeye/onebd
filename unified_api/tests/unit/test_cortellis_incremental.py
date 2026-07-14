@@ -6,9 +6,13 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from src.api_client import CortellisAPIError, CortellisClient, SearchResult
+from src.api_client import CortellisAPIError, CortellisClient, DealRecord, SearchResult
 from src.config import CortellisConfig
-from src.sync import assess_catalog_coverage, assess_zero_result_window
+from src.sync import (
+    assess_catalog_coverage,
+    assess_zero_result_window,
+    validate_catalog_membership_by_retrieval,
+)
 
 
 def test_updated_deals_query_replays_overlap_window():
@@ -90,6 +94,94 @@ def test_catalog_coverage_rejects_an_incomplete_api_scan():
     )
 
     assert coverage["scan_complete"] is False
+
+
+def _deal_record(deal_id: int) -> DealRecord:
+    return DealRecord(id=deal_id, raw_xml=f'<Deal id="{deal_id}"/>', parsed_data={})
+
+
+def test_retrieval_membership_audit_proves_every_local_id():
+    client = Mock()
+    client.get_deal_records.side_effect = lambda ids: [
+        _deal_record(deal_id) for deal_id in ids
+    ]
+
+    result = validate_catalog_membership_by_retrieval(
+        client,
+        list(range(1, 66)),
+        batch_size=30,
+        workers=1,
+    )
+
+    assert result == {
+        "requested_total": 65,
+        "returned_unique_total": 65,
+        "complete": True,
+        "missing_ids": [],
+        "unexpected_ids": [],
+        "duplicate_ids": [],
+        "errors": [],
+    }
+    assert [call.args[0] for call in client.get_deal_records.call_args_list] == [
+        list(range(1, 31)),
+        list(range(31, 61)),
+        list(range(61, 66)),
+    ]
+
+
+def test_retrieval_membership_audit_never_certifies_an_empty_catalog():
+    result = validate_catalog_membership_by_retrieval(Mock(), [])
+
+    assert result["complete"] is False
+    assert result["requested_total"] == 0
+
+
+def test_retrieval_membership_audit_rejects_omitted_ids():
+    client = Mock()
+    client.get_deal_records.return_value = [_deal_record(1), _deal_record(3)]
+
+    result = validate_catalog_membership_by_retrieval(client, [1, 2, 3])
+
+    assert result["complete"] is False
+    assert result["missing_ids"] == [2]
+    assert result["returned_unique_total"] == 2
+
+
+def test_retrieval_membership_audit_rejects_duplicates_and_unexpected_ids():
+    client = Mock()
+    client.get_deal_records.return_value = [
+        _deal_record(1),
+        _deal_record(1),
+        _deal_record(9),
+    ]
+
+    result = validate_catalog_membership_by_retrieval(client, [1, 2])
+
+    assert result["complete"] is False
+    assert result["missing_ids"] == [2]
+    assert result["unexpected_ids"] == [9]
+    assert result["duplicate_ids"] == [1]
+
+
+def test_retrieval_membership_audit_preserves_batch_errors():
+    client = Mock()
+
+    def fetch(ids):
+        if ids[0] == 31:
+            raise CortellisAPIError("temporary failure")
+        return [_deal_record(deal_id) for deal_id in ids]
+
+    client.get_deal_records.side_effect = fetch
+    result = validate_catalog_membership_by_retrieval(
+        client,
+        list(range(1, 40)),
+        batch_size=30,
+        workers=1,
+    )
+
+    assert result["complete"] is False
+    assert result["missing_ids"] == list(range(31, 40))
+    assert result["errors"] == ["batch 31..39: temporary failure"]
 
 
 def test_parallel_catalog_scan_fetches_every_page_once():
@@ -212,6 +304,32 @@ def test_contract_lookup_accepts_successful_empty_response_as_no_contracts():
     ))
 
     assert client.get_deal_contracts(123) == []
+
+
+def test_deal_source_lookup_preserves_raw_response_and_citations():
+    client = CortellisClient(CortellisConfig("user", "password", "https://example.test"))
+    request = httpx.Request("GET", "https://example.test/sources")
+    raw_xml = (
+        '<?xml version="1.0"?><dealSourcesOutput><Sources>'
+        '<Source id="1234" type="News"/>'
+        '<Source id="5678" type="Press Release"/>'
+        '</Sources></dealSourcesOutput>'
+    )
+    client._request = Mock(return_value=httpx.Response(
+        200,
+        request=request,
+        text=raw_xml,
+    ))
+
+    result = client.get_deal_sources(99)
+
+    assert result.deal_id == 99
+    assert result.raw_response == raw_xml
+    assert [(source.source_id, source.source_type) for source in result.sources] == [
+        ("1234", "News"),
+        ("5678", "Press Release"),
+    ]
+    assert client._request.call_args.kwargs["params"] == {"fmt": "xml"}
 
 
 @pytest.mark.parametrize("status_code", [404, 503])

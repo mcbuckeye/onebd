@@ -135,6 +135,12 @@ NOTE: Only ~27% of deals have disclosed financial values. When finding "largest 
 - has_text (BOOLEAN)
 - date_contract (DATETIME)
 
+**cortellis_deal_sources** - Source citations linked by Cortellis to deals
+- deal_id (INTEGER, FK)
+- source_id (VARCHAR) - Cortellis source record identifier
+- source_type (VARCHAR) - e.g., press release, news, publication
+- is_current (BOOLEAN) - current citations from the latest source response
+
 **contract_content** - Full text content of contracts (for full-text search)
 - id (INTEGER, PK)
 - contract_id (INTEGER, FK)

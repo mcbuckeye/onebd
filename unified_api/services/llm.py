@@ -60,6 +60,7 @@ Available tables and key columns:
 - deal_technologies: deal_id, technology_id
 - deal_finance_summary: deal_id, total_projected_current_amount, total_paid_amount (in millions USD)
 - deal_timeline_events: deal_id, event_date, event_type, stage, summary
+- cortellis_deal_sources: deal_id, source_id, source_type, is_current
 - contract_chunks: id, deal_id, contract_id, content
 
 Important notes:

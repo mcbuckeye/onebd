@@ -87,6 +87,12 @@ class ContractInfo(BaseModel):
     has_text: bool = False
 
 
+class DealSourceInfo(BaseModel):
+    """Cortellis source citation linked to a deal."""
+    source_id: str
+    source_type: str
+
+
 class FinanceSummary(BaseModel):
     """Financial summary."""
     total_paid_amount: Optional[float] = None
@@ -120,6 +126,7 @@ class DealDetail(BaseModel):
     finance: Optional[FinanceSummary] = None
     timeline: List[TimelineEvent] = []
     contracts: List[ContractInfo] = []
+    sources: List[DealSourceInfo] = []
     # Links to SEC filings (from Edgar BD)
     related_filings: List[dict] = []
 
@@ -363,6 +370,11 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
 
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
+    from unified_api.services.cortellis_deal_api_sync import (
+        ensure_deal_api_scan_schema,
+    )
+
+    ensure_deal_api_scan_schema()
 
     with get_cortellis_session() as session:
         # 1. Get deal basic info
@@ -531,6 +543,22 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
             for row in contracts_result
         ]
 
+        # 9. Get current Cortellis source citations.
+        sources_result = session.execute(text("""
+            SELECT source_id, source_type
+            FROM cortellis_deal_sources
+            WHERE deal_id = :deal_id
+              AND is_current
+            ORDER BY source_type, source_id
+        """), {"deal_id": deal_id})
+        sources = [
+            DealSourceInfo(
+                source_id=row.source_id,
+                source_type=row.source_type,
+            )
+            for row in sources_result
+        ]
+
         # Build finance summary if any financial data exists
         finance = None
         if deal.total_projected_current_amount or deal.total_paid_amount:
@@ -565,6 +593,7 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
             finance=finance,
             timeline=timeline,
             contracts=contracts,
+            sources=sources,
             related_filings=[],  # TODO: From Edgar via Neo4j
         )
 

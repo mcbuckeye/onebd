@@ -68,6 +68,11 @@ export interface ContractInfo {
   has_text: boolean;
 }
 
+export interface DealSourceInfo {
+  source_id: string;
+  source_type: string;
+}
+
 // Entity types for clickable links
 export interface EntityInfo {
   id: number;
@@ -104,6 +109,7 @@ export interface DealDetail {
   finance?: FinanceSummary;
   timeline: TimelineEvent[];
   contracts: ContractInfo[];
+  sources?: DealSourceInfo[];
 }
 
 // Entity detail types for drill-down views

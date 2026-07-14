@@ -66,6 +66,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.cortellis.scan_contract_metadata",
             "schedule": crontab(minute="*/10"),
         },
+        # Preserve exact expanded responses and per-deal source citations in a
+        # separate staggered lane so completeness survives worker restarts.
+        "scan-cortellis-deal-api-coverage": {
+            "task": "unified_api.workers.tasks.cortellis.scan_deal_api_coverage",
+            "schedule": crontab(minute="5,15,25,35,45,55"),
+        },
         # Sync graph database daily at 7:00 AM
         "sync-neo4j-graph": {
             "task": "unified_api.workers.tasks.graph.sync_all",
@@ -503,6 +509,36 @@ def scan_cortellis_contract_metadata():
         logger.error("Cortellis contract metadata scan failed", error=str(exc))
         return _finish_source_job(
             "cortellis_contracts",
+            {"status": "failed", "error": str(exc)},
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.cortellis.scan_deal_api_coverage")
+def scan_cortellis_deal_api_coverage():
+    """Archive exact expanded responses and deal-linked source citations."""
+    logger.info("Starting Cortellis deal API coverage scan")
+    _start_source_job("cortellis_deal_api")
+    if not settings.cortellis_api_username or not settings.cortellis_api_password:
+        return _finish_source_job(
+            "cortellis_deal_api",
+            {"status": "skipped", "reason": "no credentials"},
+        )
+    try:
+        from unified_api.services.cortellis_deal_api_sync import (
+            sync_deal_api_coverage_batch,
+        )
+
+        result = sync_deal_api_coverage_batch(
+            batch_size=settings.cortellis_deal_api_scan_batch_size,
+            workers=settings.cortellis_deal_api_scan_workers,
+        )
+        log_result = {key: value for key, value in result.items() if key != "error"}
+        logger.info("Cortellis deal API coverage scan complete", **log_result)
+        return _finish_source_job("cortellis_deal_api", result)
+    except Exception as exc:
+        logger.error("Cortellis deal API coverage scan failed", error=str(exc))
+        return _finish_source_job(
+            "cortellis_deal_api",
             {"status": "failed", "error": str(exc)},
         )
 

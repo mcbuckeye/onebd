@@ -432,6 +432,33 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
                   </div>
                 </Section>
               )}
+
+              {/* Cortellis source citations */}
+              {(deal.sources?.length ?? 0) > 0 && (
+                <Section
+                  title="Cortellis Citations"
+                  icon={<FileText className="w-4 h-4" />}
+                  expanded={expandedSections.has('citations')}
+                  onToggle={() => toggleSection('citations')}
+                  badge={deal.sources?.length}
+                >
+                  <div className="space-y-2">
+                    {deal.sources?.map((source) => (
+                      <div
+                        key={`${source.source_type}:${source.source_id}`}
+                        className="bg-slate-800/50 rounded-lg p-3"
+                      >
+                        <div className="text-sm font-medium text-white">
+                          {source.source_type || 'Cortellis source'}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          Source ID {source.source_id}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Section>
+              )}
             </div>
           )}
         </div>

@@ -4,7 +4,7 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Iterable, Optional, List
+from typing import Dict, Any, Iterable, Optional, List, Sequence
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .config import AppConfig
 from .api_client import CortellisClient, DealRecord
+from .cortellis_archive import (
+    archive_expanded_deal_record,
+    ensure_expanded_archive_schema,
+)
 from .models import (
     Base, Deal, Company, DealCompany, Indication, Technology, Action,
     DealAction, Territory, DealTerritory, Drug, DealDrug, Patent,
@@ -65,6 +69,90 @@ def assess_catalog_coverage(
         "scan_complete": len(remote) == expected_remote_total,
         "missing_ids": missing,
         "extra_ids": extra,
+    }
+
+
+def validate_catalog_membership_by_retrieval(
+    client: CortellisClient,
+    local_ids: Sequence[int],
+    *,
+    batch_size: int = 30,
+    workers: int = 1,
+) -> dict[str, Any]:
+    """Prove that every local deal ID is retrievable from Cortellis.
+
+    The search endpoint's offset pagination can repeat and omit IDs even with
+    ``dealId`` sorting.  Batch retrieval is authoritative for a supplied ID,
+    so retrieving the complete local set provides a dependable membership
+    proof when the API's advertised cardinality also equals the local count.
+    """
+    requested = list(dict.fromkeys(int(deal_id) for deal_id in local_ids))
+    batch_size = max(1, min(30, int(batch_size)))
+    workers = max(1, min(16, int(workers)))
+    batches = [
+        requested[index:index + batch_size]
+        for index in range(0, len(requested), batch_size)
+    ]
+    returned_ids: set[int] = set()
+    duplicate_ids: set[int] = set()
+    unexpected_ids: set[int] = set()
+    errors: list[str] = []
+
+    def fetch(batch: list[int]) -> tuple[list[int], list[int]]:
+        records = client.get_deal_records(batch)
+        return batch, [int(record.id) for record in records]
+
+    def record_result(batch: list[int], result_ids: list[int]) -> None:
+        batch_set = set(batch)
+        seen_in_batch: set[int] = set()
+        for deal_id in result_ids:
+            if deal_id in seen_in_batch or deal_id in returned_ids:
+                duplicate_ids.add(deal_id)
+            seen_in_batch.add(deal_id)
+            if deal_id not in batch_set:
+                unexpected_ids.add(deal_id)
+            returned_ids.add(deal_id)
+
+    if workers > 1 and len(batches) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(fetch, batch): batch for batch in batches}
+            for future in as_completed(futures):
+                batch = futures[future]
+                try:
+                    completed_batch, result_ids = future.result()
+                    record_result(completed_batch, result_ids)
+                except Exception as exc:
+                    errors.append(
+                        f"batch {batch[0]}..{batch[-1]}: {exc}"
+                    )
+    else:
+        for batch in batches:
+            try:
+                completed_batch, result_ids = fetch(batch)
+                record_result(completed_batch, result_ids)
+            except Exception as exc:
+                errors.append(f"batch {batch[0]}..{batch[-1]}: {exc}")
+
+    requested_set = set(requested)
+    missing_ids = sorted(requested_set - returned_ids)
+    unexpected = sorted(unexpected_ids | (returned_ids - requested_set))
+    duplicates = sorted(duplicate_ids)
+    complete = bool(
+        requested
+        and not errors
+        and not missing_ids
+        and not unexpected
+        and not duplicates
+        and returned_ids == requested_set
+    )
+    return {
+        "requested_total": len(requested),
+        "returned_unique_total": len(returned_ids),
+        "complete": complete,
+        "missing_ids": missing_ids,
+        "unexpected_ids": unexpected,
+        "duplicate_ids": duplicates,
+        "errors": errors,
     }
 
 
@@ -689,6 +777,12 @@ class SyncService:
         Base.metadata.create_all(self.engine)
         logger.info("Database tables created")
 
+    def _ensure_expanded_archive_schema(self) -> None:
+        """Commit archive DDL before any sync batch can be rolled back."""
+        with self.SessionLocal() as session:
+            ensure_expanded_archive_schema(session)
+            session.commit()
+
     def full_sync(self, batch_size: int = 30, use_cached_ids: bool = True) -> SyncLog:
         """
         Perform a full synchronization of all deals.
@@ -700,6 +794,7 @@ class SyncService:
         Returns:
             SyncLog with statistics
         """
+        self._ensure_expanded_archive_schema()
         # Path for cached deal IDs (with metadata for resume)
         cache_dir = Path(self.config.contracts_dir).parent
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -827,6 +922,12 @@ class SyncService:
                             for record in records:
                                 existing = session.get(Deal, record.id)
                                 transformer.transform_deal(record)
+                                session.flush()
+                                archive_expanded_deal_record(
+                                    session,
+                                    record,
+                                    endpoint="deals-v2/deals/expanded#Deal",
+                                )
                                 records_processed += 1
                                 if existing:
                                     records_updated += 1
@@ -888,6 +989,7 @@ class SyncService:
         Returns:
             SyncLog with statistics
         """
+        self._ensure_expanded_archive_schema()
         with self.SessionLocal() as session:
             # Find last successful sync
             last_sync = session.query(SyncLog).filter(
@@ -971,6 +1073,12 @@ class SyncService:
                                 )
                             for record in records:
                                 transformer.transform_deal(record)
+                                session.flush()
+                                archive_expanded_deal_record(
+                                    session,
+                                    record,
+                                    endpoint="deals-v2/deals/expanded#Deal",
+                                )
                                 records_processed += 1
                                 records_updated += 1
                                 processed_ids.append(record.id)
@@ -1031,86 +1139,166 @@ class SyncService:
         scans the authoritative API IDs, inserts only missing records, and
         preserves local-only records for review instead of deleting them.
         """
+        self._ensure_expanded_archive_schema()
         batch_size = max(1, min(30, batch_size))
+        batch_size = max(1, min(30, batch_size))
+        scan_workers = max(1, min(16, int(scan_workers)))
         with CortellisClient(self.config.cortellis) as client:
-            # The API's default order is unstable across concurrent pages and
-            # can repeat IDs. ``dealId`` is a verified supported monotonic sort,
-            # making the advertised-count/unique-ID gate meaningful.
-            first = client.search_deals(
-                query="*",
-                offset=0,
-                hits=100,
-                sort_by="dealId",
-            )
-            remote_ids = list(client.get_all_deal_ids(
-                "*",
-                workers=scan_workers,
-                initial_result=first,
-                sort_by="dealId",
-            ))
-
+            source_total_before = client.search_deals(
+                query="*", offset=0, hits=1
+            ).total_results
             with self.SessionLocal() as session:
-                local_ids = session.execute(select(Deal.id)).scalars().all()
+                local_ids_before = session.execute(select(Deal.id)).scalars().all()
+
+            # Offset search remains useful for discovering and repairing gaps,
+            # but it is not accepted as the final membership proof. Avoid the
+            # unstable scan entirely when cardinalities already match.
+            coverage: dict[str, Any] | None = None
+            selected: list[int] = []
+            reconciled = 0
+            contracts_downloaded = 0
+            errors: list[str] = []
+            if len(local_ids_before) != source_total_before:
+                first = client.search_deals(
+                    query="*",
+                    offset=0,
+                    hits=100,
+                    sort_by="dealId",
+                )
+                remote_ids = list(client.get_all_deal_ids(
+                    "*",
+                    workers=scan_workers,
+                    initial_result=first,
+                    sort_by="dealId",
+                ))
                 coverage = assess_catalog_coverage(
-                    remote_ids, local_ids, first.total_results
+                    remote_ids, local_ids_before, first.total_results
                 )
                 missing = coverage["missing_ids"]
                 selected = missing[:max_missing] if max_missing else missing
-                transformer = DealTransformer(session)
-                reconciled = 0
-                errors: list[str] = []
 
-                for i in range(0, len(selected), batch_size):
-                    batch_ids = selected[i:i + batch_size]
-                    try:
-                        records = client.get_deal_records(batch_ids)
-                        returned_ids = {record.id for record in records}
-                        omitted = sorted(set(batch_ids) - returned_ids)
-                        if omitted:
-                            errors.append(f"API batch omitted deal IDs: {omitted}")
-                        for record in records:
-                            transformer.transform_deal(record)
-                            reconciled += 1
-                        session.commit()
-                    except Exception as exc:
-                        session.rollback()
-                        transformer = DealTransformer(session)
-                        errors.append(
-                            f"batch {batch_ids[0]}..{batch_ids[-1]}: {exc}"
-                        )
+                with self.SessionLocal() as session:
+                    transformer = DealTransformer(session)
+                    for i in range(0, len(selected), batch_size):
+                        batch_ids = selected[i:i + batch_size]
+                        try:
+                            records = client.get_deal_records(batch_ids)
+                            returned_ids = {record.id for record in records}
+                            omitted = sorted(set(batch_ids) - returned_ids)
+                            if omitted:
+                                errors.append(
+                                    f"API batch omitted deal IDs: {omitted}"
+                                )
+                            for record in records:
+                                transformer.transform_deal(record)
+                                session.flush()
+                                archive_expanded_deal_record(
+                                    session,
+                                    record,
+                                    endpoint="deals-v2/deals/expanded#Deal",
+                                )
+                                reconciled += 1
+                            session.commit()
+                        except Exception as exc:
+                            session.rollback()
+                            transformer = DealTransformer(session)
+                            errors.append(
+                                f"batch {batch_ids[0]}..{batch_ids[-1]}: {exc}"
+                            )
 
-                contracts_downloaded = self._download_contracts_for_deals(
-                    session, client, selected
-                ) if selected else 0
+                    contracts_downloaded = self._download_contracts_for_deals(
+                        session, client, selected
+                    ) if selected else 0
+
+            with self.SessionLocal() as session:
+                local_ids_after = session.execute(select(Deal.id)).scalars().all()
                 source_cursor = session.execute(
                     select(Deal.date_change_last).order_by(
                         Deal.date_change_last.desc().nullslast()
                     ).limit(1)
                 ).scalar()
 
-        remaining = max(0, len(coverage["missing_ids"]) - reconciled)
-        complete = coverage["scan_complete"] and remaining == 0 and not errors
+            source_total_audit_start = client.search_deals(
+                query="*", offset=0, hits=1
+            ).total_results
+            membership: dict[str, Any] | None = None
+            if source_total_audit_start == len(local_ids_after):
+                membership = validate_catalog_membership_by_retrieval(
+                    client,
+                    local_ids_after,
+                    batch_size=batch_size,
+                    workers=scan_workers,
+                )
+            source_total_after = (
+                client.search_deals(query="*", offset=0, hits=1).total_results
+                if membership is not None
+                else source_total_audit_start
+            )
+            stable_equal_cardinality = bool(
+                source_total_audit_start
+                == source_total_after
+                == len(local_ids_after)
+            )
+
+        discovered_missing = len(coverage["missing_ids"]) if coverage else 0
+        remaining = max(0, discovered_missing - reconciled)
+        membership_complete = bool(membership and membership["complete"])
+        complete = stable_equal_cardinality and membership_complete and not errors
         result: Dict[str, Any] = {
             "status": "completed" if complete else "partial",
-            "expected_remote_total": coverage["expected_remote_total"],
-            "remote_unique_total": coverage["remote_unique_total"],
-            "local_total_before": coverage["local_total"],
-            "missing_before": len(coverage["missing_ids"]),
-            "extra_local": len(coverage["extra_ids"]),
+            "expected_remote_total": source_total_after,
+            "source_total_before": source_total_before,
+            "source_total_audit_start": source_total_audit_start,
+            "source_total_after": source_total_after,
+            "remote_unique_total": (
+                coverage["remote_unique_total"] if coverage else None
+            ),
+            "offset_discovery_complete": (
+                coverage["scan_complete"] if coverage else None
+            ),
+            "local_total_before": len(local_ids_before),
+            "local_total_after": len(local_ids_after),
+            "missing_before": discovered_missing,
+            "extra_local": len(coverage["extra_ids"]) if coverage else 0,
             "reconciled": reconciled,
             "missing_remaining": remaining,
             "contracts_downloaded": contracts_downloaded,
+            "membership_audit_run": membership is not None,
+            "membership_complete": membership_complete,
+            "membership_requested": (
+                membership["requested_total"] if membership else 0
+            ),
+            "membership_retrieved": (
+                membership["returned_unique_total"] if membership else 0
+            ),
             "cursor": source_cursor.isoformat() if source_cursor else None,
             "source_data_at": source_cursor.isoformat() if source_cursor else None,
         }
-        if coverage["extra_ids"]:
+        if coverage and coverage["extra_ids"]:
             result["extra_local_sample"] = coverage["extra_ids"][:20]
+        if membership:
+            if membership["missing_ids"]:
+                result["membership_missing_sample"] = membership["missing_ids"][:20]
+            if membership["unexpected_ids"]:
+                result["membership_unexpected_sample"] = (
+                    membership["unexpected_ids"][:20]
+                )
+            if membership["duplicate_ids"]:
+                result["membership_duplicate_sample"] = (
+                    membership["duplicate_ids"][:20]
+                )
+            errors.extend(membership["errors"])
         if errors:
             result["error"] = "; ".join(errors)[:4000]
-        if not coverage["scan_complete"]:
+        elif not stable_equal_cardinality:
             result["error"] = (
-                f"API scan returned {coverage['remote_unique_total']} unique IDs "
-                f"but advertised {coverage['expected_remote_total']}"
+                "Cortellis catalog cardinality was not stable and equal: "
+                f"source_audit_start={source_total_audit_start}, "
+                f"source_after={source_total_after}, local={len(local_ids_after)}"
+            )
+        elif not membership_complete:
+            result["error"] = (
+                "Retrieval membership audit did not return every local deal ID"
             )
         return result
 
