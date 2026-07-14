@@ -55,6 +55,31 @@ jobs:
           --base-url "$BASE_URL"
           --expected-sha "$EXPECTED_SHA"
           --github-output "$GITHUB_OUTPUT"
+      - name: Verify hosted MCP and OpenAPI reach the API boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/mcp-boundary.json"
+          status="$(curl --silent --show-error --output "$response" \
+            --write-out '%{http_code}' \
+            --header 'Accept: application/json, text/event-stream' \
+            --header 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+            "$BASE_URL/mcp")"
+          case "$status" in
+            200) jq -e '.result.serverInfo.name == "onebd"' "$response" >/dev/null ;;
+            401) jq -e '.detail | test("API key"; "i")' "$response" >/dev/null ;;
+            *)
+              echo "Hosted MCP boundary returned unexpected HTTP $status"
+              cat "$response"
+              exit 1
+              ;;
+          esac
+          curl --fail --silent --show-error "$BASE_URL/openapi.json" \
+            | jq -e '.info.title == "BD Intelligence Platform" and (.paths["/api/v1/deals"] != null)' \
+            >/dev/null
+          curl --fail --silent --show-error "$BASE_URL/docs" \
+            | grep -Fq 'Swagger UI'
       - run: pip install httpx==0.28.1 PyYAML==6.0.3
       - name: Run blocking production question regressions
         run: >-

@@ -164,6 +164,19 @@ metadata, and source-health endpoints.
 Every list uses a bounded cursor (`after_id` or `after_nct_id`) and a maximum of
 100 records per request. It does not accept arbitrary SQL.
 
+Interactive Swagger documentation and the machine-readable schema are public
+documentation surfaces at:
+
+- `https://onebd.pchomelab.com/docs`
+- `https://onebd.pchomelab.com/openapi.json`
+
+In Swagger UI, select **Authorize**, enter the complete OneBD key in the
+`APIKeyHeader` field, and then use **Try it out** on an endpoint permitted by
+that key's scopes. Direct clients send the same value in the `X-API-Key`
+request header. Publishing the schema does not make the underlying data public;
+each operation still applies key expiry, revocation, scope, dataset, and owner
+access policy.
+
 An administrator issues a key through `POST /api/admin/api-credentials`. The
 plaintext is returned once; only its SHA-256 hash is stored. Keys have scopes,
 optional expiry, use counters, last-use path/time, and immediate revocation.
