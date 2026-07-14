@@ -107,7 +107,7 @@ authoritative entitlement record.
 |---|---:|---|
 | SEC EDGAR | 330,818 documents; 330,295 texts; 3,580,771 chunks | Filings, exhibits/contracts, source URLs, extracted deals, parties, assets, indications and terms |
 | ClinicalTrials.gov | 593,857 current trials | Sponsors, phase, status/history, design, endpoints, enrollment, dates, results, interventions, conditions, collaborators and locations |
-| PubChem | 5,055 exact structure matches | CID, InChIKey, connectivity SMILES and source-verified public titles |
+| PubChem | 5,054 accepted exact structure matches; 1 rejected context conflict | CID, InChIKey, connectivity SMILES and source-verified public titles |
 | ChEMBL 37 | 3,853 structure-confirmed drugs | ChEMBL ID, molecule fields, 3,851 typed INN aliases and 6,698 development codes |
 | Open Targets 26.06 | 3,118 drug profiles; 972 targets; 2,829 diseases | Drug descriptions, mechanisms, target/disease links and development stages |
 | UniProt | 973 target records | Reviewed accessions, proteins, genes, function, disease/location and sequence metadata |
@@ -117,7 +117,9 @@ authoritative entitlement record.
 | Neo4j | Derived graph | Cross-database company/deal relationships for graph queries |
 
 The public drug enrichment is deliberately conservative: PubChem requires exact
-source-name resolution; ChEMBL requires an exact InChIKey; Open Targets follows
+source-name resolution and rejects uncorroborated development-code matches that
+conflict with a clear macromolecular-biologic context; ChEMBL requires an exact
+InChIKey; Open Targets follows
 the confirmed ChEMBL ID; and UniProt follows exact Swiss-Prot accessions. Missing
 coverage is reported as missing, not filled with fuzzy inferred biology.
 
@@ -181,6 +183,56 @@ curl -H "X-API-Key: $ONEBD_API_KEY" \
   'https://onebd.pchomelab.com/api/v1/financial-terms?term_type=upfront_payment&min_amount_usd_millions=100&limit=25'
 ```
 
+### Company asset-intelligence calls
+
+Three evidence-bounded endpoints directly support the initial business-user
+workflow. They require `deals:read` (or the umbrella `data:read`) and use the same
+owner-controlled key, scope, and dataset policy as the rest of the API.
+
+```bash
+# 1. Deal-referenced oncology biologics, modalities, and disease indications
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  'https://onebd.pchomelab.com/api/v1/companies/1319537/oncology-assets'
+
+# 2. Observed out-license and US/worldwide territory scope
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  'https://onebd.pchomelab.com/api/v1/companies/1319537/asset-rights'
+
+# 3. Manufacturing, supply, CDMO, and co-development relationships
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  'https://onebd.pchomelab.com/api/v1/companies/1319537/manufacturing-relationships'
+```
+
+The current test identities are HanchorBio Inc (`1319537`) and DotBio Pte Ltd
+(`1186341`). The endpoints intentionally distinguish observations from legal
+conclusions:
+
+- the oncology portfolio is limited to named assets referenced by company-linked
+  Cortellis Deals records; it is not a complete standalone Cortellis Drugs or
+  Companies subscription;
+- a deal-to-asset link establishes relevance to the transaction, not ownership
+  or control by the selected company, so each asset explicitly returns
+  `ownership_or_control_established: false` pending stronger evidence;
+- modalities and indications are deal-level tags, with the supporting deal IDs
+  returned for every value; a source-backed public small-molecule classification
+  excludes an asset from the biologics list, while otherwise the response states
+  when biologic classification relies only on the deal-level tag;
+- an included territory is reported as observed deal scope, not proof that the
+  company presently owns or has lost commercial rights;
+- `out_license_observed` is true only when the retained deal text explicitly says
+  out-license; a collaboration/option/license record is reported separately and
+  does not imply that the option was exercised;
+- option exercise, amendments, termination, reversion, and current rights require
+  current contract or legal verification; and
+- a partner's name or a deal territory is not treated as a manufacturing site.
+  `us_manufacturing_status` is affirmative only when source text explicitly
+  places the work in the United States.
+
+Every finding includes the Cortellis deal ID, deal date/status, company role,
+source IDs/types, and a bounded source summary excerpt. This lets an agent cite
+the evidence and preserve uncertainty instead of converting metadata into a
+stronger claim.
+
 ### Owner-controlled enforcement
 
 `GET/PUT /api/admin/data-access-policy` controls the runtime policy:
@@ -241,7 +293,11 @@ receive database credentials and cannot bypass API policy.
 
 Available MCP tools cover the catalog, deals, normalized deal financial terms,
 companies, drugs, trials, targets, diseases, EDGAR documents, and source status.
-The same key scopes, revocation, dataset toggles, and owner access mode apply.
+The dedicated `get_company_oncology_assets`, `get_company_asset_rights`, and
+`get_company_manufacturing_relationships` tools expose the three company
+workflows above without requiring an agent to join and interpret many generic
+records. The same key scopes, revocation, dataset toggles, and owner access mode
+apply.
 
 ## Recommended colleague briefing language
 

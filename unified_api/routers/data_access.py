@@ -10,6 +10,9 @@ from sqlalchemy import text
 
 from unified_api.services.api_credentials import DataPrincipal, require_data_access
 from unified_api.services.database import get_cortellis_session, get_edgar_session
+from unified_api.services.company_asset_intelligence import (
+    company_asset_intelligence,
+)
 from unified_api.services.finance_parser import FINANCE_PARSER_VERSION
 
 
@@ -502,6 +505,62 @@ async def list_companies(
             LIMIT :limit
         """), params).mappings().all()
     return _page([dict(row) for row in rows], limit, "id")
+
+
+def _company_intelligence_or_404(company_id: int) -> dict[str, Any]:
+    with get_cortellis_session() as session:
+        result = company_asset_intelligence(session, company_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return result
+
+
+@router.get("/companies/{company_id}/oncology-assets")
+async def company_oncology_assets(
+    company_id: int,
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Return deal-referenced oncology biologics, modalities, and indications."""
+    result = _company_intelligence_or_404(company_id)
+    return {
+        **result["oncology_assets"],
+        "deal_records_considered": result["deal_records_considered"],
+        "scope_truncated": result["scope_truncated"],
+    }
+
+
+@router.get("/companies/{company_id}/asset-rights")
+async def company_asset_rights(
+    company_id: int,
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Return observed license scope without inferring current legal ownership."""
+    result = _company_intelligence_or_404(company_id)
+    return {
+        **result["asset_rights"],
+        "deal_records_considered": result["deal_records_considered"],
+        "scope_truncated": result["scope_truncated"],
+    }
+
+
+@router.get("/companies/{company_id}/manufacturing-relationships")
+async def company_manufacturing_relationships(
+    company_id: int,
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Return manufacturing/CDMO relationships and conservative US-site status."""
+    result = _company_intelligence_or_404(company_id)
+    return {
+        **result["manufacturing_relationships"],
+        "deal_records_considered": result["deal_records_considered"],
+        "scope_truncated": result["scope_truncated"],
+    }
 
 
 @router.get("/drugs")

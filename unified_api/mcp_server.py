@@ -93,6 +93,45 @@ TOOLS = [
         },
     },
     {
+        "name": "get_company_oncology_assets",
+        "description": (
+            "List a company's deal-referenced oncology biologics, modalities, "
+            "disease indications, and source evidence."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"company_id": {"type": "integer", "minimum": 1}},
+            "required": ["company_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_company_asset_rights",
+        "description": (
+            "Get observed out-license and territory scope for a company's "
+            "oncology assets without inferring current legal ownership."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"company_id": {"type": "integer", "minimum": 1}},
+            "required": ["company_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_company_manufacturing_relationships",
+        "description": (
+            "Get manufacturing, CDMO, supply, and co-development relationships; "
+            "US work is reported only when source text establishes it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"company_id": {"type": "integer", "minimum": 1}},
+            "required": ["company_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "search_drugs",
         "description": "Search deal assets, aliases, phases, and public identifiers.",
         "inputSchema": {
@@ -174,6 +213,18 @@ TOOL_ROUTES = {
     "get_deal": ("deals/{deal_id}", "deal_id"),
     "search_financial_terms": ("financial-terms", None),
     "search_companies": ("companies", None),
+    "get_company_oncology_assets": (
+        "companies/{company_id}/oncology-assets",
+        "company_id",
+    ),
+    "get_company_asset_rights": (
+        "companies/{company_id}/asset-rights",
+        "company_id",
+    ),
+    "get_company_manufacturing_relationships": (
+        "companies/{company_id}/manufacturing-relationships",
+        "company_id",
+    ),
     "search_drugs": ("drugs", None),
     "search_clinical_trials": ("clinical-trials", None),
     "list_targets": ("biology/targets", None),

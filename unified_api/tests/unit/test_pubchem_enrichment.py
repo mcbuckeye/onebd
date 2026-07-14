@@ -8,6 +8,7 @@ from urllib.error import HTTPError
 from unified_api.services.pubchem_enrichment import (
     PubChemClient,
     enrich_pubchem_batch,
+    pubchem_match_context_supported,
 )
 
 
@@ -81,6 +82,48 @@ def test_pubchem_client_retries_throttled_request():
     sleep.assert_called_once_with(0.0)
 
 
+def test_macro_biologic_development_code_requires_corroboration():
+    supported, reason = pubchem_match_context_supported(
+        query_name="CS-2012",
+        pubchem_title="Ro 25-6981 maleate",
+        alias_type="display_name",
+        technologies=["Antibody", "Multispecific", "T-cell engager"],
+        corroborating_aliases=[],
+    )
+
+    assert supported is False
+    assert reason == "uncorroborated_macro_biologic_development_code"
+
+
+def test_macro_biologic_code_accepts_source_corroborated_pubchem_title():
+    supported, reason = pubchem_match_context_supported(
+        query_name="MK-3475",
+        pubchem_title="Pembrolizumab",
+        alias_type="development_code",
+        technologies=["Monoclonal antibody"],
+        corroborating_aliases=["Pembrolizumab"],
+    )
+
+    assert supported is True
+    assert reason == "pubchem_title_corroborated_by_source_alias"
+
+
+def test_non_code_or_non_macro_context_preserves_exact_name_lookup():
+    ordinary = pubchem_match_context_supported(
+        query_name="Aspirin",
+        pubchem_title="Aspirin",
+        technologies=["Small molecule"],
+    )
+    peptide = pubchem_match_context_supported(
+        query_name="ABC-123",
+        pubchem_title="A peptide title",
+        technologies=["Peptide", "Biological"],
+    )
+
+    assert ordinary[0] is True
+    assert peptide[0] is True
+
+
 def _lock_connection(*, acquired: bool) -> Mock:
     connection = Mock()
     connection.execute.return_value.scalar.return_value = acquired
@@ -109,6 +152,7 @@ def test_pubchem_batch_skips_before_querying_when_another_batch_holds_lock():
         "processed": 0,
         "matched": 0,
         "not_found": 0,
+        "context_conflicts": 0,
         "failed": 0,
     }
     candidates.assert_not_called()
@@ -139,6 +183,7 @@ def test_pubchem_batch_releases_lock_after_empty_batch():
         "processed": 0,
         "matched": 0,
         "not_found": 0,
+        "context_conflicts": 0,
         "failed": 0,
     }
     assert connection.execute.call_count == 2
