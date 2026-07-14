@@ -463,55 +463,25 @@ def sync_cortellis_deals():
 @celery_app.task(name="unified_api.workers.tasks.cortellis.reconcile_catalog")
 def reconcile_cortellis_catalog():
     """Restore records omitted by historical full-sync batch failures."""
-    from sqlalchemy import text
-    from unified_api.services.database import get_cortellis_engine
-
-    # This audit can run for many minutes and may be triggered manually while a
-    # scheduled invocation is queued.  Hold a session-level PostgreSQL lock for
-    # the whole task so a duplicate cannot double API traffic or overwrite the
-    # shared source-job state.
-    lock_connection = get_cortellis_engine().connect()
-    acquired = bool(lock_connection.execute(text(
-        "SELECT pg_try_advisory_lock("
-        "hashtext('onebd_cortellis_catalog_reconciliation'))"
-    )).scalar())
-    if not acquired:
-        lock_connection.close()
-        logger.info("Skipping duplicate Cortellis catalog reconciliation")
-        return {
-            "status": "skipped",
-            "reason": "Cortellis catalog reconciliation already running",
-        }
-
+    logger.info("Starting Cortellis catalog reconciliation")
+    _start_source_job("cortellis_catalog")
+    if not settings.cortellis_api_username or not settings.cortellis_api_password:
+        return _finish_source_job(
+            "cortellis_catalog", {"status": "skipped", "reason": "no credentials"}
+        )
     try:
-        logger.info("Starting Cortellis catalog reconciliation")
-        _start_source_job("cortellis_catalog")
-        if not settings.cortellis_api_username or not settings.cortellis_api_password:
-            return _finish_source_job(
-                "cortellis_catalog",
-                {"status": "skipped", "reason": "no credentials"},
-            )
-        try:
-            result = _cortellis_sync_service().reconcile_catalog(
-                max_missing=settings.cortellis_catalog_repair_limit,
-                scan_workers=settings.cortellis_catalog_scan_workers,
-                download_contracts=False,
-            )
-            logger.info("Cortellis catalog reconciliation complete", **result)
-            return _finish_source_job("cortellis_catalog", result)
-        except Exception as exc:
-            logger.error("Cortellis catalog reconciliation failed", error=str(exc))
-            return _finish_source_job(
-                "cortellis_catalog", {"status": "failed", "error": str(exc)}
-            )
-    finally:
-        try:
-            lock_connection.execute(text(
-                "SELECT pg_advisory_unlock("
-                "hashtext('onebd_cortellis_catalog_reconciliation'))"
-            ))
-        finally:
-            lock_connection.close()
+        result = _cortellis_sync_service().reconcile_catalog(
+            max_missing=settings.cortellis_catalog_repair_limit,
+            scan_workers=settings.cortellis_catalog_scan_workers,
+            download_contracts=False,
+        )
+        logger.info("Cortellis catalog reconciliation complete", **result)
+        return _finish_source_job("cortellis_catalog", result)
+    except Exception as exc:
+        logger.error("Cortellis catalog reconciliation failed", error=str(exc))
+        return _finish_source_job(
+            "cortellis_catalog", {"status": "failed", "error": str(exc)}
+        )
 
 
 @celery_app.task(name="unified_api.workers.tasks.cortellis.scan_contract_metadata")
