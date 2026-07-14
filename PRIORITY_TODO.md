@@ -324,6 +324,11 @@ and fast retrieval before adding more external data volume.
       labeled ClinicalTrials.gov layer groups oncology trial interventions through
       exact structured company links, identifies deal-asset matches, and never
       treats interventions, combination partners, or comparators as owned assets.
+- [ ] Deploy structured deal- and asset-grain REST/MCP search with composable
+      company, asset, target, disease, deal, date, value, evidence-attribution,
+      sorting, and opaque cursor filters. The implementation and real-schema SQL
+      verification are complete; mark finished after the protected merge,
+      Dokploy rollout, and scoped production HTTP/MCP checks pass.
 
 ## Implementation Status vs PRD
 

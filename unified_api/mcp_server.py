@@ -20,6 +20,9 @@ import sys
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
+
+from unified_api.services.advanced_search import AdvancedSearchRequest
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -46,6 +49,24 @@ TOOLS = [
             },
             "additionalProperties": False,
         },
+    },
+    {
+        "name": "search_deals_advanced",
+        "description": (
+            "Search deals with Boolean company/asset/target/disease filters, "
+            "date ranges, deal attributes, currency-safe value ranges, evidence "
+            "attribution, sorting, and opaque cursor pagination."
+        ),
+        "inputSchema": AdvancedSearchRequest.model_json_schema(),
+    },
+    {
+        "name": "search_assets_advanced",
+        "description": (
+            "Search deal-referenced assets using the same structured filters; "
+            "returns aliases, companies, phases, targets, diseases, modalities, "
+            "deal evidence, and explicit asset-versus-deal attribution."
+        ),
+        "inputSchema": AdvancedSearchRequest.model_json_schema(),
     },
     {
         "name": "get_deal",
@@ -237,6 +258,11 @@ TOOL_ROUTES = {
     "get_source_status": ("source-status", None),
 }
 
+POST_TOOL_ROUTES = {
+    "search_deals_advanced": "deals/search",
+    "search_assets_advanced": "assets/search",
+}
+
 
 class OneBDMCPServer:
     """Small JSON-RPC MCP server backed by the governed HTTP API."""
@@ -248,12 +274,11 @@ class OneBDMCPServer:
         client: httpx.Client | None = None,
     ) -> None:
         self.base_url = (
-            base_url or os.environ.get(
-                "ONEBD_API_URL", "https://onebd.pchomelab.com/api/v1"
-            )
+            base_url
+            or os.environ.get("ONEBD_API_URL", "https://onebd.pchomelab.com/api/v1")
         ).rstrip("/")
-        self.api_key = api_key if api_key is not None else os.environ.get(
-            "ONEBD_API_KEY"
+        self.api_key = (
+            api_key if api_key is not None else os.environ.get("ONEBD_API_KEY")
         )
         # Keep client creation lazy so the hosted transport can use an async
         # in-process ASGI client without also allocating an unused sync client.
@@ -267,9 +292,7 @@ class OneBDMCPServer:
     def _result(self, request_id: Any, result: Any) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-    def _error(
-        self, request_id: Any, code: int, message: str
-    ) -> dict[str, Any]:
+    def _error(self, request_id: Any, code: int, message: str) -> dict[str, Any]:
         return {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -277,6 +300,9 @@ class OneBDMCPServer:
         }
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        post_path = POST_TOOL_ROUTES.get(name)
+        if post_path is not None:
+            return self._call_post_tool(post_path, arguments)
         route = TOOL_ROUTES.get(name)
         if route is None:
             return {
@@ -288,10 +314,12 @@ class OneBDMCPServer:
         if path_argument:
             if path_argument not in params:
                 return {
-                    "content": [{
-                        "type": "text",
-                        "text": f"Missing required argument: {path_argument}",
-                    }],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Missing required argument: {path_argument}",
+                        }
+                    ],
                     "isError": True,
                 }
             path = path.format(**{path_argument: params.pop(path_argument)})
@@ -318,17 +346,64 @@ class OneBDMCPServer:
             }
         except (httpx.HTTPError, ValueError) as exc:
             return {
-                "content": [{
-                    "type": "text",
-                    "text": f"OneBD API request failed: {type(exc).__name__}",
-                }],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"OneBD API request failed: {type(exc).__name__}",
+                    }
+                ],
                 "isError": True,
             }
         return {
-            "content": [{
-                "type": "text",
-                "text": json.dumps(payload, default=str, separators=(",", ":")),
-            }],
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(payload, default=str, separators=(",", ":")),
+                }
+            ],
+            "structuredContent": payload,
+            "isError": False,
+        }
+
+    def _call_post_tool(self, path: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        try:
+            response = self._sync_client().post(
+                f"{self.base_url}/{path}", json=arguments, headers=headers
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            message = f"OneBD API returned HTTP {exc.response.status_code}"
+            try:
+                detail = exc.response.json().get("detail")
+                if detail:
+                    message += f": {detail}"
+            except (ValueError, AttributeError):
+                pass
+            return {
+                "content": [{"type": "text", "text": message}],
+                "isError": True,
+            }
+        except (httpx.HTTPError, ValueError) as exc:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"OneBD API request failed: {type(exc).__name__}",
+                    }
+                ],
+                "isError": True,
+            }
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(payload, default=str, separators=(",", ":")),
+                }
+            ],
             "structuredContent": payload,
             "isError": False,
         }
@@ -340,6 +415,51 @@ class OneBDMCPServer:
         client: httpx.AsyncClient,
     ) -> dict[str, Any]:
         """Call a governed route without blocking the hosted ASGI worker."""
+        post_path = POST_TOOL_ROUTES.get(name)
+        if post_path is not None:
+            headers = {"Accept": "application/json"}
+            if self.api_key:
+                headers["X-API-Key"] = self.api_key
+            try:
+                response = await client.post(
+                    f"{self.base_url}/{post_path}",
+                    json=arguments,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except httpx.HTTPStatusError as exc:
+                message = f"OneBD API returned HTTP {exc.response.status_code}"
+                try:
+                    detail = exc.response.json().get("detail")
+                    if detail:
+                        message += f": {detail}"
+                except (ValueError, AttributeError):
+                    pass
+                return {
+                    "content": [{"type": "text", "text": message}],
+                    "isError": True,
+                }
+            except (httpx.HTTPError, ValueError) as exc:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (f"OneBD API request failed: {type(exc).__name__}"),
+                        }
+                    ],
+                    "isError": True,
+                }
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(payload, default=str, separators=(",", ":")),
+                    }
+                ],
+                "structuredContent": payload,
+                "isError": False,
+            }
         route = TOOL_ROUTES.get(name)
         if route is None:
             return {
@@ -351,10 +471,12 @@ class OneBDMCPServer:
         if path_argument:
             if path_argument not in params:
                 return {
-                    "content": [{
-                        "type": "text",
-                        "text": f"Missing required argument: {path_argument}",
-                    }],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Missing required argument: {path_argument}",
+                        }
+                    ],
                     "isError": True,
                 }
             path = path.format(**{path_argument: params.pop(path_argument)})
@@ -381,17 +503,21 @@ class OneBDMCPServer:
             }
         except (httpx.HTTPError, ValueError) as exc:
             return {
-                "content": [{
-                    "type": "text",
-                    "text": f"OneBD API request failed: {type(exc).__name__}",
-                }],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"OneBD API request failed: {type(exc).__name__}",
+                    }
+                ],
                 "isError": True,
             }
         return {
-            "content": [{
-                "type": "text",
-                "text": json.dumps(payload, default=str, separators=(",", ":")),
-            }],
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(payload, default=str, separators=(",", ":")),
+                }
+            ],
             "structuredContent": payload,
             "isError": False,
         }
@@ -399,6 +525,15 @@ class OneBDMCPServer:
     def _validate_tool_arguments(
         self, name: str, arguments: dict[str, Any]
     ) -> str | None:
+        if name in POST_TOOL_ROUTES:
+            try:
+                AdvancedSearchRequest.model_validate(arguments)
+            except ValidationError as exc:
+                first = exc.errors(include_url=False)[0]
+                location = ".".join(str(item) for item in first.get("loc", ()))
+                prefix = f"{location}: " if location else ""
+                return f"Invalid advanced search arguments: {prefix}{first['msg']}"
+            return None
         tool = next((item for item in TOOLS if item["name"] == name), None)
         if tool is None:
             return f"Unknown tool: {name}"
@@ -414,10 +549,16 @@ class OneBDMCPServer:
             specification = properties[key]
             expected = specification.get("type")
             valid_type = (
-                (expected == "integer" and isinstance(value, int)
-                 and not isinstance(value, bool))
-                or (expected == "number" and isinstance(value, (int, float))
-                    and not isinstance(value, bool))
+                (
+                    expected == "integer"
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                )
+                or (
+                    expected == "number"
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                )
                 or (expected == "string" and isinstance(value, str))
             )
             if not valid_type:
@@ -445,15 +586,18 @@ class OneBDMCPServer:
             protocol = PROTOCOL_VERSION
             if requested == PROTOCOL_VERSION:
                 protocol = requested
-            return self._result(request_id, {
-                "protocolVersion": protocol,
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "onebd", "version": "1.0.0"},
-                "instructions": (
-                    "Read-only access to source-attributed OneBD data. License "
-                    "metadata is advisory; owner policy controls access."
-                ),
-            })
+            return self._result(
+                request_id,
+                {
+                    "protocolVersion": protocol,
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": "onebd", "version": "1.0.0"},
+                    "instructions": (
+                        "Read-only access to source-attributed OneBD data. License "
+                        "metadata is advisory; owner policy controls access."
+                    ),
+                },
+            )
         if method == "ping":
             return self._result(request_id, {})
         if method == "tools/list":
@@ -465,7 +609,9 @@ class OneBDMCPServer:
             name = params.get("name", "")
             arguments = params.get("arguments") or {}
             if not isinstance(arguments, dict):
-                return self._error(request_id, -32602, "Tool arguments must be an object")
+                return self._error(
+                    request_id, -32602, "Tool arguments must be an object"
+                )
             validation_error = self._validate_tool_arguments(name, arguments)
             if validation_error:
                 return self._error(request_id, -32602, validation_error)
@@ -492,9 +638,7 @@ class OneBDMCPServer:
         name = params.get("name", "")
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, dict):
-            return self._error(
-                request_id, -32602, "Tool arguments must be an object"
-            )
+            return self._error(request_id, -32602, "Tool arguments must be an object")
         validation_error = self._validate_tool_arguments(name, arguments)
         if validation_error:
             return self._error(request_id, -32602, validation_error)
