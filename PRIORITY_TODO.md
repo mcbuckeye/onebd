@@ -116,10 +116,13 @@ and fast retrieval before adding more external data volume.
          high-confidence matches (up from 19.5%).
    - [x] Add a provenance-aware parent/subsidiary relationship model without
          silently rolling subsidiaries into parents.
-   - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
-         The official SEC submissions audit now verifies each CIK against an
-         exact normalized company name before retaining SEC-reported LEIs,
-         domains, or former names; GLEIF identifier/ownership population remains.
+   - [x] Add LEI/domain identifiers and populate reviewed ownership relationships.
+         The official SEC audit verifies CIK ownership before retaining identity
+         fields. The production GLEIF pass reached 1,648/1,648 terminal company
+         states, 475 verified LEIs, zero failures/conflicts, and 4 retained local
+         Level 2 parent edges (3 verified, 1 unreviewed). Exact-LEI Wikidata
+         enrichment reached 475/475 terminal states and retained 129 reviewable
+         official domains with zero failed, shared, duplicate, or orphan records.
    - [x] Add provenance/review schemas for company LEIs/domains and public drug
          identifiers; external identifier population remains pending.
    - [x] Add conservative, resumable exact-name PubChem enrichment for CID,

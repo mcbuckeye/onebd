@@ -371,6 +371,19 @@ def ensure_clinical_trials_schema() -> None:
     _clinical_trials_schema_ready = True
 
 
+def _unique_drug_alias_match(matches: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return one drug only when an exact alias is unambiguous across drugs."""
+    by_drug: dict[int, dict[str, Any]] = {}
+    for match in matches:
+        drug_id = int(match["drug_id"])
+        current = by_drug.get(drug_id)
+        if current is None or float(match["confidence"]) > float(current["confidence"]):
+            by_drug[drug_id] = match
+    if len(by_drug) != 1:
+        return None
+    return next(iter(by_drug.values()))
+
+
 def _link_study_entities(session, fields: dict[str, Any]) -> int:
     nct_id = fields["nct_id"]
     relationships = 0
@@ -391,26 +404,28 @@ def _link_study_entities(session, fields: dict[str, Any]) -> int:
                 WHERE normalized_value = :normalized
                   AND confidence >= 0.7
             """), {"normalized": normalized}).mappings().all()
-            for match in matches:
-                inserted = session.execute(text("""
-                    INSERT INTO clinical_trial_drugs (
-                        nct_id, drug_id, intervention_name,
-                        intervention_name_hash, matched_alias, match_method,
-                        confidence, source
-                    ) VALUES (
-                        :nct_id, :drug_id, :name, :name_hash, :alias,
-                        'normalized_exact', :confidence, :source
-                    ) ON CONFLICT DO NOTHING RETURNING nct_id
-                """), {
-                    "nct_id": nct_id,
-                    "drug_id": match["drug_id"],
-                    "name": name,
-                    "name_hash": hashlib.sha256(name.encode()).hexdigest(),
-                    "alias": match["alias_value"],
-                    "confidence": match["confidence"],
-                    "source": CLINICALTRIALS_SOURCE,
-                }).scalar()
-                relationships += int(inserted is not None)
+            match = _unique_drug_alias_match([dict(row) for row in matches])
+            if match is None:
+                continue
+            inserted = session.execute(text("""
+                INSERT INTO clinical_trial_drugs (
+                    nct_id, drug_id, intervention_name,
+                    intervention_name_hash, matched_alias, match_method,
+                    confidence, source
+                ) VALUES (
+                    :nct_id, :drug_id, :name, :name_hash, :alias,
+                    'normalized_exact_unique_alias', :confidence, :source
+                ) ON CONFLICT DO NOTHING RETURNING nct_id
+            """), {
+                "nct_id": nct_id,
+                "drug_id": match["drug_id"],
+                "name": name,
+                "name_hash": hashlib.sha256(name.encode()).hexdigest(),
+                "alias": match["alias_value"],
+                "confidence": match["confidence"],
+                "source": CLINICALTRIALS_SOURCE,
+            }).scalar()
+            relationships += int(inserted is not None)
 
     session.execute(text("DELETE FROM clinical_trial_companies WHERE nct_id = :nct_id"), {
         "nct_id": nct_id,
