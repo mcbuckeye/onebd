@@ -6,9 +6,8 @@ from dataclasses import dataclass
 import json
 import re
 import time
-from urllib.error import HTTPError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 from sqlalchemy import text
 
@@ -19,6 +18,10 @@ from unified_api.services.database import (
 from unified_api.services.entity_resolution import (
     EntityResolutionService,
     normalize_identifier_value,
+)
+from unified_api.services.public_source_http import (
+    PublicSourceHttpClient,
+    RetryPolicy,
 )
 
 
@@ -45,33 +48,31 @@ class PubChemClient:
         self.timeout = timeout
         self.delay_seconds = delay_seconds
         self.max_retries = max_retries
+        self._http = PublicSourceHttpClient(
+            source="pubchem_pug_rest",
+            base_url=PUBCHEM_BASE_URL,
+            user_agent="OneBD/1.0 admin@pchomelab.com",
+            timeout=timeout,
+            min_interval_seconds=delay_seconds,
+            retry_policy=RetryPolicy(
+                max_retries=max_retries,
+                retry_statuses=frozenset({429, 503}),
+                backoff_seconds=max(delay_seconds, 1.0),
+            ),
+            opener=urlopen,
+            sleep=time.sleep,
+        )
 
     def lookup_name(self, name: str) -> PubChemMatch | None:
         encoded = quote(name, safe="")
-        url = (
-            f"{PUBCHEM_BASE_URL}/compound/name/{encoded}/property/"
+        path = (
+            f"/compound/name/{encoded}/property/"
             "Title,InChIKey,ConnectivitySMILES/JSON"
         )
-        request = Request(url, headers={"User-Agent": "OneBD/1.0 admin@pchomelab.com"})
-        for attempt in range(self.max_retries + 1):
-            try:
-                with urlopen(request, timeout=self.timeout) as response:
-                    payload = json.load(response)
-                break
-            except HTTPError as exc:
-                if exc.code == 404:
-                    return None
-                if exc.code not in {429, 503} or attempt >= self.max_retries:
-                    raise
-                retry_after = (exc.headers or {}).get("Retry-After")
-                try:
-                    retry_delay = float(retry_after)
-                except (TypeError, ValueError):
-                    retry_delay = max(self.delay_seconds, 1.0) * (2 ** attempt)
-                time.sleep(retry_delay)
-            finally:
-                if self.delay_seconds:
-                    time.sleep(self.delay_seconds)
+        response = self._http.get_json(path, not_found_is_none=True)
+        if response is None:
+            return None
+        payload = response.payload
         properties = payload.get("PropertyTable", {}).get("Properties", [])
         if len(properties) != 1:
             return None

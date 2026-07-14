@@ -7,11 +7,8 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import re
-import time
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
@@ -24,6 +21,10 @@ from unified_api.services.database import (
 from unified_api.services.entity_resolution import (
     EntityResolutionService,
     normalize_identifier_value,
+)
+from unified_api.services.public_source_http import (
+    PublicSourceHttpClient,
+    RetryPolicy,
 )
 
 
@@ -55,44 +56,25 @@ class ClinicalTrialsClient:
         self.timeout = timeout
         self.delay_seconds = delay_seconds
         self.max_retries = max_retries
+        self._http = PublicSourceHttpClient(
+            source=CLINICALTRIALS_SOURCE,
+            base_url=self.base_url,
+            user_agent=settings.clinicaltrials_user_agent,
+            timeout=timeout,
+            min_interval_seconds=delay_seconds,
+            retry_policy=RetryPolicy(max_retries=max_retries),
+            opener=urlopen,
+        )
 
     def _get_json(
         self,
         path: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        query = urlencode(
-            {key: value for key, value in (params or {}).items() if value is not None}
-        )
-        url = f"{self.base_url}{path}" + (f"?{query}" if query else "")
-        request = Request(
-            url,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": settings.clinicaltrials_user_agent,
-            },
-        )
-        for attempt in range(self.max_retries + 1):
-            try:
-                with urlopen(request, timeout=self.timeout) as response:
-                    return json.load(response)
-            except HTTPError as exc:
-                if exc.code not in {429, 500, 502, 503, 504} or attempt >= self.max_retries:
-                    raise
-                retry_after = (exc.headers or {}).get("Retry-After")
-                try:
-                    delay = float(retry_after)
-                except (TypeError, ValueError):
-                    delay = 1.0 * (2 ** attempt)
-                time.sleep(delay)
-            except URLError:
-                if attempt >= self.max_retries:
-                    raise
-                time.sleep(1.0 * (2 ** attempt))
-            finally:
-                if self.delay_seconds:
-                    time.sleep(self.delay_seconds)
-        raise RuntimeError("ClinicalTrials.gov retry loop exhausted")
+        response = self._http.get_json(path, params)
+        if response is None:  # This client never treats 404 as an empty result.
+            raise RuntimeError("ClinicalTrials.gov returned no response")
+        return response.payload
 
     def dataset_version(self) -> dict[str, Any]:
         return self._get_json("/version")
