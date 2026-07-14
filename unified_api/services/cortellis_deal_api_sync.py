@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import text
 
 from src.api_client import CortellisClient, DealRecord, DealSourcesRecord
+from src.cortellis_catalog import ensure_catalog_exclusion_schema
 from src.config import CortellisConfig
 from src.cortellis_archive import archive_expanded_deal_record
 from unified_api.config import settings
@@ -35,6 +36,7 @@ def ensure_deal_api_scan_schema() -> None:
         from src.cortellis_archive import ensure_expanded_archive_schema
 
         ensure_expanded_archive_schema(session)
+        ensure_catalog_exclusion_schema(session)
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS cortellis_deal_source_response_history (
                 id BIGSERIAL PRIMARY KEY,
@@ -103,17 +105,22 @@ def _claim_candidates(batch_size: int) -> list[int]:
                 FROM deals deal
                 LEFT JOIN cortellis_deal_api_scan_state state
                   ON state.deal_id = deal.id
-                WHERE state.deal_id IS NULL
-                   OR state.scanner_version <> :scanner_version
-                   OR (
-                       state.status = 'failed'
-                       AND state.attempts < 3
-                       AND state.next_retry_at <= NOW()
-                   )
-                   OR (
-                       state.status = 'in_progress'
-                       AND state.last_attempt_at < NOW() - INTERVAL '1 hour'
-                   )
+                LEFT JOIN cortellis_catalog_exclusions exclusion
+                  ON exclusion.deal_id = deal.id
+                WHERE exclusion.deal_id IS NULL
+                  AND (
+                       state.deal_id IS NULL
+                    OR state.scanner_version <> :scanner_version
+                    OR (
+                        state.status = 'failed'
+                        AND state.attempts < 3
+                        AND state.next_retry_at <= NOW()
+                    )
+                    OR (
+                        state.status = 'in_progress'
+                        AND state.last_attempt_at < NOW() - INTERVAL '1 hour'
+                    )
+                  )
                 ORDER BY
                     CASE WHEN state.deal_id IS NULL THEN 0 ELSE 1 END,
                     deal.id
@@ -312,7 +319,12 @@ def deal_api_scan_status() -> dict[str, Any]:
     with get_cortellis_session() as session:
         row = session.execute(text("""
             SELECT
-                (SELECT COUNT(*) FROM deals) AS eligible_deals,
+                (SELECT COUNT(*)
+                 FROM deals deal
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM cortellis_catalog_exclusions exclusion
+                     WHERE exclusion.deal_id = deal.id
+                 )) AS eligible_deals,
                 COUNT(*) FILTER (
                     WHERE state.scanner_version = :scanner_version
                       AND state.status = 'completed'
@@ -331,18 +343,34 @@ def deal_api_scan_status() -> dict[str, Any]:
                       AND state.status = 'failed'
                       AND state.attempts >= 3
                 ) AS terminal_failures,
-                (SELECT COUNT(DISTINCT deal_id)
-                 FROM cortellis_expanded_response_history
-                 WHERE endpoint = :single_endpoint) AS exact_raw_deals,
+                (SELECT COUNT(DISTINCT history.deal_id)
+                 FROM cortellis_expanded_response_history history
+                 WHERE history.endpoint = :single_endpoint
+                   AND NOT EXISTS (
+                       SELECT 1 FROM cortellis_catalog_exclusions exclusion
+                       WHERE exclusion.deal_id = history.deal_id
+                   )) AS exact_raw_deals,
                 (SELECT COUNT(*)
                  FROM cortellis_expanded_response_history) AS raw_versions,
-                (SELECT COUNT(DISTINCT deal_id)
-                 FROM cortellis_deal_source_response_history) AS source_raw_deals,
+                (SELECT COUNT(DISTINCT history.deal_id)
+                 FROM cortellis_deal_source_response_history history
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM cortellis_catalog_exclusions exclusion
+                     WHERE exclusion.deal_id = history.deal_id
+                 )) AS source_raw_deals,
                 (SELECT COUNT(*)
                  FROM cortellis_deal_source_response_history) AS source_versions,
-                (SELECT COUNT(*) FROM cortellis_deal_sources
-                 WHERE is_current) AS current_source_references
+                (SELECT COUNT(*) FROM cortellis_deal_sources source
+                 WHERE source.is_current
+                   AND NOT EXISTS (
+                       SELECT 1 FROM cortellis_catalog_exclusions exclusion
+                       WHERE exclusion.deal_id = source.deal_id
+                   )) AS current_source_references
             FROM cortellis_deal_api_scan_state state
+            WHERE NOT EXISTS (
+                SELECT 1 FROM cortellis_catalog_exclusions exclusion
+                WHERE exclusion.deal_id = state.deal_id
+            )
         """), {
             "scanner_version": DEAL_API_SCAN_VERSION,
             "single_endpoint": SINGLE_DEAL_ENDPOINT,
@@ -370,8 +398,21 @@ def deal_api_scan_status() -> dict[str, Any]:
     return result
 
 
+def _latest_catalog_proof() -> dict[str, Any]:
+    """Read the most recent successful exhaustive membership result."""
+    with get_cortellis_session() as session:
+        row = session.execute(text("""
+            SELECT last_success_at,
+                   NULLIF(counts ->> 'records_seen', '')::BIGINT
+                       AS retrievable_total
+            FROM source_job_state
+            WHERE source_key = 'cortellis_catalog'
+        """)).mappings().first()
+    return dict(row) if row else {}
+
+
 def _attach_catalog_cardinality(result: dict[str, Any]) -> dict[str, Any]:
-    """Attach the live advertised count used by the membership completion gate."""
+    """Require both full response coverage and a successful exhaustive audit."""
     config = CortellisConfig(
         username=settings.cortellis_api_username,
         password=settings.cortellis_api_password,
@@ -382,10 +423,20 @@ def _attach_catalog_cardinality(result: dict[str, Any]) -> dict[str, Any]:
             catalog_total = client.search_deals(
                 query="*", offset=0, hits=1
             ).total_results
+        catalog_proof = _latest_catalog_proof()
+        retrievable_total = catalog_proof.get("retrievable_total")
+        verified_at = catalog_proof.get("last_success_at")
         result["catalog_total"] = catalog_total
+        result["verified_retrievable_total"] = retrievable_total
+        result["catalog_verified_at"] = (
+            verified_at.isoformat()
+            if hasattr(verified_at, "isoformat")
+            else verified_at
+        )
         result["catalog_membership_complete"] = bool(
             result.get("coverage_complete")
-            and int(result.get("eligible_deals") or 0) == catalog_total
+            and retrievable_total is not None
+            and int(result.get("eligible_deals") or 0) == int(retrievable_total)
         )
     except Exception as exc:
         result["catalog_total"] = None

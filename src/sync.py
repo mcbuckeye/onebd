@@ -17,6 +17,7 @@ from .cortellis_archive import (
     archive_expanded_deal_record,
     ensure_expanded_archive_schema,
 )
+from .cortellis_catalog import reconcile_catalog_exclusions
 from .models import (
     Base, Deal, Company, DealCompany, Indication, Technology, Action,
     DealAction, Territory, DealTerritory, Drug, DealDrug, Patent,
@@ -1402,6 +1403,18 @@ class SyncService:
             and bounds_stable
             and search_counts_consistent
         )
+        exclusion_counts = {
+            "catalog_exclusions": 0,
+            "catalog_exclusions_reactivated": 0,
+        }
+        if numeric_discovery_complete:
+            with self.SessionLocal() as session:
+                exclusion_counts = reconcile_catalog_exclusions(
+                    session,
+                    accessible_ids=remote_ids,
+                    local_only_ids=extra_local_ids,
+                )
+                session.commit()
         catalog_membership_complete = bool(
             numeric_discovery_complete and not remaining_ids
         )
@@ -1438,6 +1451,7 @@ class SyncService:
             "membership_retrieved": membership["returned_unique_total"],
             "cursor": source_cursor.isoformat() if source_cursor else None,
             "source_data_at": source_cursor.isoformat() if source_cursor else None,
+            **exclusion_counts,
         }
         if extra_local_ids:
             result["extra_local_sample"] = extra_local_ids[:20]

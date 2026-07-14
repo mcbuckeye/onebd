@@ -194,7 +194,7 @@ cases:
     assertions:
       - type: equals
         path: data.0.deal_count
-        value: 23
+        value: 26
       - type: equals
         path: resolved_entities.0.company_id
         value: 18767

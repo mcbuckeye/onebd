@@ -1,10 +1,12 @@
 # BD Intelligence Platform — Question & Analysis Evaluation
 
-**Reviewed:** 2026-07-13
+**Reviewed:** 2026-07-14
 
-**Assessment baseline:** `onebd.pchomelab.com`, commit `51694c4`
+**Assessment baseline:** `onebd.pchomelab.com`, production database snapshot
+2026-07-14
 
-**Verified remediation:** through commit `51694c4`, deployed 2026-07-13
+**Verified remediation:** through the current change set, checked against the
+2026-07-14 production database
 
 **Status:** All 65 questions are versioned, executable, and have deterministic
 pass/fail oracles. Five are blocking production regressions. Eleven cases compare
@@ -21,7 +23,8 @@ The previous score treated route existence and theoretical SQL feasibility as
 successful question answering. Production checks showed that this overstated
 readiness. For example, the assessed baseline answered that Pfizer had zero 2024
 deals because it queried the exact name `Pfizer`; the canonical `Pfizer Inc`
-record has 23. The remediated deployment now returns that grounded count.
+record now has 26 after exhaustive historical recovery. The remediated
+deployment returns that grounded count.
 
 ## Rating Standard
 
@@ -41,22 +44,23 @@ questions require source-backed claims and a refusal when evidence is insufficie
 
 ## Current Production Baseline
 
-- 146,931 Cortellis deals and 52,889 companies; a full reconciliation is running
-  against the API's advertised 149,006-record catalog.
-- 39,366 deals with disclosed financial totals (26.8%).
-- 25,978 indexed contracts and 897,130 embedded contract chunks.
-- 325,541 EDGAR filings and 3.52M filing chunks.
+- 172,643 Cortellis rows and 67,177 companies. Exhaustive retrieval proved
+  172,638 currently accessible deals plus five preserved retired records; the
+  API search endpoint advertises only 149,028.
+- 41,503 deals with at least one disclosed financial total (24.0%).
+- 25,977 indexed contracts and 897,041 embedded contract chunks.
+- 330,818 EDGAR filings and 3,580,771 filing chunks.
 - 692 company mappings with CIKs (1,648 cross-references of all types).
-- 66,980 candidate deal–filing links generated from company and date proximity.
-- 2,156 patent records and 2,862 deal–patent associations; this is not a
+- 69,179 candidate deal–filing links generated from company and date proximity.
+- 2,157 patent records and 2,863 deal–patent associations; this is not a
   comprehensive patent landscape.
-- Cortellis incremental sync is current. EDGAR has an independent recent lane;
-  its historical cursor reached 2026-05-04 with a 69-day backlog on this review.
+- Cortellis incremental sync is current. Both EDGAR recent and historical lanes
+  reached 2026-07-13; the historical backlog is complete for that snapshot.
 
 ## Verified Baseline Reliability Findings
 
 1. **Entity aliases can invalidate otherwise simple questions.** Chat v2 returned
-   zero Pfizer deals for 2024; `Pfizer Inc` has 23.
+   zero Pfizer deals for 2024; `Pfizer Inc` now has 26.
 2. **Financial concepts are not governed.** A milestone question generated SQL
    against total projected deal value rather than milestone payments.
 3. **Empty-result synthesis is not grounded.** A Roche strategy question returned
@@ -109,11 +113,17 @@ The first implementation pass addresses the most consequential baseline failures
 
 All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
 
-1. Pfizer 2024 count returns 23 using canonical company ID 18767.
+1. Pfizer 2024 count returned the then-current 23 using canonical company ID
+   18767.
 2. Median milestone analytics refuses safely without generating substitute SQL.
 3. Bispecific comp candidates return the matching bispecific modality.
 4. Empty Roche strategy evidence does not introduce an unsupported history claim.
 5. Full-text EDGAR filtering returns non-empty 8-K results.
+
+The exhaustive Cortellis repair on 2026-07-14 recovered three additional
+Pfizer-linked 2024 records (deal IDs 385757, 408502, and 425099), changing the
+governed count from 23 to 26. Both the deployed answer and direct PostgreSQL
+truth return 26; the blocking regression was updated accordingly.
 
 The scorecard incorporates the directly justified rating changes below. A passing
 refusal improves safety but does not make an unavailable analytical capability
@@ -182,7 +192,7 @@ question-specific database truths are added.
 
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
-| 1 | How many deals did Pfizer do in 2024? | ✅ | Production returns 23 through deterministic company/year SQL using canonical Pfizer ID 18767. |
+| 1 | How many deals did Pfizer do in 2024? | ✅ | Production returns 26 through deterministic company/year SQL using canonical Pfizer ID 18767. |
 | 2 | What was the biggest pharma deal ever? | 🟡 | Deterministic over disclosed totals, but “pharma,” currency/amount semantics, and disclosure scope need explicit handling. |
 | 3 | Who are the top 5 most active acquirers this year? | ✅ | Dedicated analytics endpoint provides a bounded, reproducible query. |
 | 4 | How many ADC deals have been done? | 🟡 | Queryable, but ADC synonym/technology normalization and end-to-end chat accuracy are unverified. |
@@ -342,13 +352,13 @@ entities:
   company_ids: [18767]
 expected:
   type: scalar
-  value: 23
+  value: 26
   tolerance: 0
 required_evidence:
   - generated_query
   - source_record_count
 latency_budget_seconds: 10
-dataset_as_of: 2026-07-11
+dataset_as_of: 2026-07-14
 ```
 
 Evaluation rules:

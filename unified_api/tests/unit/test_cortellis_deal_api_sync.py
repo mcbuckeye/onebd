@@ -71,22 +71,33 @@ def test_archive_source_response_rejects_empty_body():
         )
 
 
-def test_catalog_cardinality_certifies_only_complete_equal_coverage():
+def test_catalog_cardinality_uses_exhaustive_proof_not_advertised_count():
     search_result = Mock(total_results=149_028)
-    with patch(
-        "unified_api.services.cortellis_deal_api_sync.CortellisClient"
-    ) as client_class:
+    with (
+        patch(
+            "unified_api.services.cortellis_deal_api_sync.CortellisClient"
+        ) as client_class,
+        patch(
+            "unified_api.services.cortellis_deal_api_sync._latest_catalog_proof",
+            return_value={
+                "retrievable_total": 172_638,
+                "last_success_at": None,
+            },
+        ),
+    ):
         client_class.return_value.__enter__.return_value.search_deals.return_value = (
             search_result
         )
         complete = _attach_catalog_cardinality({
             "coverage_complete": True,
-            "eligible_deals": 149_028,
+            "eligible_deals": 172_638,
         })
         incomplete = _attach_catalog_cardinality({
             "coverage_complete": True,
-            "eligible_deals": 149_027,
+            "eligible_deals": 172_637,
         })
 
+    assert complete["catalog_total"] == 149_028
+    assert complete["verified_retrievable_total"] == 172_638
     assert complete["catalog_membership_complete"] is True
     assert incomplete["catalog_membership_complete"] is False
