@@ -6,10 +6,11 @@ Deals API
 
 ## Conclusion
 
-The local database now contains every deal record that an exhaustive audit can
-retrieve through the configured Deals credential, but it is **not yet** a
-complete, field-for-field copy of every response surface exposed by that
-credential.
+The local database contains every deal record that an exhaustive audit can
+retrieve through the configured Deals credential and now has complete exact
+expanded-response, deal-source-citation, and contract-metadata scan coverage.
+It is not a copy of the separately licensed Cortellis Drugs, Companies, Sources,
+Patents, or Clinical Trials products.
 
 1. `deals-v2/deal/expanded/search` advertises **149,028** deals, but its count
    is not the credential's full retrievable surface. Exhaustively requesting
@@ -22,14 +23,14 @@ credential.
 2. Sampled missing IDs return complete historical expanded records through
    direct retrieval while exact `dealId` searches report zero hits. These are
    hidden or archived records excluded from search, not pagination artifacts.
-3. Lossless retention and deal-source citation ingestion are deployed, but the
-   backfill is incomplete. PostgreSQL currently holds **4,010 exact individual
-   expanded responses**, 23,702 batch-response deal fragments, **4,010 exact
-   source responses**, and 11,716 current normalized citations.
-4. Contract coverage is not complete. The durable scanner has checked
-   **50,260 of 172,643 local deals (29.11%)** and currently holds 41,939
-   contract records. Its previously measured document-path gaps remain subject
-   to the continuing scan.
+3. Lossless retention and source-citation backfills are complete for all 172,638
+   API-eligible deals. PostgreSQL holds **196,340 immutable expanded-response
+   versions**, **172,638 current source responses**, and **268,543 normalized
+   current citations**.
+4. The contract metadata scanner checked all **172,643 local deals** with zero
+   unresolved failures and retained **42,573 contract records**. Full text is
+   locally searchable for 25,977 contracts; document availability is governed
+   by the source flags and is not expected for every metadata record.
 5. The companies, drugs, indications, technologies, actions, therapy areas, and
    patents in the local database are entities embedded in deal responses. They
    are not standalone full copies of Clarivate's broader Companies or Drugs
@@ -48,9 +49,9 @@ credential.
 | Therapy areas | 21 | Therapy areas referenced by deals |
 | Patents | 2,157 | Limited patent references embedded in deals |
 | Timeline events | 232,058 | Deal timeline events and embedded payment JSON |
-| Contract metadata | 41,939 | Contract endpoint results obtained to date |
-| Exact expanded responses | 4,010 | Individual-response backfill; 23,702 additional batch fragments retained |
-| Deal source citations | 11,716 | Current normalized citations covering 4,010 deals; exact source XML retained |
+| Contract metadata | 42,573 | Complete per-deal endpoint scan |
+| Exact expanded responses | 196,340 | Immutable response versions covering every eligible deal |
+| Deal source citations | 268,543 | Current normalized citations; 172,638 exact source responses retained |
 
 ## First reconciliation result
 
@@ -159,17 +160,16 @@ product entitlements.
 - Source/local counts and the reconciliation result flow through the common
   health/alert model. The advertised search count remains useful as a drift
   signal, but it is not a completeness denominator.
-- A complete contract scan still needs to be resumed from durable database
-  state before contract completeness can be claimed. The replacement scanner
-  stores a versioned per-deal checkpoint in PostgreSQL, advances in bounded
-  scheduled batches, retries transient failures, exposes coverage and terminal
-  failures, and accepts only a successful empty response as a negative result.
-  A direct credentialed probe confirmed that no-contract deals return HTTP 200
-  with `<dealContractsOutput/>`. The legacy client incorrectly converted every
-  contract API error into `has_contract = false`.
+- The replacement contract scanner completed its versioned per-deal checkpoint
+  across all 172,643 local deals. It retries transient failures and accepts only
+  a successful empty response as a negative result. A direct credentialed probe
+  confirmed that no-contract deals return HTTP 200 with
+  `<dealContractsOutput/>`; the old behavior that converted API errors into
+  `has_contract = false` is no longer used for completeness decisions.
 - Lossless individual expanded responses and source responses are stored with
   endpoint, response hash, first/last fetch timestamps, and parser version.
-  The scheduled scanner must continue until every accessible ID is covered.
+  The completed scan covers every accessible ID and scheduled runs now maintain
+  that position for new or changed records.
 - Deal-linked source citations from `deal/sources/{dealId}` are normalized with
   source IDs, types, and API provenance. Their backfill uses the same durable
   per-deal checkpoint as exact-response retention.

@@ -131,11 +131,13 @@ and fast retrieval before adding more external data volume.
          alias. Production reached 100% terminal coverage over 33,648 eligible
          drugs and 48,358 attempted aliases: 5,055 exact source matches, 28,571
          exhausted drugs, 22 bounded failures, and no pending records.
-   - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
-         Exact PubChem InChIKeys now establish ChEMBL IDs, which in turn establish
-         Open Targets drug profiles and Ensembl target/disease relationships;
-         exact Swiss-Prot accessions now feed the reusable UniProt target adapter;
-         broader INN/development-code normalization remains.
+   - [x] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
+         Exact PubChem InChIKeys establish 3,853 ChEMBL identities, 3,118 Open
+         Targets drug profiles, 972 targets, 2,829 diseases, and 973 UniProt
+         records. ChEMBL supplies 14,134 typed aliases across 2,780 drugs,
+         including 3,851 INN aliases and 6,698 development codes. The production
+         reconciliation retained 116,807 ClinicalTrials.gov drug links that each
+         resolve to one drug and removed 14,830 ambiguous/unsupported links.
    - [x] Seed normalized Cortellis display names and conservative development-code
          candidates for all drugs without treating organization suffixes as aliases.
    - [x] Store match evidence, confidence, method, review status, reviewer, and

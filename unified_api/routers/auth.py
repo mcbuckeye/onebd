@@ -13,6 +13,7 @@ from unified_api.services.database import get_cortellis_session
 from unified_api.services.auth import (
     hash_password, verify_password, create_access_token, decode_token, TokenData
 )
+from unified_api.services.api_credentials import get_data_access_policy
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -22,7 +23,6 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str
-    role: str = "analyst"
 
 
 class LoginRequest(BaseModel):
@@ -113,6 +113,9 @@ def _ensure_password_reset_tokens_table(session):
 @router.post("/register", response_model=LoginResponse)
 async def register(req: RegisterRequest):
     """Register a new user account."""
+    if not get_data_access_policy()["allow_self_registration"]:
+        raise HTTPException(status_code=403, detail="Self-registration is disabled")
+    role = "analyst"
     with get_cortellis_session() as session:
         _ensure_users_table(session)
 
@@ -135,16 +138,16 @@ async def register(req: RegisterRequest):
                 "email": req.email,
                 "password_hash": hash_password(req.password),
                 "name": req.name,
-                "role": req.role,
+                "role": role,
             }
         )
         user_id = result.fetchone()[0]
         session.commit()
 
-    token = create_access_token(user_id, req.email, req.role)
+    token = create_access_token(user_id, req.email, role)
     return LoginResponse(
         access_token=token,
-        user=UserResponse(id=user_id, email=req.email, name=req.name, role=req.role),
+        user=UserResponse(id=user_id, email=req.email, name=req.name, role=role),
     )
 
 
