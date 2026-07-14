@@ -70,6 +70,11 @@ SOURCE_POLICIES = {
         2,
         6,
     ),
+    "wikidata_company_domain": SourcePolicy(
+        "Wikidata Company Domain Enrichment",
+        2,
+        6,
+    ),
     "clinicaltrials_recent": SourcePolicy(
         "ClinicalTrials.gov Recent Sync",
         36,

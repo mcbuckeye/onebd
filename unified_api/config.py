@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     gleif_base_url: str = "https://api.gleif.org"
     gleif_request_interval_seconds: float = 0.2
     gleif_refresh_days: int = 30
+    wikidata_query_url: str = "https://query.wikidata.org"
+    wikidata_request_interval_seconds: float = 0.25
+    wikidata_refresh_days: int = 30
 
     # CORS
     allowed_origins: str = "*"

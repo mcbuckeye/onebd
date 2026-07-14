@@ -47,6 +47,10 @@ from unified_api.services.gleif_company_identity import (
     enrich_gleif_company_ownership,
     gleif_company_identity_status,
 )
+from unified_api.services.wikidata_company_domain import (
+    enrich_wikidata_company_domains,
+    wikidata_company_domain_status,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["enrichment"])
@@ -155,6 +159,25 @@ async def gleif_company_enrichment_status():
     return gleif_company_identity_status()
 
 
+@router.post("/api/enrichment/wikidata-company-domains")
+async def enrich_wikidata_company_domain_batch(
+    batch_size: int = Query(50, ge=1, le=100),
+    refresh: bool = Query(False),
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Retain reviewable domains joined through exact verified LEIs."""
+    return enrich_wikidata_company_domains(
+        batch_size=batch_size,
+        refresh=refresh,
+    )
+
+
+@router.get("/api/enrichment/wikidata-company-domains/status")
+async def wikidata_company_enrichment_status():
+    """Return exact-LEI Wikidata domain coverage and review status."""
+    return wikidata_company_domain_status()
+
+
 @router.get("/api/enrichment/status")
 async def enrichment_status():
     """Get current enrichment status across all data sources."""
@@ -170,6 +193,7 @@ async def enrichment_status():
     europe_pmc_status = europe_pmc_enrichment_status()
     company_identity_status = sec_company_identity_status()
     gleif_identity_status = gleif_company_identity_status()
+    wikidata_domain_status = wikidata_company_domain_status()
 
     return {
         "finance_enrichment": finance_status,
@@ -183,6 +207,7 @@ async def enrichment_status():
         "europe_pmc_target_literature_enrichment": europe_pmc_status,
         "sec_company_identity_enrichment": company_identity_status,
         "gleif_company_identity_enrichment": gleif_identity_status,
+        "wikidata_company_domain_enrichment": wikidata_domain_status,
     }
 
 
