@@ -55,6 +55,11 @@ SOURCE_POLICIES = {
         settings.edgar_freshness_warn_hours,
         settings.edgar_freshness_critical_hours,
     ),
+    "sec_company_identity": SourcePolicy(
+        "SEC Company Identity Audit",
+        36,
+        72,
+    ),
     "clinicaltrials_recent": SourcePolicy(
         "ClinicalTrials.gov Recent Sync",
         36,

@@ -117,6 +117,9 @@ and fast retrieval before adding more external data volume.
    - [x] Add a provenance-aware parent/subsidiary relationship model without
          silently rolling subsidiaries into parents.
    - [ ] Add LEI/domain identifiers and populate reviewed ownership relationships.
+         The official SEC submissions audit now verifies each CIK against an
+         exact normalized company name before retaining SEC-reported LEIs,
+         domains, or former names; GLEIF identifier/ownership population remains.
    - [x] Add provenance/review schemas for company LEIs/domains and public drug
          identifiers; external identifier population remains pending.
    - [x] Add conservative, resumable exact-name PubChem enrichment for CID,

@@ -26,7 +26,9 @@ MISSING_COMPANIES = [
         "cortellis_id": 23137,
     },
     {
-        "cik": "0001140536",
+        # Official SEC submissions identify Roche Holding Ltd as CIK 0000889131.
+        # CIK 0001140536 belongs to Willis Towers Watson plc.
+        "cik": "0000889131",
         "ticker": "RHHBY",
         "name": "Roche Holding Ltd",
         "country": "Switzerland",

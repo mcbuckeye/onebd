@@ -49,6 +49,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.edgar.backfill_filings",
             "schedule": crontab(hour="*/2", minute=15),
         },
+        # Verify every CIK against the official SEC submissions identity record
+        # before retaining its self-reported LEI/domain fields.
+        "audit-sec-company-identities": {
+            "task": "unified_api.workers.tasks.edgar.company_identities",
+            "schedule": crontab(hour=3, minute=45),
+        },
         # Current trial changes run after the documented weekday source refresh.
         "sync-clinicaltrials-recent": {
             "task": "unified_api.workers.tasks.clinicaltrials.recent",
@@ -269,6 +275,27 @@ def backfill_edgar_filings():
         return _finish_source_job(
             "edgar_backfill",
             {"status": "failed", "lane": "backfill", "error": str(e)},
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.edgar.company_identities")
+def audit_sec_company_identity_records():
+    """Audit a bounded CIK batch against official SEC submissions records."""
+    logger.info("Starting SEC company identity audit")
+    _start_source_job("sec_company_identity")
+    try:
+        from unified_api.services.sec_company_identity import (
+            audit_sec_company_identities,
+        )
+
+        result = audit_sec_company_identities(batch_size=100)
+        logger.info("SEC company identity audit complete", **result)
+        return _finish_source_job("sec_company_identity", result)
+    except Exception as exc:
+        logger.error("SEC company identity audit failed", error=str(exc))
+        return _finish_source_job(
+            "sec_company_identity",
+            {"status": "failed", "error": str(exc)},
         )
 
 
