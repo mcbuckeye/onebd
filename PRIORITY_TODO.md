@@ -266,7 +266,9 @@ and fast retrieval before adding more external data volume.
 - [x] Advanced deal search with multi-criteria filters
 - [x] **Company profile enhancement** (`/company/{id}/profile` endpoint)
 - [x] **Drug/asset profile page** (`/drug/{id}/profile` endpoint)
-- [ ] SEC filing viewer
+- [x] SEC filing viewer (internal reader route, bounded chunk pagination,
+      section navigation, search-result deep links/highlighting, SEC source link,
+      and related-deal evidence; production-schema validated 2026-07-14)
 - [ ] User accounts
 - [x] Export (Excel/CSV) - Added `/export/deals/excel`, `/export/search-results/excel`
 
