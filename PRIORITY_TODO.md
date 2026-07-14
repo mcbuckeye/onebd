@@ -192,11 +192,14 @@ and fast retrieval before adding more external data volume.
           mismatches. Timelines combine those exact trial citations with explicit
           Cortellis regulatory/development milestones and exclude broad shared-
           asset joins from deal-specific claims.
-    - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
+    - [x] Company strategy summaries, competitive maps, and new-entrant alerts.
           Deterministic, evidence-limited strategy summaries, normalized deal-
           portfolio overlap maps, and first-observed indication entrant snapshots
-          are implemented on company profiles. Persisted tracked-company alert
-          state, deduplicated scheduled delivery, and review UX remain.
+          are available on company profiles. A daily baseline-safe worker now
+          persists global detections, creates at most one post-baseline alert per
+          user/detection, and exposes per-company pause/resume plus read/dismiss
+          review controls. Exact company-ID bulk retrieval replaces the prior
+          fuzzy-name/N+1 competitor activity requests.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.
 
 ### Immediate Reliability Sprint

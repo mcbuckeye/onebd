@@ -97,6 +97,12 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.alerts.check_alerts",
             "schedule": crontab(hour=8, minute=0),
         },
+        # Baseline-safe, per-user alerts for newly observed companies in a
+        # tracked competitor's leading indication spaces.
+        "check-company-entrant-alerts": {
+            "task": "unified_api.workers.tasks.alerts.company_entrants",
+            "schedule": crontab(hour=8, minute=15),
+        },
         # Persist and notify only transitions (healthy -> warning/critical ->
         # recovered), so a stale source does not page operators repeatedly.
         "monitor-source-jobs": {
@@ -1248,6 +1254,25 @@ def check_alerts():
     except Exception as e:
         logger.error("Failed to check alerts", error=str(e))
         return {"status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="unified_api.workers.tasks.alerts.company_entrants")
+def check_company_entrant_alerts():
+    """Persist and deduplicate first-observed indication entrant alerts."""
+    from unified_api.services.company_entrant_alerts import (
+        scan_company_entrant_alerts,
+    )
+    from unified_api.services.database import get_cortellis_session
+
+    logger.info("Starting company entrant alert check")
+    try:
+        with get_cortellis_session() as session:
+            result = scan_company_entrant_alerts(session)
+        logger.info("Company entrant alert check complete", **result)
+        return result
+    except Exception as exc:
+        logger.error("Company entrant alert check failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
 
 
 @celery_app.task(name="unified_api.workers.tasks.alerts.send_alert_email")
