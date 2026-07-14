@@ -2,6 +2,7 @@
 
 import pytest
 
+from unified_api.services import sec_company_identity as identity_service
 from unified_api.services.sec_company_identity import (
     _normalize_cik,
     sec_identity_name_match,
@@ -95,3 +96,25 @@ def test_sec_identifiers_normalize_lei_and_distinct_domains():
 def test_sec_identifiers_reject_invalid_source_values(payload):
     with pytest.raises(ValueError):
         sec_submission_identifiers(payload)
+
+
+def test_current_identity_schema_skips_runtime_ddl(monkeypatch):
+    monkeypatch.setattr(identity_service, "_identity_schema_ready", False)
+    monkeypatch.setattr(
+        identity_service,
+        "_identity_schema_is_current",
+        lambda: True,
+    )
+
+    def unexpected_ddl():
+        raise AssertionError("current schemas must not run identity DDL")
+
+    monkeypatch.setattr(
+        identity_service,
+        "get_entity_resolution_service",
+        unexpected_ddl,
+    )
+
+    identity_service.ensure_sec_company_identity_schema()
+
+    assert identity_service._identity_schema_ready is True
