@@ -82,3 +82,32 @@ async def test_financial_terms_page_applies_filters_and_current_parser(monkeypat
     assert "term.deal_id = :deal_id" in observed["sql"]
     assert "term.amount_usd_millions >= :min_amount_usd_millions" in observed["sql"]
     assert "GREATEST(term.rate_min_pct, term.rate_max_pct)" in observed["sql"]
+
+
+async def test_company_oncology_assets_exposes_scope_and_truncation(monkeypatch):
+    @contextmanager
+    def session():
+        yield object()
+
+    monkeypatch.setattr(data_access, "get_cortellis_session", session)
+    monkeypatch.setattr(
+        data_access,
+        "company_asset_intelligence",
+        lambda _session, company_id: {
+            "deal_records_considered": 5,
+            "scope_truncated": False,
+            "oncology_assets": {
+                "company": {"id": company_id, "name": "HanchorBio Inc"},
+                "assets": [{"asset_name": "HCB-101"}],
+            },
+        },
+    )
+
+    result = await data_access.company_oncology_assets(
+        company_id=1319537,
+        _principal=None,
+    )
+
+    assert result["assets"][0]["asset_name"] == "HCB-101"
+    assert result["deal_records_considered"] == 5
+    assert result["scope_truncated"] is False

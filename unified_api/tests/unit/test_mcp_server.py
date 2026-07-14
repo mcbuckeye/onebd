@@ -28,6 +28,9 @@ def test_initialize_and_tool_listing_are_valid_json_rpc():
         "search_deals",
         "get_deal",
         "search_financial_terms",
+        "get_company_oncology_assets",
+        "get_company_asset_rights",
+        "get_company_manufacturing_relationships",
     } <= names
 
 
@@ -128,6 +131,35 @@ def test_get_deal_moves_identifier_into_path():
 
     assert response["result"]["structuredContent"]["id"] == 123
     assert observed["url"] == "https://onebd.example/api/v1/deals/123"
+
+
+def test_company_intelligence_tool_moves_company_identifier_into_path():
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        return httpx.Response(200, json={"assets": [{"asset_name": "HCB-101"}]})
+
+    server = OneBDMCPServer(
+        base_url="https://onebd.example/api/v1",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {
+            "name": "get_company_oncology_assets",
+            "arguments": {"company_id": 1319537},
+        },
+    })
+
+    assert response["result"]["structuredContent"]["assets"][0][
+        "asset_name"
+    ] == "HCB-101"
+    assert observed["url"] == (
+        "https://onebd.example/api/v1/companies/1319537/oncology-assets"
+    )
 
 
 def test_financial_terms_tool_uses_governed_filter_parameters():

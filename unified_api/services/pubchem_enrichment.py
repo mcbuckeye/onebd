@@ -28,6 +28,23 @@ from unified_api.services.public_source_http import (
 PUBCHEM_BASE_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 _pubchem_schema_ready = False
 
+# A development code can be reused across organizations and modalities. PubChem
+# exact-name lookup alone is therefore not enough to map a macromolecular
+# program to a small-molecule record carrying the same code.
+_MACRO_BIOLOGIC_TECHNOLOGY_TERMS = (
+    "antibody",
+    "bispecific",
+    "multispecific",
+    "t-cell engager",
+    "t cell engager",
+    "cell therapy",
+    "gene therapy",
+    "viral vector",
+    "oncolytic virus",
+    "fusion protein",
+    "protein fusion",
+)
+
 
 @dataclass(frozen=True)
 class PubChemMatch:
@@ -35,6 +52,48 @@ class PubChemMatch:
     title: str
     inchikey: str | None
     connectivity_smiles: str | None
+
+
+def _is_code_like(value: str | None, alias_type: str | None = None) -> bool:
+    if alias_type == "development_code":
+        return True
+    compact = (value or "").strip()
+    return bool(re.fullmatch(
+        r"[A-Za-z]{1,10}(?:[- /]?[A-Za-z]{0,5})?[- /]?\d{2,}(?:[- /]\d+)?",
+        compact,
+    ))
+
+
+def pubchem_match_context_supported(
+    *,
+    query_name: str,
+    pubchem_title: str,
+    alias_type: str | None = None,
+    technologies: list[str] | tuple[str, ...] = (),
+    corroborating_aliases: list[str] | tuple[str, ...] = (),
+) -> tuple[bool, str]:
+    """Reject uncorroborated code collisions for clear macro-biologic assets."""
+    normalized_technologies = " | ".join(technologies).casefold()
+    macro_biologic = any(
+        term in normalized_technologies
+        for term in _MACRO_BIOLOGIC_TECHNOLOGY_TERMS
+    )
+    if not macro_biologic:
+        return True, "no_macro_biologic_conflict"
+    if not _is_code_like(query_name, alias_type):
+        return True, "query_is_not_a_development_code"
+    if (
+        _normalized_name(query_name) == _normalized_name(pubchem_title)
+        or bool(_name_tokens(query_name) & _name_tokens(pubchem_title))
+    ):
+        return True, "pubchem_title_matches_query"
+    for alias in corroborating_aliases:
+        if (
+            _normalized_name(alias) == _normalized_name(pubchem_title)
+            or bool(_name_tokens(alias) & _name_tokens(pubchem_title))
+        ):
+            return True, "pubchem_title_corroborated_by_source_alias"
+    return False, "uncorroborated_macro_biologic_development_code"
 
 
 class PubChemClient:
@@ -157,9 +216,32 @@ def ensure_pubchem_schema() -> None:
 def _candidates(batch_size: int) -> list[dict]:
     with get_cortellis_session() as session:
         return [dict(row) for row in session.execute(text("""
-            SELECT drug_id, alias_value AS query_name, normalized_value
+            SELECT candidates.drug_id,
+                   candidates.alias_value AS query_name,
+                   candidates.normalized_value,
+                   candidates.alias_type,
+                   ARRAY(
+                       SELECT DISTINCT technology.name::text
+                       FROM deal_drugs drug_deal
+                       JOIN deal_technologies deal_technology
+                         ON deal_technology.deal_id = drug_deal.deal_id
+                       JOIN technologies technology
+                         ON technology.id = deal_technology.technology_id
+                       WHERE drug_deal.drug_id = candidates.drug_id
+                       ORDER BY technology.name::text
+                   ) AS technologies,
+                   ARRAY(
+                       SELECT DISTINCT corroborating.alias_value::text
+                       FROM drug_aliases corroborating
+                       WHERE corroborating.drug_id = candidates.drug_id
+                         AND corroborating.source <> 'pubchem'
+                         AND corroborating.normalized_value
+                             <> candidates.normalized_value
+                       ORDER BY corroborating.alias_value::text
+                   ) AS corroborating_aliases
             FROM (
-                SELECT da.drug_id, da.alias_value, da.normalized_value,
+                SELECT da.drug_id, da.alias_type, da.alias_value,
+                       da.normalized_value,
                        ROW_NUMBER() OVER (
                            PARTITION BY da.drug_id
                            ORDER BY CASE da.alias_type
@@ -194,8 +276,8 @@ def _candidates(batch_size: int) -> list[dict]:
                      AND query_state.next_retry_at <= NOW())
                   )
             ) candidates
-            WHERE position = 1
-            ORDER BY drug_id
+            WHERE candidates.position = 1
+            ORDER BY candidates.drug_id
             LIMIT :batch_size
         """), {"batch_size": batch_size}).mappings().all()]
 
@@ -217,6 +299,7 @@ def enrich_pubchem_batch(
             "processed": 0,
             "matched": 0,
             "not_found": 0,
+            "context_conflicts": 0,
             "failed": 0,
         }
 
@@ -239,6 +322,7 @@ def _enrich_pubchem_candidates(
     candidates = _candidates(batch_size)
     matched = 0
     not_found = 0
+    context_conflicts = 0
     failed = 0
     for candidate in candidates:
         drug_id = candidate["drug_id"]
@@ -260,6 +344,39 @@ def _enrich_pubchem_candidates(
                         "not_found",
                     )
                     _refresh_summary_state(session, drug_id, query_name)
+                continue
+            context_supported, context_reason = pubchem_match_context_supported(
+                query_name=query_name,
+                pubchem_title=match.title,
+                alias_type=candidate.get("alias_type"),
+                technologies=candidate.get("technologies") or (),
+                corroborating_aliases=(
+                    candidate.get("corroborating_aliases") or ()
+                ),
+            )
+            if not context_supported:
+                context_conflicts += 1
+                error = json.dumps({
+                    "reason": context_reason,
+                    "pubchem_cid": match.cid,
+                    "pubchem_title": match.title,
+                    "technologies": candidate.get("technologies") or [],
+                })
+                with get_cortellis_session() as session:
+                    _record_query_state(
+                        session,
+                        drug_id,
+                        query_name,
+                        normalized_query,
+                        "context_conflict",
+                        error=error,
+                    )
+                    _refresh_summary_state(
+                        session,
+                        drug_id,
+                        query_name,
+                        error=error,
+                    )
                 continue
             evidence = json.dumps({
                 "query_name": query_name,
@@ -338,6 +455,7 @@ def _enrich_pubchem_candidates(
         "processed": len(candidates),
         "matched": matched,
         "not_found": not_found,
+        "context_conflicts": context_conflicts,
         "failed": failed,
     }
 
@@ -400,7 +518,10 @@ def _refresh_summary_state(
                 WHERE query_state.status = 'failed'
                   AND query_state.attempts >= 3
             ) AS terminal_failed,
-            COUNT(*) FILTER (WHERE query_state.status = 'matched') AS matched
+            COUNT(*) FILTER (WHERE query_state.status = 'matched') AS matched,
+            COUNT(*) FILTER (
+                WHERE query_state.status = 'context_conflict'
+            ) AS context_conflicts
         FROM drug_aliases da
         LEFT JOIN drug_public_enrichment_queries query_state
           ON query_state.drug_id = da.drug_id
@@ -418,6 +539,8 @@ def _refresh_summary_state(
         status = "pending"
     elif counts["retryable_failed"] or counts["terminal_failed"]:
         status = "failed"
+    elif counts["context_conflicts"]:
+        status = "context_conflict"
     else:
         status = "not_found"
     _record_state(
@@ -425,7 +548,7 @@ def _refresh_summary_state(
         drug_id,
         query_name,
         status,
-        error=error if status == "failed" else None,
+        error=error if status in {"failed", "context_conflict"} else None,
     )
 
 
@@ -484,7 +607,11 @@ def pubchem_enrichment_status() -> dict:
                            query_state.status = 'failed'
                            AND query_state.attempts >= 3,
                            FALSE
-                       )) AS has_terminal_failure
+                       )) AS has_terminal_failure,
+                       BOOL_OR(COALESCE(
+                           query_state.status = 'context_conflict',
+                           FALSE
+                       )) AS has_context_conflict
                 FROM drug_aliases da
                 LEFT JOIN drug_public_enrichment_queries query_state
                   ON query_state.drug_id = da.drug_id
@@ -500,10 +627,15 @@ def pubchem_enrichment_status() -> dict:
                 (SELECT COUNT(*) FROM per_drug WHERE matched) AS matched_drugs,
                 (SELECT COUNT(*) FROM per_drug
                  WHERE NOT matched AND NOT has_remaining
-                   AND NOT has_terminal_failure) AS exhausted_drugs,
+                   AND NOT has_terminal_failure
+                   AND NOT has_context_conflict) AS exhausted_drugs,
                 (SELECT COUNT(*) FROM per_drug
                  WHERE NOT matched AND NOT has_remaining
                    AND has_terminal_failure) AS failed_drugs,
+                (SELECT COUNT(*) FROM per_drug
+                 WHERE NOT matched AND NOT has_remaining
+                   AND NOT has_terminal_failure
+                   AND has_context_conflict) AS context_conflict_drugs,
                 (SELECT COUNT(*) FROM per_drug
                  WHERE NOT matched AND has_remaining) AS pending_drugs,
                 (SELECT COUNT(*) FROM drug_public_enrichment_queries
@@ -514,6 +646,9 @@ def pubchem_enrichment_status() -> dict:
                  WHERE source = 'pubchem' AND status = 'not_found') AS not_found_queries,
                 (SELECT COUNT(*) FROM drug_public_enrichment_queries
                  WHERE source = 'pubchem' AND status = 'failed') AS failed_queries,
+                (SELECT COUNT(*) FROM drug_public_enrichment_queries
+                 WHERE source = 'pubchem' AND status = 'context_conflict')
+                    AS context_conflict_queries,
                 (SELECT COUNT(DISTINCT drug_id) FROM drug_identifiers
                  WHERE source = 'pubchem' AND identifier_type = 'pubchem_cid')
                     AS drugs_with_cid,
@@ -530,7 +665,8 @@ def pubchem_enrichment_status() -> dict:
     matched = int(result["matched_drugs"] or 0)
     exhausted = int(result["exhausted_drugs"] or 0)
     failed = int(result["failed_drugs"] or 0)
-    represented = matched + exhausted + failed
+    context_conflicts = int(result["context_conflict_drugs"] or 0)
+    represented = matched + exhausted + failed + context_conflicts
     result["unattempted_or_in_progress_drugs"] = max(0, eligible - represented)
     result["terminal_coverage_pct"] = round(100 * represented / eligible, 2) if eligible else 0.0
     result["match_rate_pct"] = round(

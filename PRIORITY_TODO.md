@@ -129,8 +129,9 @@ and fast retrieval before adding more external data volume.
          InChIKey, connectivity SMILES, and source-verified public titles.
    - [x] Complete and validate PubChem coverage across every available Cortellis
          alias. Production reached 100% terminal coverage over 33,648 eligible
-         drugs and 48,358 attempted aliases: 5,055 exact source matches, 28,571
-         exhausted drugs, 22 bounded failures, and no pending records.
+         drugs and 48,358 attempted aliases: 5,054 accepted exact source matches,
+         28,571 exhausted drugs, 22 bounded failures, one rejected cross-modality
+         development-code collision, and no pending records.
    - [x] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
          Exact PubChem InChIKeys establish 3,853 ChEMBL identities, 3,118 Open
          Targets drug profiles, 972 targets, 2,829 diseases, and 973 UniProt
@@ -279,6 +280,32 @@ and fast retrieval before adding more external data volume.
       filings, contract text and clause evidence, agreement territory scope, and
       deterministic comparable transactions. Direct and Chat DD cases now compare
       section coverage with independent Cortellis and EDGAR database truth.
+
+### Colleague API/MCP Asset-Intelligence Sprint
+
+- [x] Turn the business user's three questions into deterministic acceptance
+      cases using HanchorBio (`1319537`) and DotBio (`1186341`).
+- [x] Add governed REST and MCP calls for deal-referenced oncology biologics,
+      modalities, and disease indications with deal/source evidence.
+- [x] Add a separate asset-rights response that distinguishes observed
+      out-license/territory scope from current legal ownership or loss of rights.
+- [x] Add manufacturing/CDMO relationship output that does not infer a US site
+      from a partner name or commercial territory.
+- [x] Prevent new PubChem mappings when an uncorroborated development-code match
+      conflicts with a clearly macromolecular biologic context.
+- [x] Remove the known CS-2012/Ro 25-6981 PubChem collision in production and
+      verify no derived public records remain attached to CS-2012. The retained
+      state is `context_conflict`, with zero identifiers, public profiles, target
+      links, disease links, or downstream source states for drug `200067`.
+- [ ] Deploy the REST/MCP calls and validate live HanchorBio and DotBio responses
+      against direct PostgreSQL evidence.
+- [ ] Issue a scoped colleague key after the owner supplies the desired key name,
+      recipient, and optional expiry; verify revocation and MCP setup with it.
+- [ ] Add current contract/source-document checks for option exercise,
+      amendments, termination, and rights reversion where documents are available.
+- [ ] Expand portfolio coverage beyond deal-referenced assets with an explicitly
+      entitled pipeline source or selected public pipeline sources; preserve the
+      distinction from the Cortellis Deals credential.
 
 ## Implementation Status vs PRD
 
