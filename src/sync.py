@@ -18,6 +18,7 @@ from .cortellis_archive import (
     ensure_expanded_archive_schema,
 )
 from .cortellis_catalog import reconcile_catalog_exclusions, record_catalog_proof
+from .deal_phases import derive_deal_phases
 from .models import (
     Base, Deal, Company, DealCompany, Indication, Technology, Action,
     DealAction, Territory, DealTerritory, Drug, DealDrug, Patent,
@@ -559,6 +560,7 @@ class DealTransformer:
 
         # Drugs
         self._process_drugs(deal, data)
+        deal.phase_highest_start, deal.phase_highest_now = derive_deal_phases(data)
 
         # Patents
         self._process_patents(deal, data)

@@ -173,13 +173,19 @@ def test_drug_alias_must_have_word_boundaries():
     assert resolve_drug_mentions("Adenoscanlike target", search=search) == []
 
 
-def test_milestone_analytics_does_not_substitute_total_value():
+def test_governed_milestone_analytics_is_not_refused():
     limitation = _structured_metric_limitation(
         "What is the median milestone payment for Phase 3 license deals?"
     )
 
-    assert "not available" in limitation
-    assert "not substitute" in limitation
+    assert limitation is None
+    sql = _build_governed_sql(
+        "What is the median milestone payment for Phase 3 license deals?",
+        [],
+    )
+    assert "deal_financial_terms" in sql
+    assert "term_type = 'milestone_total'" in sql
+    assert "phase_highest_start = 'Phase 3 Clinical'" in sql
 
 
 def test_generated_sql_must_use_resolved_company_id():
@@ -290,6 +296,52 @@ def test_financial_governed_sql_normalizes_currency_and_unit():
 
     assert "total_projected_current_currency = 'USD'" in sql
     assert "total_projected_current_unit = 'Million'" in sql
+
+
+@pytest.mark.parametrize(
+    ("question", "required_fragments"),
+    [
+        (
+            "Typical upfront payments for Phase 2 ADC assets?",
+            (
+                "term_type = 'upfront_payment'",
+                "phase_highest_start = 'Phase 2 Clinical'",
+                "technology.name = 'Antibody drug conjugate'",
+                "median_upfront_usd_millions",
+            ),
+        ),
+        (
+            "Typical royalty rates for oncology bispecifics?",
+            (
+                "term_type = 'royalty_rate'",
+                "therapy.name = 'Cancer'",
+                "technology.name ILIKE 'Bispecific%'",
+                "median_royalty_midpoint_pct",
+            ),
+        ),
+        (
+            "Deals with disclosed upfront over $100M.",
+            (
+                "term_type = 'upfront_payment'",
+                "upfront_usd_millions > 100",
+                "deal.id AS deal_id",
+                "LIMIT 20",
+            ),
+        ),
+    ],
+)
+def test_financial_term_questions_use_release_gated_queries(
+    question,
+    required_fragments,
+):
+    sql = _build_governed_sql(question, [])
+
+    assert sql is not None
+    for fragment in required_fragments:
+        assert fragment in sql
+    assert "basis = 'projected_current'" in sql
+    assert "parser_version = 4" in sql
+    assert "NOT term.is_breakdown" in sql
 
 
 def test_ma_governed_sql_uses_agreement_type_not_empty_deal_type():

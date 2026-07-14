@@ -124,6 +124,127 @@ truth_queries:
     GROUP BY COALESCE(d.agreement_type, 'Unknown')
     ORDER BY deal_count DESC, agreement_type
     LIMIT 20
+  phase2_adc_upfront: &phase2_adc_upfront |
+    WITH eligible_deals AS (
+      SELECT DISTINCT deal.id
+      FROM deals deal
+      JOIN deal_technologies deal_technology ON deal_technology.deal_id = deal.id
+      JOIN technologies technology ON technology.id = deal_technology.technology_id
+      WHERE deal.phase_highest_start = 'Phase 2 Clinical'
+        AND technology.name = 'Antibody drug conjugate'
+        AND deal.agreement_type ILIKE '%License%'
+    ), per_deal AS (
+      SELECT term.deal_id,
+             MAX(term.amount_usd_millions) AS upfront_usd_millions
+      FROM deal_financial_terms term
+      JOIN eligible_deals eligible ON eligible.id = term.deal_id
+      WHERE term.parser_version = 4
+        AND term.term_type = 'upfront_payment'
+        AND term.basis = 'projected_current'
+        AND term.disclosure_status = 'Known'
+        AND term.amount_usd_millions IS NOT NULL
+        AND NOT term.is_breakdown
+      GROUP BY term.deal_id
+    )
+    SELECT PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY upfront_usd_millions) AS p25_upfront_usd_millions,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY upfront_usd_millions) AS median_upfront_usd_millions,
+           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY upfront_usd_millions) AS p75_upfront_usd_millions,
+           AVG(upfront_usd_millions) AS average_upfront_usd_millions,
+           COUNT(*)::int AS disclosed_deal_count,
+           (SELECT COUNT(*)::int FROM eligible_deals) AS eligible_deal_count,
+           'projected_current, one maximum non-breakdown headline per deal' AS metric_definition,
+           'Cortellis FinanceDetail / parser v4' AS source
+    FROM per_deal
+  phase3_license_milestones: &phase3_license_milestones |
+    WITH eligible_deals AS (
+      SELECT deal.id
+      FROM deals deal
+      WHERE deal.phase_highest_start = 'Phase 3 Clinical'
+        AND deal.agreement_type ILIKE '%License%'
+    ), per_deal AS (
+      SELECT term.deal_id,
+             MAX(term.amount_usd_millions) AS milestone_usd_millions
+      FROM deal_financial_terms term
+      JOIN eligible_deals eligible ON eligible.id = term.deal_id
+      WHERE term.parser_version = 4
+        AND term.term_type = 'milestone_total'
+        AND term.basis = 'projected_current'
+        AND term.disclosure_status = 'Known'
+        AND term.amount_usd_millions IS NOT NULL
+        AND NOT term.is_breakdown
+      GROUP BY term.deal_id
+    )
+    SELECT PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY milestone_usd_millions) AS p25_milestone_usd_millions,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY milestone_usd_millions) AS median_milestone_usd_millions,
+           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY milestone_usd_millions) AS p75_milestone_usd_millions,
+           AVG(milestone_usd_millions) AS average_milestone_usd_millions,
+           COUNT(*)::int AS disclosed_deal_count,
+           (SELECT COUNT(*)::int FROM eligible_deals) AS eligible_deal_count,
+           'projected_current milestone total, one maximum non-breakdown headline per deal' AS metric_definition,
+           'Cortellis FinanceDetail / parser v4' AS source
+    FROM per_deal
+  oncology_bispecific_royalties: &oncology_bispecific_royalties |
+    WITH eligible_deals AS (
+      SELECT DISTINCT deal.id
+      FROM deals deal
+      JOIN therapy_areas therapy ON therapy.id = deal.therapy_area_id
+      JOIN deal_technologies deal_technology ON deal_technology.deal_id = deal.id
+      JOIN technologies technology ON technology.id = deal_technology.technology_id
+      WHERE therapy.name = 'Cancer'
+        AND technology.name ILIKE 'Bispecific%'
+        AND deal.agreement_type ILIKE '%License%'
+    ), per_deal AS (
+      SELECT term.deal_id,
+             MIN(COALESCE(term.rate_min_pct, term.rate_max_pct)) AS royalty_low_pct,
+             MAX(COALESCE(term.rate_max_pct, term.rate_min_pct)) AS royalty_high_pct
+      FROM deal_financial_terms term
+      JOIN eligible_deals eligible ON eligible.id = term.deal_id
+      WHERE term.parser_version = 4
+        AND term.term_type = 'royalty_rate'
+        AND term.basis = 'projected_current'
+        AND term.disclosure_status = 'Known'
+        AND (term.rate_min_pct IS NOT NULL OR term.rate_max_pct IS NOT NULL)
+        AND NOT term.is_breakdown
+      GROUP BY term.deal_id
+    ), summarized AS (
+      SELECT deal_id, royalty_low_pct, royalty_high_pct,
+             (royalty_low_pct + royalty_high_pct) / 2.0 AS royalty_midpoint_pct
+      FROM per_deal
+    )
+    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY royalty_low_pct) AS median_royalty_low_pct,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY royalty_high_pct) AS median_royalty_high_pct,
+           PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY royalty_midpoint_pct) AS p25_royalty_midpoint_pct,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY royalty_midpoint_pct) AS median_royalty_midpoint_pct,
+           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY royalty_midpoint_pct) AS p75_royalty_midpoint_pct,
+           COUNT(*)::int AS disclosed_deal_count,
+           (SELECT COUNT(*)::int FROM eligible_deals) AS eligible_deal_count,
+           'projected_current, per-deal disclosed low/high range' AS metric_definition,
+           'Cortellis FinanceDetail / parser v4' AS source
+    FROM summarized
+  upfront_over_100m: &upfront_over_100m |
+    WITH per_deal AS (
+      SELECT term.deal_id,
+             MAX(term.amount_usd_millions) AS upfront_usd_millions,
+             MAX(term.confidence) AS extraction_confidence
+      FROM deal_financial_terms term
+      WHERE term.parser_version = 4
+        AND term.term_type = 'upfront_payment'
+        AND term.basis = 'projected_current'
+        AND term.disclosure_status = 'Known'
+        AND term.amount_usd_millions IS NOT NULL
+        AND NOT term.is_breakdown
+      GROUP BY term.deal_id
+    )
+    SELECT deal.id AS id, deal.id AS deal_id, deal.title AS deal_title,
+           deal.date_start, deal.agreement_type, deal.phase_highest_start,
+           per_deal.upfront_usd_millions, per_deal.extraction_confidence,
+           'projected_current, maximum non-breakdown headline per deal' AS metric_definition,
+           'Cortellis FinanceDetail / parser v4' AS source
+    FROM per_deal
+    JOIN deals deal ON deal.id = per_deal.deal_id
+    WHERE per_deal.upfront_usd_millions > 100
+    ORDER BY per_deal.upfront_usd_millions DESC, deal.id
+    LIMIT 20
 rubric_templates:
   chat_evidence: &chat_evidence
     minimum_score: 8
@@ -214,7 +335,7 @@ cases:
 
   - id: 14
     tier: regression
-    rating: needs_work
+    rating: strong
     question: What is the median milestone payment for Phase 3 license deals?
     rubric: *chat_evidence
     request:
@@ -224,12 +345,23 @@ cases:
         message: What is the median milestone payment for Phase 3 license deals?
         mode: auto
     assertions:
+      - type: min_length
+        path: citations
+        value: 1
       - type: contains
-        path: answer
-        value: Milestone payment analytics are not available
-      - type: equals
         path: sql_query
-        value: null
+        value: deal_financial_terms
+      - type: equals
+        path: confidence.evidence_status
+        value: grounded
+    truth:
+      source: cortellis
+      query: *phase3_license_milestones
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [p25_milestone_usd_millions, median_milestone_usd_millions, p75_milestone_usd_millions, average_milestone_usd_millions, disclosed_deal_count, eligible_deal_count, metric_definition, source]
 
   - id: 23
     tier: regression
@@ -491,7 +623,7 @@ cases:
 
   - id: 11
     tier: catalog
-    rating: partial
+    rating: strong
     question: 'Typical upfront payments for Phase 2 ADC assets?'
     rubric: *chat_evidence
     request:
@@ -507,6 +639,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *phase2_adc_upfront
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [p25_upfront_usd_millions, median_upfront_usd_millions, p75_upfront_usd_millions, average_upfront_usd_millions, disclosed_deal_count, eligible_deal_count, metric_definition, source]
 
   - id: 12
     tier: catalog
@@ -581,7 +721,7 @@ cases:
 
   - id: 16
     tier: catalog
-    rating: needs_work
+    rating: strong
     question: 'Typical royalty rates for oncology bispecifics?'
     rubric: *chat_evidence
     request:
@@ -597,10 +737,18 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *oncology_bispecific_royalties
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [median_royalty_low_pct, median_royalty_high_pct, p25_royalty_midpoint_pct, median_royalty_midpoint_pct, p75_royalty_midpoint_pct, disclosed_deal_count, eligible_deal_count, metric_definition, source]
 
   - id: 17
     tier: catalog
-    rating: needs_work
+    rating: strong
     question: 'Deals with disclosed upfront over $100M.'
     rubric: *chat_evidence
     request:
@@ -616,6 +764,14 @@ cases:
       - type: excludes
         path: answer
         value: encountered an error
+    truth:
+      source: cortellis
+      query: *upfront_over_100m
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields: [id, deal_id, deal_title, date_start, agreement_type, phase_highest_start, upfront_usd_millions, extraction_confidence, metric_definition, source]
 
   - id: 18
     tier: catalog

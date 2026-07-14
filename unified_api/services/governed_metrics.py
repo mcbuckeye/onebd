@@ -37,23 +37,23 @@ METRIC_DEFINITIONS = {
     },
     "upfront_payment": {
         "label": "Upfront payment",
-        "status": "structured_extraction_beta",
-        "definition": "Non-contingent consideration payable at signing or closing.",
-        "source": "deal_financial_terms (Cortellis finance JSON; parser v4, release-gated)",
-        "unit": "millions, source currency",
+        "status": "supported_governed_patterns",
+        "definition": "Disclosed non-contingent consideration payable at signing or closing; governed analytics use projected-current, known, non-breakdown USD terms and one maximum headline term per deal.",
+        "source": "deal_financial_terms (Cortellis FinanceDetail JSON; parser v4)",
+        "unit": "USD millions",
     },
     "milestone_payment": {
         "label": "Milestone payment",
-        "status": "structured_extraction_beta",
-        "definition": "Contingent development, regulatory, or commercial payment potential.",
-        "source": "deal_financial_terms (Cortellis finance JSON; parser v4, release-gated)",
-        "unit": "millions, source currency",
+        "status": "supported_governed_patterns",
+        "definition": "Disclosed aggregate contingent milestone potential; governed analytics use projected-current milestone totals, not component sums.",
+        "source": "deal_financial_terms (Cortellis FinanceDetail JSON; parser v4)",
+        "unit": "USD millions",
     },
     "royalty_rate": {
         "label": "Royalty rate",
-        "status": "structured_extraction_beta",
-        "definition": "Contractual sales royalty percentage or tiered range.",
-        "source": "deal_financial_terms (Cortellis finance JSON; parser v4, release-gated)",
+        "status": "supported_governed_patterns",
+        "definition": "Disclosed contractual sales royalty percentage or tiered range; governed analytics summarize one low/high range per deal.",
+        "source": "deal_financial_terms (Cortellis FinanceDetail JSON; parser v4)",
         "unit": "percent",
     },
     "acquisition_premium": {
@@ -87,6 +87,19 @@ def metric_limitation(question: str) -> Optional[str]:
     if not metric_key:
         return None
     metric = METRIC_DEFINITIONS[metric_key]
+    if metric_key != "acquisition_premium":
+        from unified_api.services.governed_financial_queries import (
+            build_governed_financial_sql,
+        )
+
+        if build_governed_financial_sql(question) is not None:
+            return None
+        return (
+            f"{metric['label']} data is available, but this question does not "
+            "match a governed analytical pattern yet. The platform will not "
+            "generate an unconstrained financial-term query or substitute total "
+            f"deal value. Definition: {metric['definition']}"
+        )
     return (
         f"{metric['label']} analytics are not available as a governed structured "
         "metric yet. The platform will not substitute projected total deal value. "
