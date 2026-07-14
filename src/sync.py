@@ -170,31 +170,116 @@ def validate_catalog_membership_by_retrieval(
     }
 
 
-def retrieval_covers_advertised_catalog(
-    membership: dict[str, Any],
-    source_total_start: int,
-    source_total_end: int,
-) -> bool:
-    """Return whether local retrieval covers the API's stable active catalog.
+def enumerate_accessible_deal_ids(
+    client: CortellisClient,
+    minimum_id: int,
+    maximum_id: int,
+    *,
+    batch_size: int = 30,
+    workers: int = 1,
+) -> dict[str, Any]:
+    """Exhaustively enumerate retrievable deals inside an inclusive ID range.
 
-    A local database may retain deals removed from the current catalog. If the
-    API count is stable and the retrievable local subset exactly equals that
-    advertised count, every currently advertised deal is necessarily present
-    even though the local database is not an exact mirror.
+    Cortellis search pagination and its advertised total omit directly
+    retrievable historical deals. Deal IDs are integral and bounded, so testing
+    every integer through the 30-ID bulk endpoint is the authoritative catalog
+    discovery mechanism available to this credential.
     """
-    return bool(
-        source_total_start > 0
-        and source_total_start == source_total_end
-        and membership["returned_unique_total"] == source_total_end
-        and not membership["errors"]
-        and not membership["unexpected_ids"]
-        and not membership["duplicate_ids"]
-    )
+    minimum_id = int(minimum_id)
+    maximum_id = int(maximum_id)
+    if minimum_id <= 0 or maximum_id < minimum_id:
+        raise ValueError("Cortellis catalog ID bounds are invalid")
 
+    batch_size = max(1, min(30, int(batch_size)))
+    workers = max(1, min(16, int(workers)))
+    batches = [
+        list(range(start, min(start + batch_size, maximum_id + 1)))
+        for start in range(minimum_id, maximum_id + 1, batch_size)
+    ]
+    accessible_ids: set[int] = set()
+    duplicate_ids: set[int] = set()
+    unexpected_ids: set[int] = set()
+    errors: list[str] = []
 
-def catalog_discovery_required(local_total: int, source_total: int) -> bool:
-    """Return whether search discovery could reveal a cardinality deficit."""
-    return local_total < source_total
+    def fetch(
+        batch: list[int],
+    ) -> tuple[list[int], list[int], list[str]]:
+        try:
+            records = client.get_deal_records(batch)
+            return batch, [int(record.id) for record in records], []
+        except Exception as exc:
+            if len(batch) == 1:
+                return batch, [], [f"deal {batch[0]}: {exc}"]
+
+            midpoint = len(batch) // 2
+            _, left_ids, left_errors = fetch(batch[:midpoint])
+            _, right_ids, right_errors = fetch(batch[midpoint:])
+            return batch, left_ids + right_ids, left_errors + right_errors
+
+    def record_result(batch: list[int], result_ids: list[int]) -> None:
+        batch_set = set(batch)
+        seen_in_batch: set[int] = set()
+        for deal_id in result_ids:
+            if deal_id in seen_in_batch or deal_id in accessible_ids:
+                duplicate_ids.add(deal_id)
+            seen_in_batch.add(deal_id)
+            if deal_id not in batch_set:
+                unexpected_ids.add(deal_id)
+                continue
+            accessible_ids.add(deal_id)
+
+    def log_progress(completed_batches: int) -> None:
+        if completed_batches % 500 == 0 or completed_batches == len(batches):
+            logger.info(
+                "Cortellis numeric catalog audit progress: "
+                "%s/%s batches, %s accessible IDs, %s errors",
+                completed_batches,
+                len(batches),
+                len(accessible_ids),
+                len(errors),
+            )
+
+    if workers > 1 and len(batches) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(fetch, batch): batch for batch in batches}
+            for completed_batches, future in enumerate(
+                as_completed(futures), start=1
+            ):
+                batch = futures[future]
+                try:
+                    completed_batch, result_ids, batch_errors = future.result()
+                    record_result(completed_batch, result_ids)
+                    errors.extend(batch_errors)
+                except Exception as exc:
+                    errors.append(f"batch {batch[0]}..{batch[-1]}: {exc}")
+                log_progress(completed_batches)
+    else:
+        for completed_batches, batch in enumerate(batches, start=1):
+            try:
+                completed_batch, result_ids, batch_errors = fetch(batch)
+                record_result(completed_batch, result_ids)
+                errors.extend(batch_errors)
+            except Exception as exc:
+                errors.append(f"batch {batch[0]}..{batch[-1]}: {exc}")
+            log_progress(completed_batches)
+
+    return {
+        "minimum_id": minimum_id,
+        "maximum_id": maximum_id,
+        "requested_total": maximum_id - minimum_id + 1,
+        "batch_total": len(batches),
+        "returned_unique_total": len(accessible_ids),
+        "accessible_ids": sorted(accessible_ids),
+        "complete": bool(
+            accessible_ids
+            and not errors
+            and not unexpected_ids
+            and not duplicate_ids
+        ),
+        "unexpected_ids": sorted(unexpected_ids),
+        "duplicate_ids": sorted(duplicate_ids),
+        "errors": errors,
+    }
 
 
 class DealTransformer:
@@ -1172,67 +1257,96 @@ class SyncService:
         batch_size: int = 30,
         max_missing: Optional[int] = None,
         scan_workers: int = 1,
+        download_contracts: bool = True,
     ) -> Dict[str, Any]:
-        """Find and restore deals omitted by an older full-sync batch.
+        """Exhaustively find and restore every retrievable Cortellis deal.
 
-        Incremental date windows cannot repair a historical record that was
-        skipped before its current watermark.  This bounded, idempotent audit
-        scans the authoritative API IDs, inserts only missing records, and
+        Search pagination and the advertised search count omit directly
+        retrievable historical records. This audit therefore tests every
+        integer inside stable catalog bounds, inserts only missing records, and
         preserves local-only records for review instead of deleting them.
         """
         self._ensure_expanded_archive_schema()
         batch_size = max(1, min(30, batch_size))
-        batch_size = max(1, min(30, batch_size))
         scan_workers = max(1, min(16, int(scan_workers)))
+
+        def search_snapshot(client: CortellisClient) -> dict[str, int]:
+            first = client.search_deals(
+                query="*", offset=0, hits=1, sort_by="dealId"
+            )
+            last = client.search_deals(
+                query="*", offset=0, hits=1, sort_by="-dealId"
+            )
+            if not first.deal_ids or not last.deal_ids:
+                raise RuntimeError("Cortellis catalog bounds returned no deal IDs")
+            return {
+                "advertised_total_first": first.total_results,
+                "advertised_total_last": last.total_results,
+                "minimum_id": int(first.deal_ids[0]),
+                "maximum_id": int(last.deal_ids[0]),
+            }
+
         with CortellisClient(self.config.cortellis) as client:
-            source_total_before = client.search_deals(
-                query="*", offset=0, hits=1
-            ).total_results
+            search_before = search_snapshot(client)
+            source_total_before = search_before["advertised_total_first"]
             with self.SessionLocal() as session:
                 local_ids_before = session.execute(select(Deal.id)).scalars().all()
 
-            # Offset search remains useful for discovering and repairing gaps,
-            # but it is not accepted as the final membership proof. Avoid the
-            # unstable scan entirely when cardinalities already match.
-            coverage: dict[str, Any] | None = None
-            selected: list[int] = []
-            reconciled = 0
-            contracts_downloaded = 0
-            errors: list[str] = []
-            if catalog_discovery_required(
-                len(local_ids_before), source_total_before
-            ):
-                first = client.search_deals(
-                    query="*",
-                    offset=0,
-                    hits=100,
-                    sort_by="dealId",
-                )
-                remote_ids = list(client.get_all_deal_ids(
-                    "*",
-                    workers=scan_workers,
-                    initial_result=first,
-                    sort_by="dealId",
-                ))
-                coverage = assess_catalog_coverage(
-                    remote_ids, local_ids_before, first.total_results
-                )
-                missing = coverage["missing_ids"]
-                selected = missing[:max_missing] if max_missing else missing
+            minimum_id = min(
+                search_before["minimum_id"],
+                (
+                    min(local_ids_before)
+                    if local_ids_before
+                    else search_before["minimum_id"]
+                ),
+            )
+            maximum_id = max(
+                search_before["maximum_id"],
+                (
+                    max(local_ids_before)
+                    if local_ids_before
+                    else search_before["maximum_id"]
+                ),
+            )
+            membership = enumerate_accessible_deal_ids(
+                client,
+                minimum_id,
+                maximum_id,
+                batch_size=batch_size,
+                workers=scan_workers,
+            )
+            remote_ids = set(membership["accessible_ids"])
+            local_before_set = set(local_ids_before)
+            missing_before_ids = sorted(remote_ids - local_before_set)
+            selected = (
+                missing_before_ids[:max(0, int(max_missing))]
+                if max_missing is not None
+                else missing_before_ids
+            )
 
+            reconciled_ids: set[int] = set()
+            contracts_downloaded = 0
+            errors: list[str] = list(membership["errors"])
+            if selected:
                 with self.SessionLocal() as session:
                     transformer = DealTransformer(session)
                     for i in range(0, len(selected), batch_size):
                         batch_ids = selected[i:i + batch_size]
+                        batch_id_set = set(batch_ids)
                         try:
                             records = client.get_deal_records(batch_ids)
                             returned_ids = {record.id for record in records}
-                            omitted = sorted(set(batch_ids) - returned_ids)
+                            omitted = sorted(batch_id_set - returned_ids)
                             if omitted:
                                 errors.append(
                                     f"API batch omitted deal IDs: {omitted}"
                                 )
                             for record in records:
+                                if record.id not in batch_id_set:
+                                    errors.append(
+                                        f"API batch returned unexpected deal ID: {record.id}"
+                                    )
+                                    continue
                                 transformer.transform_deal(record)
                                 session.flush()
                                 archive_expanded_deal_record(
@@ -1240,7 +1354,7 @@ class SyncService:
                                     record,
                                     endpoint="deals-v2/deals/expanded#Deal",
                                 )
-                                reconciled += 1
+                                reconciled_ids.add(record.id)
                             session.commit()
                         except Exception as exc:
                             session.rollback()
@@ -1248,10 +1362,20 @@ class SyncService:
                             errors.append(
                                 f"batch {batch_ids[0]}..{batch_ids[-1]}: {exc}"
                             )
+                        completed_repair_batches = (i // batch_size) + 1
+                        if completed_repair_batches % 100 == 0:
+                            logger.info(
+                                "Cortellis catalog repair progress: "
+                                "%s/%s batches, %s reconciled IDs",
+                                completed_repair_batches,
+                                (len(selected) + batch_size - 1) // batch_size,
+                                len(reconciled_ids),
+                            )
 
-                    contracts_downloaded = self._download_contracts_for_deals(
-                        session, client, selected
-                    ) if selected else 0
+                    if download_contracts:
+                        contracts_downloaded = self._download_contracts_for_deals(
+                            session, client, sorted(reconciled_ids)
+                        )
 
             with self.SessionLocal() as session:
                 local_ids_after = session.execute(select(Deal.id)).scalars().all()
@@ -1261,93 +1385,97 @@ class SyncService:
                     ).limit(1)
                 ).scalar()
 
-            source_total_audit_start = client.search_deals(
-                query="*", offset=0, hits=1
-            ).total_results
-            membership = validate_catalog_membership_by_retrieval(
-                client,
-                local_ids_after,
-                batch_size=batch_size,
-                workers=scan_workers,
-            )
-            source_total_after = client.search_deals(
-                query="*", offset=0, hits=1
-            ).total_results
-            stable_source_cardinality = bool(
-                source_total_audit_start == source_total_after
-            )
-            stable_equal_cardinality = bool(
-                stable_source_cardinality
-                and source_total_after == len(local_ids_after)
-            )
-            catalog_membership_complete = retrieval_covers_advertised_catalog(
-                membership,
-                source_total_audit_start,
-                source_total_after,
-            )
+            search_after = search_snapshot(client)
 
-        discovered_missing = len(coverage["missing_ids"]) if coverage else 0
-        remaining = max(0, discovered_missing - reconciled)
-        membership_complete = bool(membership and membership["complete"])
-        complete = stable_equal_cardinality and membership_complete and not errors
+        search_counts_consistent = bool(
+            search_before["advertised_total_first"]
+            == search_before["advertised_total_last"]
+            and search_after["advertised_total_first"]
+            == search_after["advertised_total_last"]
+        )
+        bounds_stable = search_before == search_after
+        local_after_set = set(local_ids_after)
+        remaining_ids = sorted(remote_ids - local_after_set)
+        extra_local_ids = sorted(local_after_set - remote_ids)
+        numeric_discovery_complete = bool(
+            membership["complete"]
+            and bounds_stable
+            and search_counts_consistent
+        )
+        catalog_membership_complete = bool(
+            numeric_discovery_complete and not remaining_ids
+        )
+        membership_complete = bool(
+            catalog_membership_complete and not extra_local_ids
+        )
+        complete = bool(catalog_membership_complete and not errors)
+        source_total_after = search_after["advertised_total_first"]
         result: Dict[str, Any] = {
             "status": "completed" if complete else "partial",
-            "expected_remote_total": source_total_after,
+            "expected_remote_total": len(remote_ids),
+            "advertised_remote_total": source_total_after,
             "source_total_before": source_total_before,
-            "source_total_audit_start": source_total_audit_start,
+            "source_total_audit_start": source_total_before,
             "source_total_after": source_total_after,
-            "remote_unique_total": (
-                coverage["remote_unique_total"] if coverage else None
-            ),
-            "offset_discovery_complete": (
-                coverage["scan_complete"] if coverage else None
-            ),
+            "remote_unique_total": len(remote_ids),
+            "offset_discovery_complete": None,
+            "numeric_discovery_complete": numeric_discovery_complete,
+            "catalog_bounds_stable": bounds_stable,
+            "search_counts_consistent": search_counts_consistent,
+            "numeric_id_min": minimum_id,
+            "numeric_id_max": maximum_id,
             "local_total_before": len(local_ids_before),
             "local_total_after": len(local_ids_after),
-            "missing_before": discovered_missing,
-            "extra_local": len(coverage["extra_ids"]) if coverage else 0,
-            "reconciled": reconciled,
-            "missing_remaining": remaining,
+            "missing_before": len(missing_before_ids),
+            "extra_local": len(extra_local_ids),
+            "reconciled": len(reconciled_ids),
+            "missing_remaining": len(remaining_ids),
             "contracts_downloaded": contracts_downloaded,
-            "membership_audit_run": membership is not None,
+            "membership_audit_run": True,
             "membership_complete": membership_complete,
             "catalog_membership_complete": catalog_membership_complete,
-            "membership_requested": (
-                membership["requested_total"] if membership else 0
-            ),
-            "membership_retrieved": (
-                membership["returned_unique_total"] if membership else 0
-            ),
+            "membership_requested": membership["requested_total"],
+            "membership_retrieved": membership["returned_unique_total"],
             "cursor": source_cursor.isoformat() if source_cursor else None,
             "source_data_at": source_cursor.isoformat() if source_cursor else None,
         }
-        if coverage and coverage["extra_ids"]:
-            result["extra_local_sample"] = coverage["extra_ids"][:20]
-        if membership["missing_ids"]:
-            result["membership_missing_total"] = len(membership["missing_ids"])
-            result["membership_missing_sample"] = membership["missing_ids"][:20]
+        if extra_local_ids:
+            result["extra_local_sample"] = extra_local_ids[:20]
+        if remaining_ids:
+            result["membership_missing_total"] = len(remaining_ids)
+            result["membership_missing_sample"] = remaining_ids[:20]
         if membership["unexpected_ids"]:
             result["membership_unexpected_sample"] = (
                 membership["unexpected_ids"][:20]
+            )
+            errors.append(
+                "Numeric discovery returned unexpected deal IDs: "
+                f"{membership['unexpected_ids'][:20]}"
             )
         if membership["duplicate_ids"]:
             result["membership_duplicate_sample"] = (
                 membership["duplicate_ids"][:20]
             )
-        errors.extend(membership["errors"])
+            errors.append(
+                "Numeric discovery returned duplicate deal IDs: "
+                f"{membership['duplicate_ids'][:20]}"
+            )
         if errors:
             result["error"] = "; ".join(errors)[:4000]
-        elif not catalog_membership_complete:
+        elif not search_counts_consistent:
             result["error"] = (
-                "Retrieval did not cover the stable advertised Cortellis catalog: "
-                f"source_audit_start={source_total_audit_start}, "
-                f"source_after={source_total_after}, "
-                f"retrieved={membership['returned_unique_total']}"
+                "Cortellis advertised search counts disagreed while reading bounds"
             )
-        elif not membership_complete:
+        elif not bounds_stable:
             result["error"] = (
-                "The active Cortellis catalog is covered, but the local database "
-                "also retains IDs not returned by the current API"
+                "Cortellis numeric catalog bounds changed during reconciliation"
+            )
+        elif not membership["complete"]:
+            result["error"] = "Cortellis numeric catalog discovery was incomplete"
+        elif remaining_ids:
+            result["error"] = (
+                f"Exhaustive discovery found {len(remaining_ids)} retrievable "
+                "deal IDs still missing locally"
             )
         return result
 

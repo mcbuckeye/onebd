@@ -471,8 +471,9 @@ def reconcile_cortellis_catalog():
         )
     try:
         result = _cortellis_sync_service().reconcile_catalog(
-            max_missing=5000,
+            max_missing=settings.cortellis_catalog_repair_limit,
             scan_workers=settings.cortellis_catalog_scan_workers,
+            download_contracts=False,
         )
         logger.info("Cortellis catalog reconciliation complete", **result)
         return _finish_source_job("cortellis_catalog", result)

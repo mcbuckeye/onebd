@@ -11,8 +11,7 @@ from src.config import CortellisConfig
 from src.sync import (
     assess_catalog_coverage,
     assess_zero_result_window,
-    catalog_discovery_required,
-    retrieval_covers_advertised_catalog,
+    enumerate_accessible_deal_ids,
     validate_catalog_membership_by_retrieval,
 )
 
@@ -187,44 +186,75 @@ def test_retrieval_membership_audit_preserves_batch_errors():
     assert result["errors"] == ["deal 31: temporary failure"]
 
 
-def test_retrieval_coverage_allows_retained_inactive_local_ids():
-    membership = {
-        "returned_unique_total": 3,
-        "errors": [],
+def test_numeric_id_audit_enumerates_sparse_retrievable_records():
+    client = Mock()
+    available = {100, 102, 130, 131, 133}
+    client.get_deal_records.side_effect = lambda ids: [
+        _deal_record(deal_id) for deal_id in ids if deal_id in available
+    ]
+
+    result = enumerate_accessible_deal_ids(
+        client,
+        100,
+        133,
+        batch_size=30,
+        workers=1,
+    )
+
+    assert result == {
+        "minimum_id": 100,
+        "maximum_id": 133,
+        "requested_total": 34,
+        "batch_total": 2,
+        "returned_unique_total": 5,
+        "accessible_ids": [100, 102, 130, 131, 133],
+        "complete": True,
         "unexpected_ids": [],
         "duplicate_ids": [],
-    }
-
-    assert retrieval_covers_advertised_catalog(membership, 3, 3) is True
-
-
-def test_retrieval_coverage_rejects_count_drift_or_request_errors():
-    membership = {
-        "returned_unique_total": 3,
         "errors": [],
-        "unexpected_ids": [],
-        "duplicate_ids": [],
     }
+    assert [call.args[0] for call in client.get_deal_records.call_args_list] == [
+        list(range(100, 130)),
+        list(range(130, 134)),
+    ]
 
-    assert retrieval_covers_advertised_catalog(membership, 3, 4) is False
-    membership["errors"] = ["deal 9: temporary failure"]
-    assert retrieval_covers_advertised_catalog(membership, 3, 3) is False
+
+def test_numeric_id_audit_rejects_unexpected_and_duplicate_ids():
+    client = Mock()
+    client.get_deal_records.return_value = [
+        _deal_record(100),
+        _deal_record(100),
+        _deal_record(999),
+    ]
+
+    result = enumerate_accessible_deal_ids(client, 100, 101)
+
+    assert result["complete"] is False
+    assert result["accessible_ids"] == [100]
+    assert result["unexpected_ids"] == [999]
+    assert result["duplicate_ids"] == [100]
 
 
-@pytest.mark.parametrize(
-    ("local_total", "source_total", "expected"),
-    [
-        (2, 3, True),
-        (3, 3, False),
-        (4, 3, False),
-    ],
-)
-def test_catalog_discovery_only_runs_for_a_source_count_deficit(
-    local_total,
-    source_total,
-    expected,
-):
-    assert catalog_discovery_required(local_total, source_total) is expected
+def test_numeric_id_audit_isolates_single_id_failures():
+    client = Mock()
+
+    def fetch(ids):
+        if 101 in ids:
+            raise CortellisAPIError("temporary failure")
+        return [_deal_record(deal_id) for deal_id in ids]
+
+    client.get_deal_records.side_effect = fetch
+    result = enumerate_accessible_deal_ids(client, 100, 103)
+
+    assert result["complete"] is False
+    assert result["accessible_ids"] == [100, 102, 103]
+    assert result["errors"] == ["deal 101: temporary failure"]
+
+
+@pytest.mark.parametrize("minimum_id,maximum_id", [(0, 10), (10, 9)])
+def test_numeric_id_audit_rejects_invalid_bounds(minimum_id, maximum_id):
+    with pytest.raises(ValueError, match="bounds are invalid"):
+        enumerate_accessible_deal_ids(Mock(), minimum_id, maximum_id)
 
 
 def test_parallel_catalog_scan_fetches_every_page_once():
