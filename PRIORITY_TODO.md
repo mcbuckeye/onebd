@@ -124,7 +124,8 @@ and fast retrieval before adding more external data volume.
          alias. The 2026-07-13 audit found 1,632 matches and 2,791 first-alias
          misses, but a miss incorrectly stopped alternate-name attempts. A
          per-alias state migration, integrity endpoint, retry handling, and
-         faster policy-compliant schedule are being deployed before catch-up.
+         globally serialized two-minute policy-compliant schedule now support
+         the continuing catch-up without duplicate API requests.
    - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
    - [x] Seed normalized Cortellis display names and conservative development-code
          candidates for all drugs without treating organization suffixes as aliases.
