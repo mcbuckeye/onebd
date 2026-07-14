@@ -11,6 +11,7 @@ from src.config import CortellisConfig
 from src.sync import (
     assess_catalog_coverage,
     assess_zero_result_window,
+    retrieval_covers_advertised_catalog,
     validate_catalog_membership_by_retrieval,
 )
 
@@ -180,8 +181,33 @@ def test_retrieval_membership_audit_preserves_batch_errors():
     )
 
     assert result["complete"] is False
-    assert result["missing_ids"] == list(range(31, 40))
-    assert result["errors"] == ["batch 31..39: temporary failure"]
+    assert result["missing_ids"] == [31]
+    assert result["returned_unique_total"] == 38
+    assert result["errors"] == ["deal 31: temporary failure"]
+
+
+def test_retrieval_coverage_allows_retained_inactive_local_ids():
+    membership = {
+        "returned_unique_total": 3,
+        "errors": [],
+        "unexpected_ids": [],
+        "duplicate_ids": [],
+    }
+
+    assert retrieval_covers_advertised_catalog(membership, 3, 3) is True
+
+
+def test_retrieval_coverage_rejects_count_drift_or_request_errors():
+    membership = {
+        "returned_unique_total": 3,
+        "errors": [],
+        "unexpected_ids": [],
+        "duplicate_ids": [],
+    }
+
+    assert retrieval_covers_advertised_catalog(membership, 3, 4) is False
+    membership["errors"] = ["deal 9: temporary failure"]
+    assert retrieval_covers_advertised_catalog(membership, 3, 3) is False
 
 
 def test_parallel_catalog_scan_fetches_every_page_once():
