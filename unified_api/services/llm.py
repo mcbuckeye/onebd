@@ -305,25 +305,64 @@ class LLMService:
             logger.error("Synthesis failed", error=str(e))
             answer = f"Found {len(data)} results but failed to synthesize: {str(e)[:200]}"
 
-        # Calculate confidence metrics
-        disclosed = sum(1 for d in data if isinstance(d, dict) and (
-            d.get('total_value') is not None or 
-            d.get('total_projected_current_amount') is not None
-        ))
+        disclosure_rate, underlying_sample_size = _financial_disclosure_summary(
+            data
+        )
+
+        confidence = {
+            "data_completeness": f"{len(data)} records retrieved",
+            "sample_size": len(data),
+            "disclosure_rate": disclosure_rate,
+        }
+        if underlying_sample_size is not None:
+            confidence["underlying_sample_size"] = underlying_sample_size
 
         return {
             "answer": answer,
-            "confidence": {
-                "data_completeness": f"{len(data)} records retrieved",
-                "sample_size": len(data),
-                "disclosure_rate": round(disclosed / len(data) * 100, 1) if data else None,
-            },
+            "confidence": confidence,
             "follow_ups": _suggest_follow_ups(question),
         }
 
 
 # Global instance
 _llm_service: Optional[LLMService] = None
+
+
+def _financial_disclosure_summary(
+    data: list,
+) -> tuple[Optional[float], Optional[int]]:
+    """Return source disclosure coverage without confusing rows with deals."""
+    if not data:
+        return None, None
+    if len(data) == 1 and isinstance(data[0], dict):
+        disclosed = data[0].get("disclosed_deal_count")
+        eligible = data[0].get("eligible_deal_count")
+        if isinstance(disclosed, (int, float)) and isinstance(
+            eligible, (int, float)
+        ):
+            rate = (
+                round(100 * float(disclosed) / float(eligible), 1)
+                if eligible
+                else None
+            )
+            return rate, int(disclosed)
+
+    financial_fields = {
+        "total_value",
+        "total_value_usd_millions",
+        "total_projected_current_amount",
+        "upfront_usd_millions",
+        "milestone_usd_millions",
+        "royalty_low_pct",
+        "royalty_high_pct",
+    }
+    disclosed = sum(
+        1
+        for row in data
+        if isinstance(row, dict)
+        and any(row.get(field) is not None for field in financial_fields)
+    )
+    return round(100 * disclosed / len(data), 1), disclosed
 
 
 def get_llm_service() -> LLMService:

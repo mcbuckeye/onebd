@@ -187,6 +187,15 @@ and fast retrieval before adding more external data volume.
           payloads and 445,904 terms; the production gate reports zero failures,
           invalid units/rates, or source mismatches, 100% percentage capture,
           100% replay accuracy across 475 stratified terms, and release ready.
+    - [x] Enable the first governed financial analytics after the release gate.
+          Phase 2 ADC upfronts, Phase 3 license milestone totals, oncology
+          bispecific royalty ranges, and thresholded license upfront lists now
+          use deterministic parser-v4 SQL, citations, disclosure denominators,
+          and independent production database truth.
+    - [x] Repair phase-at-deal ingestion. The expanded payload's per-drug phases
+          now populate deal aggregates during sync/coverage scans; the archive
+          backfill inspected all 172,638 accessible deals with zero failures and
+          populated 63,772 start-phase and 64,312 current-phase records.
     - [x] Add contract-derived financial-clause extraction at scale and validate
           semantic precision before governed use. The deterministic, no-API-cost
           parser covers all 20,453 eligible contracts with 4,487 current clauses,
@@ -247,7 +256,8 @@ and fast retrieval before adding more external data volume.
 
 - [x] Regrade the 65-question evaluation using end-to-end correctness criteria.
 - [x] Resolve unambiguous company mentions to canonical IDs before SQL generation.
-- [x] Refuse unsupported milestone/premium metrics instead of substituting total value.
+- [x] Refuse unsupported financial shapes/acquisition premiums instead of
+      substituting total value; governed milestone patterns are now enabled.
 - [x] Prevent synthesis from adding claims when no populated evidence is returned.
 - [x] Fix EDGAR form filters to use the actual filing subtype.
 - [x] Apply requested modality filters before comp-set candidate ranking.
@@ -258,12 +268,13 @@ and fast retrieval before adding more external data volume.
 - [x] Return source IDs/query provenance and evidence status from Chat v2.
 - [x] Validate the full catalog and regression harness in CI.
 - [x] Require every Strong-rated case to compare the deployed response with a
-      read-only database truth query. Ten cases now meet this standard; six
-      optimistic/context-dependent ratings were downgraded pending real proof.
+      read-only database truth query. Fourteen Strong cases now meet this
+      standard; six optimistic/context-dependent ratings were downgraded pending
+      real proof.
 - [x] Replace each remaining catalog probe's basic response assertion with
       deterministic truth or an evidence-scored narrative rubric. All 65 cases
-      now have an oracle: 11 run read-only database truth comparisons and 55 run
-      scored grounding/provenance rubrics (Roche strategy uses both).
+      now have an oracle: 15 run read-only database truth comparisons and 55 run
+      scored grounding/provenance rubrics (five cases use both).
 
 ## Implementation Status vs PRD
 

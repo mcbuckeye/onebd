@@ -8,7 +8,7 @@ from unified_api.routers.chat import (
     _missing_resolved_entity_ids,
     _structured_metric_limitation,
 )
-from unified_api.services.llm import LLMService
+from unified_api.services.llm import LLMService, _financial_disclosure_summary
 from unified_api.services.question_context import (
     extract_company_phrases,
     resolve_company_mentions,
@@ -325,6 +325,7 @@ def test_financial_governed_sql_normalizes_currency_and_unit():
                 "term_type = 'upfront_payment'",
                 "upfront_usd_millions > 100",
                 "deal.id AS deal_id",
+                "deal.agreement_type ILIKE '%License%'",
                 "LIMIT 20",
             ),
         ),
@@ -375,3 +376,17 @@ async def test_null_aggregate_is_insufficient_evidence():
     )
 
     assert result["confidence"]["evidence_status"] == "insufficient"
+
+
+def test_aggregate_financial_disclosure_uses_underlying_deal_counts():
+    assert _financial_disclosure_summary([{
+        "disclosed_deal_count": 14,
+        "eligible_deal_count": 22,
+    }]) == (63.6, 14)
+
+
+def test_financial_listing_disclosure_counts_populated_term_rows():
+    assert _financial_disclosure_summary([
+        {"deal_id": 1, "upfront_usd_millions": 125.0},
+        {"deal_id": 2, "upfront_usd_millions": 200.0},
+    ]) == (100.0, 2)

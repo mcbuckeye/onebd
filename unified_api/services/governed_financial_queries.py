@@ -203,12 +203,13 @@ def build_governed_financial_sql(question: str) -> Optional[str]:
                    deal.agreement_type, deal.phase_highest_start,
                    per_deal.upfront_usd_millions,
                    per_deal.extraction_confidence,
-                   'projected_current, maximum non-breakdown headline per deal'
+                   'projected_current, maximum non-breakdown headline per license deal'
                      AS metric_definition,
                    'Cortellis FinanceDetail / parser v{FINANCE_PARSER_VERSION}' AS source
             FROM per_deal
             JOIN deals deal ON deal.id = per_deal.deal_id
-            WHERE per_deal.upfront_usd_millions > {threshold_literal}
+            WHERE deal.agreement_type ILIKE '%License%'
+              AND per_deal.upfront_usd_millions > {threshold_literal}
             ORDER BY per_deal.upfront_usd_millions DESC, deal.id
             LIMIT 20
         """)
