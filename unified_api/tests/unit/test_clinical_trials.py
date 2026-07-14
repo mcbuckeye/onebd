@@ -1,5 +1,6 @@
 """Unit tests for the lossless ClinicalTrials.gov API v2 adapter."""
 
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from io import BytesIO
 import json
@@ -155,6 +156,60 @@ def test_drug_alias_match_requires_one_distinct_drug():
         {"drug_id": 42, "alias_value": "ABC-123", "confidence": 1.0},
         {"drug_id": 84, "alias_value": "ABC-123", "confidence": 1.0},
     ]) is None
+
+
+def test_reconcile_trial_links_deletes_nonunique_and_promotes_retained(monkeypatch):
+    class Result:
+        def __init__(self, scalar=None, rowcount=0):
+            self._scalar = scalar
+            self.rowcount = rowcount
+
+        def scalar(self):
+            return self._scalar
+
+    class Session:
+        def __init__(self):
+            self.results = [
+                Result(scalar=131637),
+                Result(rowcount=14830),
+                Result(rowcount=116807),
+                Result(scalar=116807),
+            ]
+
+        def execute(self, _statement, _params=None):
+            return self.results.pop(0)
+
+    class Connection:
+        closed = False
+
+        def execute(self, _statement):
+            return Result(scalar=True)
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+
+    @contextmanager
+    def fake_session():
+        yield Session()
+
+    monkeypatch.setattr(clinical_trials, "ensure_clinical_trials_schema", lambda: None)
+    monkeypatch.setattr(clinical_trials, "get_cortellis_session", fake_session)
+    monkeypatch.setattr(
+        clinical_trials,
+        "get_cortellis_engine",
+        lambda: type("Engine", (), {"connect": lambda _self: connection})(),
+    )
+
+    assert clinical_trials.reconcile_clinical_trial_drug_links() == {
+        "status": "completed",
+        "before": 131637,
+        "deleted_unverifiable_or_ambiguous": 14830,
+        "promoted_unique_exact": 116807,
+        "retained": 116807,
+    }
+    assert connection.closed is True
 
 
 def test_global_lock_skips_overlapping_lane(monkeypatch):
