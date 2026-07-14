@@ -11,6 +11,7 @@ import structlog
 
 from unified_api.services.database import get_cortellis_session
 from unified_api.services.auth import hash_password
+from unified_api.services.audit import log_audit
 from unified_api.services.api_credentials import (
     ACCESS_MODES,
     ALLOWED_SCOPES,
@@ -44,13 +45,13 @@ class MessageResponse(BaseModel):
 
 
 class CreateAPICredentialRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     scopes: List[str] = Field(default_factory=lambda: ["data:read"])
     expires_at: Optional[datetime] = None
 
 
 class DataAccessPolicyRequest(BaseModel):
-    access_mode: str = "key_required"
+    access_mode: Literal["key_required", "authenticated", "open"] = "key_required"
     enforce_scopes: bool = True
     allow_self_registration: bool = False
     protect_existing_api: bool = False
@@ -124,12 +125,28 @@ async def issue_api_credential(
 ):
     """Issue a scoped API key; the plaintext is returned exactly once."""
     try:
-        return create_api_credential(
+        credential = create_api_credential(
             name=req.name,
             scopes=req.scopes,
             created_by=current_user.user_id,
             expires_at=req.expires_at,
         )
+        log_audit(
+            "api_credential_created",
+            user_id=current_user.user_id,
+            entity_type="api_credential",
+            entity_id=str(credential["id"]),
+            metadata={
+                "name": credential["name"],
+                "scopes": credential["scopes"],
+                "expires_at": (
+                    credential["expires_at"].isoformat()
+                    if credential.get("expires_at")
+                    else None
+                ),
+            },
+        )
+        return credential
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -137,11 +154,17 @@ async def issue_api_credential(
 @router.delete("/api-credentials/{credential_id}", response_model=MessageResponse)
 async def revoke_credential(
     credential_id: int,
-    _current_user: TokenData = Depends(require_admin),
+    current_user: TokenData = Depends(require_admin),
 ):
     """Immediately revoke a colleague or integration API key."""
     if not revoke_api_credential(credential_id):
         raise HTTPException(status_code=404, detail="API credential not found")
+    log_audit(
+        "api_credential_revoked",
+        user_id=current_user.user_id,
+        entity_type="api_credential",
+        entity_id=str(credential_id),
+    )
     return MessageResponse(message=f"API credential {credential_id} revoked")
 
 
@@ -165,7 +188,7 @@ async def set_data_access_policy(
 ):
     """Choose open, signed-in, or API-key access and dataset/scope enforcement."""
     try:
-        return update_data_access_policy(
+        policy = update_data_access_policy(
             access_mode=req.access_mode,
             enforce_scopes=req.enforce_scopes,
             allow_self_registration=req.allow_self_registration,
@@ -173,6 +196,20 @@ async def set_data_access_policy(
             disabled_datasets=req.disabled_datasets,
             updated_by=current_user.user_id,
         )
+        log_audit(
+            "data_access_policy_updated",
+            user_id=current_user.user_id,
+            entity_type="data_access_policy",
+            entity_id="singleton",
+            metadata={
+                "access_mode": policy["access_mode"],
+                "enforce_scopes": policy["enforce_scopes"],
+                "allow_self_registration": policy["allow_self_registration"],
+                "protect_existing_api": policy["protect_existing_api"],
+                "disabled_datasets": policy["disabled_datasets"],
+            },
+        )
+        return policy
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

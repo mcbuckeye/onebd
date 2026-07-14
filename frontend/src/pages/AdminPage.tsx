@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import ContractClauseReviewPanel from '../components/ContractClauseReviewPanel';
-import { Users, Plus, Edit2, Trash2, Shield, FileText, ClipboardCheck } from 'lucide-react';
+import AdminApiAccessPanel from '../components/AdminApiAccessPanel';
+import { Users, Plus, Edit2, Trash2, Shield, FileText, ClipboardCheck, KeyRound } from 'lucide-react';
 
 interface User {
   id: number;
@@ -31,7 +32,7 @@ interface UserFormData {
 
 export default function AdminPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'clauses'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'access' | 'audit' | 'clauses'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -170,7 +171,7 @@ export default function AdminPage() {
             <Users className="w-8 h-8 text-blue-500" />
             Admin Panel
           </h1>
-          <p className="text-slate-400 text-sm mt-1">Manage users, audits, and governed extraction review</p>
+          <p className="text-slate-400 text-sm mt-1">Manage users, colleague access, audits, and governed extraction review</p>
         </div>
         {activeTab === 'users' && (
           <button
@@ -195,6 +196,17 @@ export default function AdminPage() {
         >
           <Users className="w-4 h-4 inline mr-2" />
           Users
+        </button>
+        <button
+          onClick={() => setActiveTab('access')}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'access'
+              ? 'text-blue-400 border-b-2 border-blue-400'
+              : 'text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          <KeyRound className="w-4 h-4 inline mr-2" />
+          API Access
         </button>
         <button
           onClick={() => setActiveTab('audit')}
@@ -284,6 +296,8 @@ export default function AdminPage() {
         </table>
       </div>
       )}
+
+      {activeTab === 'access' && <AdminApiAccessPanel />}
 
       {/* Audit Log Table */}
       {activeTab === 'audit' && (
