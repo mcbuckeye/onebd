@@ -43,6 +43,25 @@ the five-year query completed in 2.576 seconds and returned 117 dated deals,
 ten normalized indication and technology focus rows, five requested overlap
 peers, and 20 first-observed entrants in the one-year window.
 
-The result is intentionally a snapshot. Durable tracked-company entrant alerts,
-delivery preferences, and notification deduplication remain a separate follow-up
-before the broader roadmap item is complete.
+## Durable entrant alerts
+
+Tracked companies use a separate durable layer rather than treating every
+profile view as an alert:
+
+- `company_entrant_detections` stores one global detection per subject company,
+  entrant company, and indication, with the current first-observed date, linked
+  deal count, and evidence deal IDs.
+- `company_entrant_alerts` stores at most one alert per user and detection. Read
+  and dismissed timestamps preserve review history.
+- Existing and newly tracked companies receive a baseline scan first. Current
+  historical detections are retained but do not generate a notification flood.
+  Only detections first seen after that baseline create user alerts.
+- The Celery worker runs daily at 08:15 UTC under a PostgreSQL advisory lock.
+  Pause/resume controls reset a fresh baseline when monitoring is re-enabled.
+- The Competitors page lists the in-app alerts with exact company links,
+  indication, observed-deal count, and evidence deal IDs. It also retrieves five
+  recent deals per tracked company in one exact-ID bulk query.
+
+The production rollback-only migration test covered both existing tracked
+companies in 0.452 seconds, retained 200 baseline detections, created zero
+historical alerts, and rolled the transaction back without changing production.

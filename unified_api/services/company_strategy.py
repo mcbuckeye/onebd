@@ -363,6 +363,31 @@ def _new_indication_entrants(
     } for row in rows]
 
 
+def company_indication_entrant_snapshot(
+    session,
+    company_id: int,
+    *,
+    years: int = 5,
+    entrant_days: int = 365,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return the entrant slice used by profiles and scheduled alerts."""
+    years = max(1, min(20, int(years)))
+    entrant_days = max(30, min(1825, int(entrant_days)))
+    limit = max(1, min(500, int(limit)))
+    focus = _focus_rows(session, company_id, years)
+    return {
+        "top_indications": focus["indications"][:3],
+        "entrants": _new_indication_entrants(
+            session,
+            company_id=company_id,
+            indication_rows=focus["indications"],
+            entrant_days=entrant_days,
+            limit=limit,
+        ),
+    }
+
+
 def company_strategy_intelligence(
     session,
     company_id: int,

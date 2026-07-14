@@ -398,9 +398,9 @@ Evaluation rules:
 
 11. Milestone and royalty extraction/analytics.
 12. Dynamic company comparison and “my company” configuration.
-13. 🟡 Evidence-limited company strategy summaries and first-observed indication
-    entrant snapshots are implemented; add general target screening and durable,
-    scheduled entrant alerts.
+13. 🟡 Evidence-limited company strategy summaries and baseline-safe, durable
+    tracked-company indication entrant alerts are implemented; add general target
+    screening and modality-wide entrant detection for questions such as #36.
 14. Board/quarterly report templates and analytics PDF export.
 15. 🟡 ClinicalTrials.gov API-v2 current/history ingestion, provenance, exact
     company/asset/indication links, and catalyst endpoints are implemented.

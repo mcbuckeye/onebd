@@ -319,12 +319,12 @@ export default function GuidePage() {
           <p className="text-slate-300 mb-4">Monitor competitor deal activity and strategic moves.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Adding Companies</h3>
-          <p className="text-slate-400 mb-4">From any company profile, click "Add to Competitors" to start tracking. You can monitor up to 20 companies.</p>
+          <p className="text-slate-400 mb-4">Use the company autocomplete on the Competitors page to select the exact company record you want to track.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Monitoring Activity</h3>
-          <p className="text-slate-400 mb-4">The Competitors page shows recent deals, filings, and news for your tracked companies. Configure email alerts for immediate notifications.</p>
+          <p className="text-slate-400 mb-4">The Competitors page shows exact-ID recent deal activity and evidence-limited first-observed indication entrants for tracked companies. Entrant monitoring establishes a historical baseline before creating deduplicated in-app alerts, which can be marked read, dismissed, paused, or resumed.</p>
           
-          <ProTip>Set up Slack or Teams webhooks for real-time alerts to your BD channel.</ProTip>
+          <ProTip>Treat “first observed” as a monitoring signal to review the cited deals, not as proof that the company has never worked in the space before.</ProTip>
         </Section>
 
         {/* My Deals */}

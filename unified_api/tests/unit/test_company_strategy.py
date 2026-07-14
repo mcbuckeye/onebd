@@ -8,6 +8,7 @@ from unified_api.services.company_strategy import (
     _competitive_peers,
     _jaccard,
     _momentum_label,
+    company_indication_entrant_snapshot,
     company_strategy_intelligence,
 )
 
@@ -166,3 +167,40 @@ def test_strategy_returns_none_for_unknown_company():
 
     assert company_strategy_intelligence(session, 999999) is None
     assert session.execute.call_count == 1
+
+
+def test_entrant_snapshot_uses_the_same_bounded_company_focus(monkeypatch):
+    focus = {
+        "indications": [
+            {"id": index, "name": f"Indication {index}"}
+            for index in range(1, 6)
+        ],
+        "technologies": [],
+        "agreement_types": [],
+        "assets": [],
+        "partners": [],
+    }
+    focus_rows = MagicMock(return_value=focus)
+    entrant_rows = MagicMock(return_value=[{"company_id": 22}])
+    monkeypatch.setattr(
+        "unified_api.services.company_strategy._focus_rows",
+        focus_rows,
+    )
+    monkeypatch.setattr(
+        "unified_api.services.company_strategy._new_indication_entrants",
+        entrant_rows,
+    )
+
+    result = company_indication_entrant_snapshot(
+        MagicMock(),
+        11,
+        years=100,
+        entrant_days=1,
+        limit=1000,
+    )
+
+    assert result["top_indications"] == focus["indications"][:3]
+    assert result["entrants"] == [{"company_id": 22}]
+    assert focus_rows.call_args.args[2] == 20
+    assert entrant_rows.call_args.kwargs["entrant_days"] == 30
+    assert entrant_rows.call_args.kwargs["limit"] == 500
