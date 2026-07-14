@@ -23,7 +23,12 @@ def test_initialize_and_tool_listing_are_valid_json_rpc():
     assert initialized["result"]["serverInfo"]["name"] == "onebd"
     assert initialized["result"]["protocolVersion"] == "2025-06-18"
     names = {tool["name"] for tool in tools["result"]["tools"]}
-    assert {"get_data_catalog", "search_deals", "get_deal"} <= names
+    assert {
+        "get_data_catalog",
+        "search_deals",
+        "get_deal",
+        "search_financial_terms",
+    } <= names
 
 
 def test_initialize_negotiates_a_supported_version_and_notifications_are_silent():
@@ -123,6 +128,65 @@ def test_get_deal_moves_identifier_into_path():
 
     assert response["result"]["structuredContent"]["id"] == 123
     assert observed["url"] == "https://onebd.example/api/v1/deals/123"
+
+
+def test_financial_terms_tool_uses_governed_filter_parameters():
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        return httpx.Response(200, json={"items": [{"id": 99}]})
+
+    server = OneBDMCPServer(
+        base_url="https://onebd.example/api/v1",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "tools/call",
+        "params": {
+            "name": "search_financial_terms",
+            "arguments": {
+                "term_type": "upfront_payment",
+                "min_amount_usd_millions": 100.5,
+                "limit": 10,
+            },
+        },
+    })
+
+    assert response["result"]["structuredContent"]["items"][0]["id"] == 99
+    assert "term_type=upfront_payment" in observed["url"]
+    assert "min_amount_usd_millions=100.5" in observed["url"]
+    assert "limit=10" in observed["url"]
+
+
+def test_financial_terms_number_filters_reject_booleans_and_bounds():
+    server = OneBDMCPServer(client=httpx.Client(transport=httpx.MockTransport(
+        lambda _request: httpx.Response(200, json={})
+    )))
+
+    boolean = server.handle({
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "tools/call",
+        "params": {
+            "name": "search_financial_terms",
+            "arguments": {"min_amount_usd_millions": True},
+        },
+    })
+    too_high = server.handle({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "tools/call",
+        "params": {
+            "name": "search_financial_terms",
+            "arguments": {"min_rate_pct": 101},
+        },
+    })
+
+    assert boolean["error"]["code"] == -32602
+    assert too_high["error"]["code"] == -32602
 
 
 def test_http_errors_do_not_echo_api_key():

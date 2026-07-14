@@ -56,6 +56,30 @@ TOOLS = [
         },
     },
     {
+        "name": "search_financial_terms",
+        "description": (
+            "Search normalized Cortellis deal financial terms with source provenance."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "deal_id": {"type": "integer", "minimum": 1},
+                "term_type": {"type": "string"},
+                "basis": {"type": "string"},
+                "disclosure_status": {"type": "string"},
+                "min_amount_usd_millions": {"type": "number", "minimum": 0},
+                "min_rate_pct": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100,
+                },
+                "after_id": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "search_companies",
         "description": "Search deal-referenced companies and verified identifiers.",
         "inputSchema": {
@@ -148,6 +172,7 @@ TOOL_ROUTES = {
     "get_data_catalog": ("catalog", None),
     "search_deals": ("deals", None),
     "get_deal": ("deals/{deal_id}", "deal_id"),
+    "search_financial_terms": ("financial-terms", None),
     "search_companies": ("companies", None),
     "search_drugs": ("drugs", None),
     "search_clinical_trials": ("clinical-trials", None),
@@ -266,11 +291,13 @@ class OneBDMCPServer:
             valid_type = (
                 (expected == "integer" and isinstance(value, int)
                  and not isinstance(value, bool))
+                or (expected == "number" and isinstance(value, (int, float))
+                    and not isinstance(value, bool))
                 or (expected == "string" and isinstance(value, str))
             )
             if not valid_type:
                 return f"Tool argument {key} must be a {expected}"
-            if expected == "integer":
+            if expected in {"integer", "number"}:
                 if "minimum" in specification and value < specification["minimum"]:
                     return f"Tool argument {key} is below its minimum"
                 if "maximum" in specification and value > specification["maximum"]:

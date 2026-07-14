@@ -26,6 +26,8 @@ source-attributed and should not be described to colleagues as Cortellis data.
 | Data object | Production rows | What is retained |
 |---|---:|---|
 | Deals | 172,643 | 172,638 API-retrievable deals plus 5 preserved retired records |
+| Deals with phase at signing | 63,772 | Highest deal-asset phase at the deal start |
+| Deals with current phase | 64,312 | Highest current phase within each deal response |
 | Exact expanded-response versions | 196,340 | Lossless XML/JSON response history and hashes |
 | Deal source responses | 172,638 | Complete source-citation response coverage for retrievable deals |
 | Normalized source citations | 268,543 | Current source ID and source type links |
@@ -44,11 +46,11 @@ source-attributed and should not be described to colleagues as Cortellis data.
 | Technology links | 400,709 | Deal-to-technology relationships, including principal flag |
 | Timeline events | 232,058 | Stage/status events and embedded payment/drug structures |
 | Finance summaries | 172,643 | Paid/projected amounts, currency, unit, disclosure status, raw detail |
-| Normalized financial terms | 503,525 | Upfront, milestone, royalty and related source-derived terms |
+| Normalized financial terms | 445,904 | Parser-v4 upfront, milestone, royalty and related source-derived terms |
 | M&A summaries | 11,277 | M&A-specific product, ownership, investor and financial fields |
 | Contract metadata | 42,573 | Complete per-deal metadata scan, PDF/text flags, dates and redaction |
-| Searchable contract texts | 25,977 | Downloaded and indexed full text |
-| Contract chunks | 897,041 | Full-text/RAG chunks for contract retrieval |
+| Searchable contract texts | 25,978 | Downloaded and indexed full text |
+| Contract chunks | 897,130 | Full-text/RAG chunks for contract retrieval |
 
 ### Deal fields
 
@@ -151,8 +153,9 @@ The versioned API is rooted at:
 https://onebd.pchomelab.com/api/v1
 ```
 
-It provides live catalog, deals, deal detail, companies, drugs, clinical trials,
-biology targets/diseases, EDGAR filing metadata, and source-health endpoints.
+It provides live catalog, deals, deal detail, normalized financial terms,
+companies, drugs, clinical trials, biology targets/diseases, EDGAR filing
+metadata, and source-health endpoints.
 Every list uses a bounded cursor (`after_id` or `after_nct_id`) and a maximum of
 100 records per request. It does not accept arbitrary SQL.
 
@@ -170,6 +173,9 @@ curl -H "Authorization: Bearer $OWNER_JWT" \
 
 curl -H "X-API-Key: $ONEBD_API_KEY" \
   'https://onebd.pchomelab.com/api/v1/deals?query=oncology&limit=25'
+
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  'https://onebd.pchomelab.com/api/v1/financial-terms?term_type=upfront_payment&min_amount_usd_millions=100&limit=25'
 ```
 
 ### Owner-controlled enforcement
@@ -222,9 +228,9 @@ receive database credentials and cannot bypass API policy.
 }
 ```
 
-Available MCP tools cover the catalog, deals, companies, drugs, trials, targets,
-diseases, EDGAR documents, and source status. The same key scopes, revocation,
-dataset toggles, and owner access mode apply.
+Available MCP tools cover the catalog, deals, normalized deal financial terms,
+companies, drugs, trials, targets, diseases, EDGAR documents, and source status.
+The same key scopes, revocation, dataset toggles, and owner access mode apply.
 
 ## Recommended colleague briefing language
 
