@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     cortellis_base_url: str = "https://api.cortellis.com/api-ws/ws/rs"
     cortellis_sync_overlap_days: int = 2
     cortellis_catalog_scan_workers: int = 8
+    cortellis_catalog_repair_limit: int = 30000
     cortellis_contract_scan_batch_size: int = 1000
     cortellis_contract_scan_workers: int = 5
     cortellis_deal_api_scan_batch_size: int = 500
