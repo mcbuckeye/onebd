@@ -1473,6 +1473,146 @@ def test_v10_royalty_excludes_sales_cost_and_payment_burden_thresholds():
         )
 
 
+def test_v11_royalty_excludes_bases_combined_burdens_and_fraction_fragments():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_rate_clauses = [
+        """<para>If royalties paid to Third Parties and the Cost of Manufacture,
+        in the aggregate, exceed thirty percent (30%) of Net Sales, the parties
+        shall share the excess.</para>""",
+        """<para>Royalties. One hundred percent (100%) of the Net Sales of the
+        Product shall be used to determine the Royalty under subsection (c).
+        </para>""",
+    ]
+    for contract in false_rate_clauses:
+        assert all(
+            clause["clause_type"] != "royalty_rate"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+    legacy_fractions = extract_contract_financial_clauses(
+        """<para>Royalties shall equal five and one-half percent (51/2%) for
+        patented products and five percent (5%) otherwise. Another product is
+        subject to two and one-half percent (2-1/2%) of Net Sales.</para>"""
+    )
+    for clause in legacy_fractions:
+        if clause["clause_type"] == "royalty_rate":
+            assert clause["rate_min_pct"] != 2
+            assert clause["rate_max_pct"] != 2
+
+
+def test_v11_royalty_excludes_sublicense_income_allocation_percentages():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    clauses = extract_contract_financial_clauses(
+        """<para>Share of sublicensing income including upfront and milestone
+        payments, equity, and royalties: 60% NEMUS, 40% UM with a minimum
+        royalty of five and one-half percent (5.5%) of Net Sales to UM.</para>"""
+    )
+    royalty = next(clause for clause in clauses if clause["clause_type"] == "royalty_rate")
+    assert royalty["rate_min_pct"] == 5.5
+    assert royalty["rate_max_pct"] == 5.5
+
+
+def test_v11_milestone_excludes_escrow_maintenance_and_mixed_aggregates():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    false_milestone_clauses = [
+        """<para>100% of the Milestone Payments made in excess of $2,000,000
+        will be released upon payment of such Milestone Payments.</para>""",
+        """<para>Milestone payments may be taken as options. Licensee must pay
+        a license maintenance fee of $5,000 on each anniversary.</para>""",
+        """<para>Milestone payments, if any, are not creditable. Licensee shall
+        pay a license maintenance royalty on the following anniversaries:
+        $25,000, $50,000 and $75,000.</para>""",
+        """<para>Company could receive approximately $40 million in milestones,
+        development payments and equity investments.</para>""",
+        """<para>Milestone Payments. The Second Installment License Fee of
+        $3,000,000 is due on February 1. Actual milestone amounts are redacted.
+        </para>""",
+    ]
+    for contract in false_milestone_clauses:
+        assert all(
+            clause["clause_type"] != "milestone_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
+def test_v11_milestone_keeps_payments_but_excludes_a_nearby_loan():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    clauses = extract_contract_financial_clauses(
+        """<para>Milestone Payments. Buyer shall pay a non-refundable
+        milestone payment of $4,000,000 upon approval.</para>
+        <para>Loan. Buyer shall pay Seller $16,000,000 (the \"Loan\"), which
+        bears interest and must be repaid.</para>"""
+    )
+    milestone = next(
+        clause for clause in clauses if clause["clause_type"] == "milestone_payment"
+    )
+    assert milestone["amount_min_millions"] == 4
+    assert milestone["amount_max_millions"] == 4
+
+
+def test_v11_upfront_keeps_only_obligated_noncontingent_upfront_amounts():
+    from unified_api.services.contract_financial_clauses import (
+        extract_contract_financial_clauses,
+    )
+
+    bounded_cases = [
+        (
+            """<para>Company will receive a $40 million upfront cash payment
+            and up to $350 million in pre-commercialization milestones.</para>""",
+            (40, 40),
+        ),
+        (
+            """<para>Buyer will pay an upfront cash payment of $195 million and
+            make additional license payments of $45 million in 2009.</para>""",
+            (195, 195),
+        ),
+        (
+            """<para>$65,000 upfront payment. License Maintenance Fees are
+            $25,000 per year and are credited against royalties.</para>""",
+            (0.065, 0.065),
+        ),
+        (
+            """<para>Licensee will pay a license issue fee of $100,000 in two
+            $50,000 installments after Licensee achieves the Essential
+            Milestone.</para>""",
+            (0.05, 0.1),
+        ),
+    ]
+    for contract, expected in bounded_cases:
+        upfront = next(
+            clause for clause in extract_contract_financial_clauses(contract)
+            if clause["clause_type"] == "upfront_payment"
+        )
+        assert upfront["amount_min_millions"] == expected[0]
+        assert upfront["amount_max_millions"] == expected[1]
+
+    false_upfront_clauses = [
+        """<para>If Buyer receives Payment Commitments of at least an aggregate
+        $16 million, including at least $2 million arising from upfront
+        payments, Buyer shall make a Third Payment of $1 million.</para>""",
+        """<para>Licensee may enter into a marketing agreement and may retain
+        an initial upfront lump-sum fee not to exceed $5 million without
+        obligation to Licensor.</para>""",
+    ]
+    for contract in false_upfront_clauses:
+        assert all(
+            clause["clause_type"] != "upfront_payment"
+            for clause in extract_contract_financial_clauses(contract)
+        )
+
+
 def test_review_key_changes_when_the_extracted_assertion_changes():
     from unified_api.services.contract_financial_clauses import (
         _clause_review_key,
