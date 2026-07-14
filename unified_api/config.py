@@ -66,10 +66,10 @@ class Settings(BaseSettings):
     cortellis_sync_overlap_days: int = 2
     cortellis_catalog_scan_workers: int = 8
     cortellis_catalog_repair_limit: int = 30000
-    cortellis_contract_scan_batch_size: int = 1000
-    cortellis_contract_scan_workers: int = 5
-    cortellis_deal_api_scan_batch_size: int = 500
-    cortellis_deal_api_scan_workers: int = 5
+    cortellis_contract_scan_batch_size: int = 5000
+    cortellis_contract_scan_workers: int = 8
+    cortellis_deal_api_scan_batch_size: int = 5000
+    cortellis_deal_api_scan_workers: int = 8
     cortellis_freshness_warn_hours: int = 36
     cortellis_freshness_critical_hours: int = 72
 
