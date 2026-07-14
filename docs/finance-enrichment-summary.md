@@ -1,242 +1,120 @@
-# Finance Data Enrichment Pipeline - Completion Report
+# Cortellis Financial-Term Analytics — Production Report
 
-**Date:** 2026-02-22  
-**Agent:** Supercoder (subagent)  
-**Task:** Phase 4 Finance Data Enrichment
+**Verified:** 2026-07-14
 
-## Summary
+**Environment:** `onebd.pchomelab.com`
 
-Enhanced the finance detail parser with multi-currency support, improved pattern recognition, and explicit undisclosed detection. All code changes completed, tested (100% pass rate), committed, and pushed to main. Database enrichment awaits deployment.
+**Source:** Cortellis `FinanceDetail` JSON retained in PostgreSQL
 
----
+## Production status
 
-## ✅ Completed Tasks
+The financial enrichment pipeline is deployed, complete for the current source
+snapshot, scheduled for incremental maintenance, and available through governed
+Chat queries. It is no longer awaiting deployment or database enrichment.
 
-### 1. Parser Enhancements
+| Measure | Verified value |
+|---|---:|
+| Cortellis deals | 172,643 |
+| Deals with `FinanceDetail` payloads | 125,360 |
+| Normalized financial terms | 445,904 |
+| Parser version | 4 |
+| Parse coverage | 100% |
+| Failed source replays | 0 |
+| Deterministic source replays checked | 475 |
+| Source replay field accuracy | 100% |
 
-**File:** `unified_api/services/finance_parser.py`
+The normalized table preserves deal ID, recipient side, paid/projected basis,
+term type, reported amount/currency/unit, Cortellis USD value, royalty range,
+disclosure and accuracy metadata, source JSON/path/hash, confidence, and parser
+version. The raw vendor node remains available for audit.
 
-#### Multi-Currency Support
-- **Before:** USD only (`$`)
-- **After:** USD, EUR (€), GBP (£), JPY (¥)
-- Automatically detects currency symbol and returns currency code in parsed output
+## Governed semantic contract
 
-#### Improved Patterns
-- ✅ **"up to" / "approximately"** qualifiers now handled in all patterns
-- ✅ **Combined milestones**: "$500M in development and regulatory milestones"
-- ✅ **Sales-based milestones**: "Up to $600M in sales-based milestones" → commercial
-- ✅ **Clinical milestones**: "$250M in clinical and regulatory milestones" → development
-- ✅ **Generic milestones**: "up to $100M in milestones" (when type not specified)
-- ✅ **Undisclosed detection**: "No financial terms disclosed" sets `undisclosed: true`
+The first production query family uses deliberately narrow rules:
 
-#### Robustness
-- All patterns now support thousand/million/billion/K/M/B notation
-- Handles commas in numbers correctly
-- Captures first currency found when multiple currencies present
+- `basis = projected_current`
+- `disclosure_status = Known`
+- parser v4 only
+- explicit Cortellis USD values for monetary comparisons
+- non-breakdown headline terms only
+- one maximum headline amount per deal to avoid double-counting reciprocal or
+  repeated recipient nodes
+- `milestone_total` for aggregate milestone potential; component milestones are
+  not summed into a second total
+- one disclosed low/high royalty range per deal
+- licensing agreement scope for generic “upfront over” deal lists
 
-### 2. Test Coverage
+The platform does not substitute total projected deal value for an upfront or
+milestone term. Financial questions outside a governed pattern return a scoped
+limitation instead of unconstrained generated SQL. Acquisition-premium analytics
+remain unavailable because unaffected equity value and market-price history are
+not yet present.
 
-**File:** `unified_api/tests/unit/test_finance_parser.py`
+## Production benchmark proofs
 
-Added 11 new test cases (20 total):
-- `test_parse_euro_amounts`
-- `test_parse_yen_amounts`
-- `test_parse_pound_sterling`
-- `test_parse_up_to_pattern`
-- `test_parse_approximately_pattern`
-- `test_parse_no_financial_terms_disclosed`
-- `test_parse_combined_development_regulatory_milestones`
-- `test_parse_combined_development_commercial_milestones`
-- `test_parse_scientific_milestone`
-- `test_parse_sales_milestones`
-- `test_parse_multiple_currencies_prefers_first`
+These answers passed the user-facing Chat v2 route and an independent read-only
+PostgreSQL truth query on 2026-07-14:
 
-**Test Results:**
-```
-✅ 20/20 finance parser tests passing
-✅ 64/64 other unit tests passing (67 skipped due to no DB)
-✅ 100% pass rate for testable code
-```
+| Question | Production result | Disclosure |
+|---|---|---:|
+| Typical upfront for Phase 2 ADC license assets | median $92.5M; interquartile range $38.875M–$182.5M; average $190.07M | 14 of 22 eligible deals (63.6%) |
+| Median milestone for Phase 3 license deals | median $110M; interquartile range $20M–$325M; average $338.57M | 653 of 1,694 eligible deals (38.5%) |
+| Typical royalties for oncology bispecific licenses | median per-deal low/high 20%/20%; midpoint interquartile range 10%–22% | 7 of 153 eligible deals (4.6%) |
+| License deals with disclosed upfront over $100M | 428 qualifying deals; Chat returns the top 20 with deal citations | all returned rows disclosed |
 
-### 3. Code Quality
+The royalty benchmark has a particularly small disclosed sample and must be
+presented with that caveat. These are descriptive Cortellis-source benchmarks,
+not valuation recommendations.
 
-**Pre-Push Verification:**
-- ✅ Unit tests: PASS
-- ✅ Parser logic: verified
-- ✅ No syntax errors
-- ✅ Backward compatible (existing tests still pass)
+## Phase-at-deal repair
 
-**Git Status:**
-- Latest commit: `74df349` (includes parser improvements in prior commits)
-- Pushed to: `origin/main`
-- Dokploy: auto-deploy pending
+The expanded API carries phase fields inside each deal's drug records, but the
+legacy transformer never populated `deals.phase_highest_start` or
+`deals.phase_highest_now`. A lossless-archive backfill repaired all 172,638
+currently accessible deals in 42 seconds:
 
----
+| Backfill result | Count |
+|---|---:|
+| Archived deals checkpointed | 172,638 |
+| Deals with phase at start | 63,772 |
+| Deals with current phase | 64,312 |
+| XML/parser failures | 0 |
 
-## ⏳ Pending: Database Enrichment
+Future full/incremental syncs and expanded-response coverage scans populate the
+same fields as records arrive. Deal phase is the highest per-drug phase in that
+deal's expanded response, using Cortellis phase IDs and a deterministic stage
+ordering. It should not be confused with a separate, global current asset phase.
 
-**Cannot run from build host** (database on deployment target 192.168.2.122)
+## Operations and verification
 
-### Enrichment Endpoint
-```bash
-POST http://cortellis.machomelab.com/api/enrichment/parse-financials
-```
+- Incremental extraction task:
+  `unified_api.workers.tasks.enrichment.extract_financial_terms`
+- One-time/versioned rebuild task:
+  `unified_api.workers.tasks.enrichment.rebuild_financial_terms`
+- Phase archive repair task:
+  `unified_api.workers.tasks.enrichment.backfill_deal_phases`
+- Status endpoint: `/api/enrichment/status`
+- Validation endpoint: `/api/enrichment/financial-terms/validation`
+- Metric definitions: `/api/analytics/metric-definitions`
+- Executable truth suite: `unified_api/evals/question_cases.yaml`
 
-**Parameters:**
-- `batch_size` (int, 1-1000): Number of deals to process per call
-- `dry_run` (bool): Preview without updating database
+The production proof passed all five blocking regressions and financial cases
+#11, #14, #16, and #17 with direct database truth. The local backend suite passed
+593 tests with 67 database-dependent tests deferred to the deployed environment.
 
-### Recommended Workflow
+## Access and licensing control
 
-#### Step 1: Get Baseline Stats
-```bash
-curl -s "http://cortellis.machomelab.com/api/enrichment/status" | jq
-```
+Source-license annotations document provenance and contractual considerations;
+they do not hard-code access restrictions. The system owner controls whether
+dataset, API-key scope, authentication, and MCP restrictions are enforced through
+Admin → API Access. Current policy can therefore be tightened, relaxed, or left
+advisory by the owner without changing the financial parser.
 
-**Expected fields:**
-- `deals_with_raw_text`: Count of deals with `finance_detail_raw` populated
-- `deals_parsed`: Count with `parsed_detail` populated
-- `deals_with_amount`: Count with `total_projected_current_amount`
-- `total_deals`: Total deals in database
-- `parse_coverage`: Percentage parsed
+## Remaining financial priorities
 
-#### Step 2: Dry Run Test
-```bash
-curl -X POST "http://cortellis.machomelab.com/api/enrichment/parse-financials?batch_size=20&dry_run=true" | jq
-```
-
-**Expected response:**
-```json
-{
-  "processed": 20,
-  "errors": 0,
-  "dry_run": true,
-  "sample": [
-    {
-      "deal_id": "...",
-      "raw_text": "...",
-      "parsed": {
-        "upfront": {"amount": 50, "currency": "USD"},
-        "milestones": {...},
-        ...
-      }
-    }
-  ]
-}
-```
-
-#### Step 3: Full Enrichment (Batched)
-The platform has **145K+ deals**. Assume ~70K have raw text (based on ~27% having structured data).
-
-**Batch processing:**
-```bash
-# Process in batches of 500
-for i in {1..140}; do
-  echo "Batch $i..."
-  curl -X POST "http://cortellis.machomelab.com/api/enrichment/parse-financials?batch_size=500&dry_run=false"
-  sleep 2  # Rate limiting
-done
-```
-
-**Or single large batch:**
-```bash
-curl -X POST "http://cortellis.machomelab.com/api/enrichment/parse-financials?batch_size=1000&dry_run=false"
-# Repeat until "processed": 0 (no more unparsed deals)
-```
-
-#### Step 4: Verify Results
-```bash
-# Check updated stats
-curl -s "http://cortellis.machomelab.com/api/enrichment/status" | jq
-
-# Verify data health improved
-curl -s "http://cortellis.machomelab.com/api/health/data" | jq
-```
-
-**Expected improvement:**
-- `parse_coverage`: should increase from 0% to ~95%+
-- `deals_parsed`: should approach `deals_with_raw_text`
-- Data health score: should improve
-
----
-
-## Current Status
-
-| Task | Status | Notes |
-|------|--------|-------|
-| Parser enhancements | ✅ Complete | All tests pass |
-| Test coverage | ✅ Complete | 20/20 passing |
-| Code commit & push | ✅ Complete | Pushed to main |
-| Deployment | ⏳ Pending | Dokploy auto-deploy |
-| Enrichment endpoint available | ⏳ Pending | Returns 404 currently |
-| Database enrichment | ⏳ Blocked | Awaiting deployment |
-
----
-
-## Next Steps
-
-1. **Wait for deployment** (~5-10 min for Dokploy to rebuild and redeploy)
-2. **Verify endpoint:** `curl http://cortellis.machomelab.com/api/enrichment/status`
-3. **Run enrichment pipeline** (steps above)
-4. **Collect metrics:**
-   - Before: deals with raw text, current disclosure rate
-   - After: deals parsed, new disclosure rate
-   - Improvement: percentage point increase
-5. **Report to Steve** with before/after stats
-
----
-
-## Technical Details
-
-### Parser Output Schema
-```python
-{
-  "upfront": {
-    "amount": float,  # in millions
-    "currency": str   # "USD", "EUR", "GBP", "JPY"
-  } | None,
-  "milestones": {
-    "development": {"amount": float, "currency": str} | None,
-    "regulatory": {"amount": float, "currency": str} | None,
-    "commercial": {"amount": float, "currency": str} | None
-  },
-  "royalties": {
-    "min_rate": float,
-    "max_rate": float
-  } | None,
-  "total_value": {
-    "amount": float,
-    "currency": str
-  } | None,
-  "undisclosed": bool  # NEW: explicit undisclosed flag
-}
-```
-
-### Improvements from Original Parser
-
-| Feature | Before | After |
-|---------|--------|-------|
-| Currencies | USD only | USD, EUR, GBP, JPY |
-| "up to" handling | Partial | Full coverage |
-| "approximately" | ❌ | ✅ |
-| Combined milestones | ❌ | ✅ |
-| Undisclosed detection | ❌ | ✅ |
-| Sales-based milestones | ❌ | ✅ |
-| Clinical milestones | Partial | ✅ |
-| Generic milestones | ❌ | ✅ |
-
----
-
-## Files Modified
-
-1. `unified_api/services/finance_parser.py` - Enhanced parser logic
-2. `unified_api/tests/unit/test_finance_parser.py` - Added 11 new tests
-3. `unified_api/routers/enrichment.py` - Already existed (no changes needed)
-
-## Commits
-
-Parser improvements included in commit chain leading to `74df349`.
-
----
-
-**End of Report**
+1. Add governed question shapes for deal-specific terms, company comparisons,
+   and milestone structures in comp sets.
+2. Add acquisition-premium inputs from licensed market-price/fundamental data.
+3. Add review UI that opens a normalized term beside its exact archived source
+   node and vendor citation.
+4. Expand truth cases before promoting any additional free-form financial query.

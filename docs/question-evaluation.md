@@ -9,9 +9,9 @@
 2026-07-14 production database
 
 **Status:** All 65 questions are versioned, executable, and have deterministic
-pass/fail oracles. Five are blocking production regressions. Eleven cases compare
+pass/fail oracles. Five are blocking production regressions. Fifteen cases compare
 the deployed response with direct, read-only database truth; 55 use scored
-grounding/provenance rubrics (case #35 uses both).
+grounding/provenance rubrics (five cases use both).
 
 ## Purpose
 
@@ -47,46 +47,55 @@ questions require source-backed claims and a refusal when evidence is insufficie
 - 172,643 Cortellis rows and 67,177 companies. Exhaustive retrieval proved
   172,638 currently accessible deals plus five preserved retired records; the
   API search endpoint advertises only 149,028.
-- 41,503 deals with at least one disclosed financial total (24.0%).
-- 25,977 indexed contracts and 897,041 embedded contract chunks.
+- 41,341 deals with at least one disclosed financial total (23.9%).
+- 125,360 deals with typed `FinanceDetail` payloads and 445,904 normalized
+  financial terms; parser v4 has 100% source-payload coverage and no failures.
+- 25,978 indexed contracts and 897,130 embedded contract chunks.
 - 330,818 EDGAR filings and 3,580,771 filing chunks.
 - 692 company mappings with CIKs (1,648 cross-references of all types).
 - 69,179 candidate deal–filing links generated from company and date proximity.
 - 2,157 patent records and 2,863 deal–patent associations; this is not a
   comprehensive patent landscape.
+- Archive-backed phase repair populated phase-at-start for 63,772 deals and
+  current phase for 64,312 deals; all 172,638 accessible archived records were
+  inspected with zero parse failures.
 - Cortellis incremental sync is current. Both EDGAR recent and historical lanes
   reached 2026-07-13; the historical backlog is complete for that snapshot.
 
-## Verified Baseline Reliability Findings
+## Historical Baseline Reliability Findings
 
-1. **Entity aliases can invalidate otherwise simple questions.** Chat v2 returned
+These were observed in the reviewed baseline and drove the remediation below;
+they are not descriptions of the current deployment.
+
+1. **Entity aliases invalidated otherwise simple questions.** Chat v2 returned
    zero Pfizer deals for 2024; `Pfizer Inc` now has 26.
-2. **Financial concepts are not governed.** A milestone question generated SQL
+2. **Financial concepts were not governed.** A milestone question generated SQL
    against total projected deal value rather than milestone payments.
-3. **Empty-result synthesis is not grounded.** A Roche strategy question returned
+3. **Empty-result synthesis was not grounded.** A Roche strategy question returned
    zero rows but still introduced unsupported historical assertions.
-4. **Chat confidence is not factual confidence.** It currently reports record
+4. **Chat confidence was not factual confidence.** It reported record
    count and financial disclosure rate, without source citations or validation.
-5. **EDGAR form filtering is incorrect.** Actual forms are stored in
+5. **EDGAR form filtering was incorrect.** Actual forms are stored in
    `documents.subtype`, while list/search routes filter `documents.doc_type`
    (`filing`). A live `doc_type=8-K` search returned no results.
-6. **DD output is incomplete.** SEC filings, contracts, territory rights, and
+6. **DD output remains incomplete.** SEC filings, contracts, territory rights, and
    comparable-transaction sections are currently empty placeholders.
-7. **Comp modality is scored but not used to select candidates.** High-value
+7. **Comp modality was scored but not used to select candidates.** High-value
    nonmatching candidates can crowd out the relevant modality before ranking.
 8. **The agentic-RAG suite was not green.** Eight tests failed around async
    mocks/tool execution in the reviewed production baseline.
 
-## Remediation in the Current Change Set
+## Verified Remediation
 
-The first implementation pass addresses the most consequential baseline failures:
+The deployed implementation addresses the most consequential baseline failures:
 
 - Canonical company resolution is passed into SQL generation, and generated SQL
   is not executed if it drops an unambiguous company ID.
 - Company/year deal counts use a deterministic, index-friendly truth query rather
   than an LLM-generated name match.
-- Unsupported aggregate milestone and acquisition-premium questions return an
-  explicit limitation instead of substituting total projected deal value.
+- Upfront, milestone, and royalty benchmark questions use governed parser-v4 SQL
+  with explicit source basis, disclosure denominator, unit, and database truth.
+  Acquisition-premium questions still return an explicit limitation.
 - Empty or all-null evidence produces a deterministic insufficient-evidence
   response and bypasses narrative synthesis.
 - EDGAR form filtering and output use `COALESCE(subtype, doc_type)`.
@@ -99,6 +108,8 @@ The first implementation pass addresses the most consequential baseline failures
   `python -m unified_api.scripts.evaluate_questions`.
 - Chat v2 now returns record-level or aggregate-query citations and marks evidence
   as grounded only when retrieved data has source provenance.
+- Aggregate financial confidence reports underlying disclosed/eligible deal
+  coverage rather than treating one aggregate response row as the sample.
 - `/api/analytics/metric-definitions` publishes the semantic contract for deal
   count, projected totals, reported paid totals, upfronts, milestones, royalties,
   and acquisition premiums.
@@ -110,12 +121,16 @@ The first implementation pass addresses the most consequential baseline failures
   to an unconstrained graph leaderboard. The current remediation routes it to a
   canonical-company, Cancer-taxonomy, agreement-pattern query and verifies the
   returned rows against database truth.
+- Full/incremental Cortellis syncs and raw-response scans now populate
+  phase-at-deal fields; the production archive repair inspected 172,638 records
+  with zero failures.
 
-All five seeded cases passed against deployed commit `314efda` on 2026-07-11:
+The original five seeded cases passed against deployed commit `314efda` on
+2026-07-11:
 
 1. Pfizer 2024 count returned the then-current 23 using canonical company ID
    18767.
-2. Median milestone analytics refuses safely without generating substitute SQL.
+2. Median milestone analytics then refused safely without generating substitute SQL.
 3. Bispecific comp candidates return the matching bispecific modality.
 4. Empty Roche strategy evidence does not introduce an unsupported history claim.
 5. Full-text EDGAR filtering returns non-empty 8-K results.
@@ -124,6 +139,11 @@ The exhaustive Cortellis repair on 2026-07-14 recovered three additional
 Pfizer-linked 2024 records (deal IDs 385757, 408502, and 425099), changing the
 governed count from 23 to 26. Both the deployed answer and direct PostgreSQL
 truth return 26; the blocking regression was updated accordingly.
+
+On 2026-07-14, deployed commit `1fd6366` passed all five blocking regressions
+with direct database truth. The milestone regression now returns the governed
+parser-v4 result instead of a refusal. Financial catalog cases #11, #16, and
+#17 also passed independently executed PostgreSQL truth queries.
 
 The scorecard incorporates the directly justified rating changes below. A passing
 refusal improves safety but does not make an unavailable analytical capability
@@ -165,12 +185,13 @@ governed SQL patterns using the actual Cortellis taxonomy and fields:
 The evaluation schema now rejects any Strong-rated case without a versioned,
 read-only database truth query, and rejects any other case lacking either truth
 or a scored rubric. Cases #1, #3, #10, #12, #13, #18, #32, #35, #52, #53,
-and #54 have database truth. Cases #7, #19, #37, #42, #49, and #50 were
+and #54, plus financial cases #11, #14, #16, and #17, have database truth.
+Cases #7, #19, #37, #42, #49, and #50 were
 downgraded until graph identity, YoY period semantics, or conversational context
 is made deterministic.
 
 The Cortellis financial source was also re-audited. `finance_detail_raw` is JSONB,
-not unstructured text: 125,345 deals contain typed paid/projected payments,
+not unstructured text: 125,360 deals contain typed paid/projected payments,
 recipient side, dates, currencies, USD conversions, disclosure status, milestone
 breakdowns, royalty percentages, notes, and accuracy metadata. The old regex-only
 enrichment route treated this payload as a string and could not populate governed
@@ -181,8 +202,16 @@ terms beyond royalties, and normalizes one impossible vendor `%`/money unit
 conflict while preserving the raw source node. The production gate now covers
 all 125,360 payloads and 445,904 terms with zero structural failures and 100%
 accuracy across 475 deterministic source replays. The job remains resumable and
-scheduled; chat refusal stays in place until governed aggregate SQL patterns and
-question-specific database truths are added.
+scheduled. Governed SQL and question-specific truth are now live for Phase 2 ADC
+upfronts, Phase 3 license milestone totals, oncology bispecific royalties, and
+license deals with upfronts over a requested threshold. Other financial question
+shapes continue to refuse unconstrained SQL.
+
+The deployed benchmark values are intentionally disclosure-aware: Phase 2 ADC
+upfronts use 14 disclosed of 22 eligible deals (median $92.5M), Phase 3 license
+milestones use 653 of 1,694 (median $110M), and oncology bispecific royalties use
+only 7 of 153 (median midpoint 20%). The small royalty sample is a material
+limitation, not a confidence score to hide.
 
 ---
 
@@ -203,7 +232,7 @@ question-specific database truths are added.
 | 9 | How many deals closed last week? | 🟡 | Relative dates, timezone, and closed-vs-announced field selection are not deterministic. |
 | 10 | What is the average deal size in oncology? | ✅ | Analytics can calculate it with a disclosure caveat; null and unit handling must remain explicit. |
 
-**Provisional score: 3 Strong, 6 Partial, 1 Needs Work**
+**Catalog rating: 3 Strong, 6 Partial, 1 Needs Work**
 
 ---
 
@@ -211,18 +240,18 @@ question-specific database truths are added.
 
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
-| 11 | Typical upfront payments for Phase 2 ADC assets? | 🟡 | Phase valuation analytics exists, but modality and upfront-specific semantics are not consistently combined. |
+| 11 | Typical upfront payments for Phase 2 ADC assets? | ✅ | Governed Phase 2 + ADC + license + parser-v4 query returns a $92.5M median from 14 disclosed of 22 eligible deals and matches direct database truth. |
 | 12 | Valuation range for oncology M&A deals, 2020–2025? | ✅ | Supported by deterministic analytics filters with disclosure caveats. |
 | 13 | How have deal values trended over five years? | ✅ | Market-trends endpoint supports reproducible trend output. |
-| 14 | Median milestone payment for Phase 3 license deals? | 🔧 | No governed milestone aggregation; live chat incorrectly queried total projected value. |
+| 14 | Median milestone payment for Phase 3 license deals? | ✅ | Governed milestone-total query returns a $110M median from 653 disclosed of 1,694 eligible deals and matches direct database truth. |
 | 15 | Compare Pfizer vs Merck vs Novartis deal activity. | 🟡 | Endpoint exists; frontend uses hardcoded IDs and entity selection is not robust. |
-| 16 | Typical royalty rates for oncology bispecifics? | 🔧 | Contract retrieval exists, but structured royalty extraction is not complete at scale. |
-| 17 | Deals with disclosed upfront over $100M. | 🔧 | No governed structured upfront column exists; the platform now refuses instead of treating projected-at-signing or total value as upfront. |
+| 16 | Typical royalty rates for oncology bispecifics? | ✅ | Governed per-deal royalty ranges return a 20% median midpoint, but only 7 of 153 eligible deals disclose a usable rate; the answer exposes that limitation. |
+| 17 | Deals with disclosed upfront over $100M. | ✅ | Governed parser-v4 query finds 428 qualifying license deals, returns the top 20 with record citations, and matches direct database truth. |
 | 18 | Percentage of 2024 deals that were M&A vs licensing. | ✅ | Agreement-type distribution endpoint supports the calculation. |
 | 19 | YoY deal-volume growth by therapy area. | 🟡 | Endpoint exists, but the requested comparison period is underspecified and chat output lacks a truth assertion. |
 | 20 | Largest deal in each major therapy area. | 🟡 | Straightforward SQL, but no demonstrated product workflow/golden result yet. |
 
-**Provisional score: 3 Strong, 4 Partial, 3 Needs Work**
+**Measured score: 7 Strong, 3 Partial**
 
 ---
 
@@ -241,7 +270,7 @@ question-specific database truths are added.
 | 29 | Warm introduction paths between us and Company Y. | 🟡 | Deal-network paths exist; personal relationship data does not. |
 | 30 | Recommend deals/targets I have not seen. | 🟡 | Recommendation endpoint is primarily recency/value based, not behavioral personalization. |
 
-**Provisional score: 8 Partial, 1 Needs Work, 1 Cannot**
+**Catalog rating: 8 Partial, 1 Needs Work, 1 Cannot**
 
 ---
 
@@ -260,7 +289,7 @@ question-specific database truths are added.
 | 39 | Are competitors building ADC portfolios faster than us? | ❌ | “Us,” portfolio boundaries, and velocity metric are not defined. |
 | 40 | Weekly competitive briefing for oncology. | 🟡 | Weekly personalized intelligence digests now use correct seven-day and therapy/company filters and can include sourced upcoming clinical catalysts; competitor-focused narrative and delivery QA remain incomplete. |
 
-**Provisional score: 1 Strong, 6 Partial, 2 Needs Work, 1 Cannot**
+**Catalog rating: 1 Strong, 6 Partial, 2 Needs Work, 1 Cannot**
 
 ---
 
@@ -279,7 +308,7 @@ question-specific database truths are added.
 | 49 | Timeline of all deals for this target company. | 🟡 | Company timeline is supported after an explicit entity selection; the standalone placeholder has no target context. |
 | 50 | Who else licensed this company's technology? | 🟡 | Partner history is available after an explicit company selection; conversational referent handling is not deterministic. |
 
-**Provisional score: 7 Partial, 2 Needs Work, 1 Cannot**
+**Catalog rating: 7 Partial, 2 Needs Work, 1 Cannot**
 
 ---
 
@@ -298,7 +327,7 @@ question-specific database truths are added.
 | 59 | Quarterly deal report for Q2 2025. | 🟡 | Data is available, but no tested quarterly-report template. |
 | 60 | Indications with the most deal-activity growth. | 🟡 | Queryable, but no dedicated demonstrated workflow/golden result. |
 
-**Provisional score: 3 Strong, 6 Partial, 1 Cannot**
+**Catalog rating: 3 Strong, 6 Partial, 1 Cannot**
 
 ---
 
@@ -306,32 +335,34 @@ question-specific database truths are added.
 
 | # | Question | Rating | Current assessment |
 |---|---|---:|---|
-| 61 | Find 8-K filings mentioning ADC partnerships. | 🟡 | Form-aware full-text filtering now works and is regression-tested; the historical backfill gap still limits completeness. |
+| 61 | Find 8-K filings mentioning ADC partnerships. | 🟡 | Form-aware full-text filtering works, the historical backlog is caught up, and the regression is green; ADC-partnership-specific precision truth is still broader than the current form-filter oracle. |
 | 62 | Show Pfizer's 10-K risk factors. | 🟡 | Generic sections and a section endpoint exist; reliable form-aware Item 1A extraction/filtering is incomplete. |
 | 63 | Cross-reference this Cortellis deal with SEC filings. | 🟡 | Matcher is implemented with 66,980 links; company/date candidates need content-based ranking and precision evaluation. |
-| 64 | Material contracts from recent 8-K filings. | 🟡 | Recent ingestion extracts EX-10 exhibits and form filtering works; backlog coverage and structured contract classification remain incomplete. |
+| 64 | Material contracts from recent 8-K filings. | 🟡 | Recent ingestion extracts EX-10 exhibits, form filtering works, and the backlog is current; structured contract classification and precision truth remain incomplete. |
 | 65 | S-1 analysis for a pre-IPO biotech. | 🟡 | S-1 text is searchable; structured pipeline/financial/risk extraction is incomplete. |
 
-**Provisional score: 5 Partial**
+**Catalog rating: 5 Partial**
 
 ---
 
-## Provisional Scorecard
+## Measured Scorecard
 
-This is a conservative code-and-smoke-test review, not the final measured score.
+This score is generated from the ratings in the executable 65-case catalog.
 
 | Category | Strong ✅ | Partial 🟡 | Needs Work 🔧 | Cannot ❌ | Total |
 |---|---:|---:|---:|---:|---:|
-| Quick Factual | 4 | 6 | 0 | 0 | 10 |
-| Analytical | 4 | 3 | 3 | 0 | 10 |
+| Quick Factual | 3 | 6 | 1 | 0 | 10 |
+| Analytical | 7 | 3 | 0 | 0 | 10 |
 | Strategic | 0 | 8 | 1 | 1 | 10 |
-| Competitive Intelligence | 2 | 5 | 2 | 1 | 10 |
-| Due Diligence | 3 | 4 | 2 | 1 | 10 |
+| Competitive Intelligence | 1 | 6 | 2 | 1 | 10 |
+| Due Diligence | 0 | 7 | 2 | 1 | 10 |
 | Market Landscape | 3 | 6 | 0 | 1 | 10 |
 | SEC Filings | 0 | 5 | 0 | 0 | 5 |
-| **Total** | **16** | **37** | **8** | **4** | **65** |
+| **Total** | **14** | **41** | **6** | **4** | **65** |
 
-**Provisional: 16/65 Strong (25%); 53/65 at least Partial (82%).**
+**Measured catalog rating: 14/65 Strong (21.5%); 55/65 at least Partial
+(84.6%).** This corrects arithmetic drift in the previous hand-maintained
+scorecard and should be regenerated from YAML after future rating changes.
 
 The breadth remains useful, but correctness and grounding—not feature count—are
 the limiting factors.
@@ -339,7 +370,7 @@ the limiting factors.
 ## Executable Evaluation Specification
 
 All 65 questions are versioned in `unified_api/evals/question_cases.yaml`. The
-five regression-tier cases have deterministic production assertions. Eleven
+five regression-tier cases have deterministic production assertions. Fifteen
 cases compare response fields to read-only SQL truth, while 55 cases have weighted
 evidence rubrics. Exact truth should continue to replace narrative rubrics as
 governed query shapes are added. A completed truth case must include:
@@ -378,17 +409,19 @@ Evaluation rules:
 
 1. ✅ Canonical entity/alias resolution before SQL generation (initial company
    implementation; broader aliases and ownership remain).
-2. Governed metric definitions for upfront, milestones, royalties, total value,
-   announced/closed dates, acquisition premium, and phase-at-deal.
+2. 🟡 Governed upfront, milestone, royalty, total-value, and phase-at-deal
+   definitions are live. Add explicit announced/closed semantics and acquisition
+   premium once market-price inputs exist.
 3. ✅ Evidence-only synthesis: refuse or clearly return “not found” on empty results.
-4. Source references and meaningful confidence/provenance in Chat v2.
+4. ✅ Chat v2 returns record/aggregate citations, query provenance, evidence
+   status, and underlying financial disclosure coverage.
 5. ✅ Executable 65-question harness with database-truth and scored-evidence
    oracles for every case.
 
 ### P1 — Broken or incomplete workflows
 
-6. 🟡 Fix EDGAR form filtering to use `subtype` (implemented); complete the
-   historical backfill (remaining).
+6. ✅ EDGAR form filtering uses `subtype`, and recent/historical lanes are caught
+   up through the current production snapshot.
 7. ✅ Apply modality during comp candidate retrieval.
 8. Populate DD SEC filing, contract, territory, and comparable-transaction sections.
 9. Add content-based validation/ranking to deal–filing links.
@@ -396,7 +429,8 @@ Evaluation rules:
 
 ### P2 — Higher-value expansion
 
-11. Milestone and royalty extraction/analytics.
+11. ✅ Parser-v4 milestone/royalty extraction is complete and the first governed
+    benchmarks are production-truthed; add deal-specific and comp-view shapes.
 12. Dynamic company comparison and “my company” configuration.
 13. 🟡 Evidence-limited company strategy summaries and baseline-safe, durable
     tracked-company indication entrant alerts are implemented; add general target
