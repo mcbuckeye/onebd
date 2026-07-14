@@ -263,6 +263,161 @@ def _is_deal_pattern_query(message: str) -> bool:
     return "strategy" in normalized and "deal pattern" in normalized
 
 
+def _is_due_diligence_query(message: str) -> bool:
+    """Recognize explicit DD requests before generic intent classification."""
+    normalized = message.lower()
+    return bool(
+        re.search(r"\b(?:full\s+)?due[ -]?diligence\b", normalized)
+        or re.search(r"\bdd\s+(?:package|report|on|for)\b", normalized)
+        or re.search(r"\bfull\s+dd\b", normalized)
+    )
+
+
+async def _handle_due_diligence_query(
+    message: str,
+    *,
+    resolver=None,
+    generator=None,
+) -> ChatResponse:
+    """Generate the governed multi-source DD package for one resolved company."""
+    if resolver is None:
+        from unified_api.services.question_context import resolve_company_mentions
+
+        resolver = resolve_company_mentions
+    resolved_entities = resolver(message)
+    ambiguous = [
+        entity for entity in resolved_entities
+        if entity.get("status") == "ambiguous"
+    ]
+    resolved = [
+        entity for entity in resolved_entities
+        if entity.get("status") == "resolved" and entity.get("company_id")
+    ]
+    if ambiguous:
+        choices = "; ".join(
+            f"{entity['mention']}: " + ", ".join(
+                f"{candidate['canonical_name']} (ID {candidate['company_id']})"
+                for candidate in entity.get("candidates", [])
+            )
+            for entity in ambiguous
+        )
+        return ChatResponse(
+            response=f"Please choose the DD target: {choices}",
+            mode_used="due_diligence",
+            data=[],
+            resolved_entities=resolved_entities,
+        )
+    if len(resolved) != 1:
+        return ChatResponse(
+            response=(
+                "Name one specific company for the due-diligence package. "
+                "For example: ‘Full DD on Pfizer.’"
+            ),
+            mode_used="due_diligence",
+            data=[],
+            resolved_entities=resolved_entities,
+        )
+
+    if generator is None:
+        from unified_api.routers.dd import DDGenerateRequest, generate_dd_package
+
+        generator = lambda company_id: generate_dd_package(  # noqa: E731
+            DDGenerateRequest(company_id=company_id)
+        )
+    target = resolved[0]
+    package = await generator(int(target["company_id"]))
+    sections = {section["type"]: section for section in package["sections"]}
+
+    def count(section_type: str) -> int:
+        content = sections.get(section_type, {}).get("content")
+        return len(content) if isinstance(content, list) else int(bool(content))
+
+    overview = sections.get("company_overview", {}).get("content") or {}
+    coverage = {
+        "filings": sections.get("sec_filings", {}).get("coverage", {}),
+        "contracts": sections.get("contracts", {}).get("coverage", {}),
+        "territories": sections.get("territory_rights", {}).get("coverage", {}),
+    }
+    answer = (
+        f"Generated a source-backed due-diligence package for "
+        f"**{package['company']['name']}** covering "
+        f"{overview.get('total_deals', 0):,} Cortellis deals, "
+        f"{coverage['filings'].get('returned_filings', count('sec_filings'))} "
+        f"recent SEC filings, "
+        f"{coverage['contracts'].get('returned_contracts', count('contracts'))} "
+        f"prioritized contracts, "
+        f"{coverage['territories'].get('returned_scope_records', count('territory_rights'))} "
+        f"territory-scope records, and "
+        f"{count('comparable_transactions')} comparable transactions. "
+        f"The disclosed financial coverage is "
+        f"{package['metadata']['financial_disclosure_rate']}. Territory rows are "
+        "agreement scope, not assertions of current ownership; unreviewed contract "
+        "clauses remain labeled as candidates. Open Due Diligence for the complete "
+        "package and PDF export."
+    )
+    total_keys = {
+        "deal_history": "total_deals",
+        "sec_filings": "total_filings",
+        "contracts": "total_contracts",
+        "territory_rights": "total_scope_records",
+        "comparable_transactions": "total_comparable_candidates",
+    }
+    summaries = []
+    for section in package["sections"]:
+        content = section.get("content")
+        returned = len(content) if isinstance(content, list) else int(bool(content))
+        total_available = (section.get("coverage") or {}).get(
+            total_keys.get(section["type"], "")
+        )
+        if section["type"] == "company_overview":
+            total_available = (content or {}).get("total_deals")
+        summaries.append({
+            "section": section["type"],
+            "title": section["title"],
+            "status": section.get("status"),
+            "source": section.get("source"),
+            "record_count": returned,
+            "total_available": total_available,
+        })
+    citations = []
+    for filing in sections.get("sec_filings", {}).get("content", [])[:3]:
+        citations.append({
+            "id": f"C{len(citations) + 1}",
+            "source": "SEC EDGAR",
+            "record_type": "filing",
+            "record_id": filing["id"],
+            "label": filing.get("title") or filing.get("accession_no"),
+            "url": filing.get("source_url"),
+        })
+    cited_deals = set()
+    evidence_rows = (
+        sections.get("contracts", {}).get("content", [])[:3]
+        + sections.get("comparable_transactions", {}).get("content", [])[:3]
+    )
+    for row in evidence_rows:
+        deal_id = row.get("deal_id") or row.get("id")
+        if deal_id in cited_deals:
+            continue
+        cited_deals.add(deal_id)
+        citations.append({
+            "id": f"C{len(citations) + 1}",
+            "source": "Cortellis",
+            "record_type": "deal",
+            "record_id": deal_id,
+            "deal_id": deal_id,
+            "label": row.get("deal_title") or row.get("title") or f"Deal {deal_id}",
+        })
+        if len(citations) == 8:
+            break
+    return ChatResponse(
+        response=answer,
+        mode_used="due_diligence",
+        data=summaries,
+        resolved_entities=resolved_entities,
+        citations=citations,
+    )
+
+
 def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional[str]:
     """Build deterministic SQL for supported, high-value question patterns."""
     from unified_api.services.governed_financial_queries import (
@@ -737,13 +892,22 @@ async def chat_v2(request: ChatRequest):
     from unified_api.services.llm import get_llm_service
     from unified_api.services.governed_metrics import append_citation_section
 
-    llm_service = get_llm_service()
+    # Explicit DD requests use the governed package rather than generated SQL.
+    if _is_due_diligence_query(request.message):
+        llm_service = None
+        intent = "due_diligence"
+        raw_response = await _handle_due_diligence_query(request.message)
+        mode = "due_diligence"
+        data = raw_response.data or []
+        sql_query = None
+    else:
+        llm_service = get_llm_service()
+        intent = await llm_service.classify_intent(request.message)
 
-    # Classify intent
-    intent = await llm_service.classify_intent(request.message)
-
-    # Route to appropriate handler and get raw data
-    if intent in ["contract_search"]:
+    # Route all remaining requests through their existing handlers.
+    if intent == "due_diligence":
+        pass
+    elif intent in ["contract_search"]:
         raw_response = await _handle_rag_query(request.message)
         mode = "rag"
         data = [r.model_dump() for r in (raw_response.search_results or [])]
@@ -762,7 +926,22 @@ async def chat_v2(request: ChatRequest):
         sql_query = raw_response.sql_query
 
     # Synthesize response
-    if not data and raw_response.response:
+    if mode == "due_diligence" and data:
+        synthesis = {
+            "answer": raw_response.response,
+            "confidence": {
+                "data_completeness": f"{len(data)} source-backed DD sections",
+                "sample_size": len(data),
+                "disclosure_rate": None,
+                "evidence_status": "grounded",
+            },
+            "follow_ups": [
+                "Which contract clauses deserve legal review?",
+                "Show the highest-scoring comparable transactions",
+                "Which territory exclusions recur across this portfolio?",
+            ],
+        }
+    elif not data and raw_response.response:
         synthesis = {
             "answer": raw_response.response,
             "confidence": {
@@ -793,6 +972,12 @@ async def chat_v2(request: ChatRequest):
         actions.append({"label": "View in Search", "type": "navigate", "params": {"path": "/search"}})
     if intent == "market_trends":
         actions.append({"label": "View Analytics", "type": "navigate", "params": {"path": "/analytics"}})
+    if intent == "due_diligence" and data:
+        actions.append({
+            "label": "Open Due Diligence",
+            "type": "navigate",
+            "params": {"path": "/dd"},
+        })
 
     return ChatV2Response(
         answer=answer,

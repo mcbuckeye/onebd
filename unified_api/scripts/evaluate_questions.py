@@ -277,37 +277,40 @@ def run_case(client: httpx.Client, case: dict, *, with_truth: bool = False) -> l
             if not passed:
                 failures.append(detail)
 
-    if with_truth and case.get("truth"):
-        truth = case["truth"]
+    truth_blocks = case.get("truths") or (
+        [case["truth"]] if case.get("truth") else []
+    )
+    if with_truth and truth_blocks:
         from sqlalchemy import text
         from unified_api.services.database import (
             get_cortellis_session,
             get_edgar_source_session,
         )
 
-        session_context = (
-            get_cortellis_session
-            if truth["source"] == "cortellis"
-            else get_edgar_source_session
-        )
-        with session_context() as session:
-            rows = session.execute(
-                text(truth["query"]),
-                truth.get("params") or {},
-            ).mappings().all()
-        truth_payload = {"rows": [dict(row) for row in rows]}
-        for assertion in truth["assertions"]:
-            try:
-                passed, detail = evaluate_truth_assertion(
-                    payload,
-                    truth_payload,
-                    assertion,
-                )
-            except (KeyError, IndexError, TypeError, ValueError) as exc:
-                failures.append(f"truth assertion error: {exc}")
-                continue
-            if not passed:
-                failures.append(detail)
+        for truth in truth_blocks:
+            session_context = (
+                get_cortellis_session
+                if truth["source"] == "cortellis"
+                else get_edgar_source_session
+            )
+            with session_context() as session:
+                rows = session.execute(
+                    text(truth["query"]),
+                    truth.get("params") or {},
+                ).mappings().all()
+            truth_payload = {"rows": [dict(row) for row in rows]}
+            for assertion in truth["assertions"]:
+                try:
+                    passed, detail = evaluate_truth_assertion(
+                        payload,
+                        truth_payload,
+                        assertion,
+                    )
+                except (KeyError, IndexError, TypeError, ValueError) as exc:
+                    failures.append(f"truth assertion error: {exc}")
+                    continue
+                if not passed:
+                    failures.append(detail)
     return failures
 
 
@@ -348,12 +351,16 @@ def validate_suite(suite: dict) -> list[str]:
         if not case.get("assertions"):
             errors.append(f"{label}: at least one assertion is required")
         truth = case.get("truth")
+        truths = case.get("truths") or []
         rubric = case.get("rubric")
-        if case.get("rating") == "strong" and not truth:
+        if truth and truths:
+            errors.append(f"{label}: use either truth or truths, not both")
+        if case.get("rating") == "strong" and not (truth or truths):
             errors.append(f"{label}: strong cases require database truth assertions")
-        if not truth and not rubric:
+        if not truth and not truths and not rubric:
             errors.append(f"{label}: requires database truth or a scored rubric")
-        if truth:
+        for truth_block in ([truth] if truth else truths):
+            truth = truth_block
             if truth.get("source") not in VALID_TRUTH_SOURCES:
                 errors.append(
                     f"{label}: truth source must be one of {sorted(VALID_TRUTH_SOURCES)}"

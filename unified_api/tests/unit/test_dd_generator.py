@@ -1,9 +1,6 @@
 """
 TDD: Due Diligence package generator tests.
 """
-import pytest
-
-
 class TestDDPackageStructure:
     """Test DD package generation logic."""
 
@@ -25,6 +22,21 @@ class TestDDPackageStructure:
         from unified_api.services.dd_generator import build_section
         result = build_section("nonexistent_section", {})
         assert result["content"] is None or result["content"] == ""
+
+    def test_source_and_coverage_metadata_are_preserved(self):
+        from unified_api.services.dd_generator import build_section
+
+        result = build_section("sec_filings", {
+            "filings": [{"id": 1}],
+            "source": "SEC EDGAR",
+            "coverage": {"total_filings": 10, "returned_filings": 1},
+            "methodology": "Exact CIK match",
+        })
+
+        assert result["status"] == "available"
+        assert result["source"] == "SEC EDGAR"
+        assert result["coverage"]["total_filings"] == 10
+        assert result["methodology"] == "Exact CIK match"
 
     def test_risk_flags_detection(self):
         from unified_api.services.dd_generator import detect_risk_flags
