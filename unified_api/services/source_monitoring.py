@@ -65,6 +65,16 @@ SOURCE_POLICIES = {
         2,
         6,
     ),
+    "chembl": SourcePolicy(
+        "ChEMBL Exact Identifier Enrichment",
+        6,
+        12,
+    ),
+    "open_targets": SourcePolicy(
+        "Open Targets Drug/Target Enrichment",
+        6,
+        12,
+    ),
     "neo4j": SourcePolicy(
         "Neo4j Graph Sync",
         settings.graph_freshness_warn_hours,
@@ -173,6 +183,19 @@ def _source_counts(source_key: str, result: Mapping[str, Any]) -> dict[str, int 
             "records_processed": result.get("studies_seen"),
             "records_created": result.get("studies_created"),
             "records_updated": result.get("studies_updated"),
+            "relationships_processed": result.get("relationships_created"),
+        })
+    elif source_key == "chembl":
+        counts.update({
+            "records_seen": result.get("processed"),
+            "records_processed": result.get("processed"),
+            "records_created": result.get("identifiers_created"),
+        })
+    elif source_key == "open_targets":
+        counts.update({
+            "records_seen": result.get("processed"),
+            "records_processed": result.get("processed"),
+            "records_created": result.get("matched"),
             "relationships_processed": result.get("relationships_created"),
         })
     elif source_key == "neo4j":

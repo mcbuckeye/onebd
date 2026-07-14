@@ -33,6 +33,7 @@ from unified_api.routers import (
     export_docs,
     graph,
     health,
+    public_biology,
     recommendations,
     search,
     territory,
@@ -229,6 +230,7 @@ app.include_router(dd.router, prefix="/api", tags=["Due Diligence"])
 app.include_router(territory.router, prefix="/api", tags=["Territory Rights"])
 app.include_router(briefings.router, prefix="/api", tags=["Briefings"])
 app.include_router(enrichment.router, tags=["Enrichment"])
+app.include_router(public_biology.router, prefix="/api", tags=["Public Biology"])
 app.include_router(recommendations.router, prefix="/api", tags=["Recommendations"])
 app.include_router(settings_router.router, prefix="/api", tags=["Settings"])
 

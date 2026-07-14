@@ -641,6 +641,8 @@ async def data_health_check():
     for source_key, label in (
         ("clinicaltrials_recent", "ClinicalTrials.gov Recent Sync"),
         ("clinicaltrials_backfill", "ClinicalTrials.gov Historical Backfill"),
+        ("chembl", "ChEMBL Exact Identifier Enrichment"),
+        ("open_targets", "Open Targets Drug/Target Enrichment"),
     ):
         source_state = common_states.get(source_key)
         if not source_state:

@@ -132,6 +132,16 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.enrichment.pubchem_identifiers",
             "schedule": crontab(minute="*/2"),
         },
+        # Exact structure mapping establishes durable ChEMBL identifiers.
+        "enrich-chembl-identifiers": {
+            "task": "unified_api.workers.tasks.enrichment.chembl_identifiers",
+            "schedule": crontab(minute="1,5,9,13,17,21,25,29,33,37,41,45,49,53,57"),
+        },
+        # ChEMBL IDs then unlock batched Open Targets profiles and target links.
+        "enrich-open-targets-profiles": {
+            "task": "unified_api.workers.tasks.enrichment.open_targets_profiles",
+            "schedule": crontab(minute="2,6,10,14,18,22,26,30,34,38,42,46,50,54,58"),
+        },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
             "task": "unified_api.workers.tasks.pageindex.batch_index_contracts",
@@ -422,6 +432,46 @@ def enrich_pubchem_identifiers():
     except Exception as e:
         logger.error("PubChem identifier enrichment failed", error=str(e))
         return {"status": "failed", "error": str(e)}
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.chembl_identifiers")
+def enrich_chembl_drug_identifiers():
+    """Map PubChem-confirmed structures to ChEMBL in one bounded batch."""
+    logger.info("Starting ChEMBL identifier enrichment")
+    _start_source_job("chembl")
+    try:
+        from unified_api.services.public_drug_enrichment import (
+            enrich_chembl_identifiers,
+        )
+
+        result = enrich_chembl_identifiers(batch_size=100)
+        logger.info("ChEMBL identifier enrichment complete", **result)
+        return _finish_source_job("chembl", result)
+    except Exception as exc:
+        logger.error("ChEMBL identifier enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "chembl", {"status": "failed", "error": str(exc)}
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.open_targets_profiles")
+def enrich_open_targets_drug_profiles():
+    """Retain Open Targets profiles, indications, and canonical targets."""
+    logger.info("Starting Open Targets drug enrichment")
+    _start_source_job("open_targets")
+    try:
+        from unified_api.services.public_drug_enrichment import (
+            enrich_open_targets_profiles,
+        )
+
+        result = enrich_open_targets_profiles(batch_size=10)
+        logger.info("Open Targets drug enrichment complete", **result)
+        return _finish_source_job("open_targets", result)
+    except Exception as exc:
+        logger.error("Open Targets drug enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "open_targets", {"status": "failed", "error": str(exc)}
+        )
 
 
 @celery_app.task(name="unified_api.workers.tasks.cortellis.sync_deals")

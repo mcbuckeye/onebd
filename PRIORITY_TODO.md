@@ -127,6 +127,9 @@ and fast retrieval before adding more external data volume.
          globally serialized two-minute policy-compliant schedule now support
          the continuing catch-up without duplicate API requests.
    - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
+         Exact PubChem InChIKeys now establish ChEMBL IDs, which in turn establish
+         Open Targets drug profiles and Ensembl target/disease relationships;
+         broader INN/development-code normalization and UniProt remain.
    - [x] Seed normalized Cortellis display names and conservative development-code
          candidates for all drugs without treating organization suffixes as aliases.
    - [x] Store match evidence, confidence, method, review status, reviewer, and
@@ -135,10 +138,10 @@ and fast retrieval before adding more external data volume.
          an indexed in-memory date join, and batched idempotent inserts.
 
 8. **Add ClinicalTrials.gov/AACT as the first new external source**
-   - [ ] Link trials to existing companies, assets, indications, and targets.
+   - [x] Link trials to existing companies, assets, indications, and targets.
          Exact, provenance-bearing company, drug/biologic, and indication links
-         are implemented; target linking awaits a canonical target model and
-         Open Targets/ChEMBL identifiers.
+         combine with structure-confirmed ChEMBL IDs and Open Targets Ensembl
+         target links; no target is inferred from trial text.
    - [x] Preserve sponsor, phase, status history, endpoints, enrollment, dates,
          results, collaborators, and locations with source provenance.
          The official API-v2 adapter retains every raw response version and uses
@@ -158,8 +161,10 @@ and fast retrieval before adding more external data volume.
          normalization already use the shared source-monitor and identity layers.
    - [ ] Adapt Open Targets, ChEMBL, PubChem, UniProt, Europe PMC, and
          ClinicalTrials.gov without coupling OneBD to BeOne-specific CSV outputs.
-         PubChem and ClinicalTrials.gov now use the reusable primitives directly;
-         Open Targets, ChEMBL, UniProt, and Europe PMC remain.
+         PubChem, ClinicalTrials.gov, ChEMBL, and Open Targets now use the
+         reusable primitives directly. Their retained profiles, disease links,
+         and exact drug-target mechanisms are queryable through the public-
+         biology API; UniProt and Europe PMC remain.
 
 10. **Build higher-value intelligence workflows after the foundation is stable**
     - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a

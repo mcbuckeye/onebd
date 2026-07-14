@@ -151,6 +151,34 @@ def test_clinical_trials_counts_have_stable_vocabulary():
     }
 
 
+def test_public_drug_source_counts_have_stable_vocabulary():
+    assert _source_counts("chembl", {
+        "processed": 100,
+        "identifiers_created": 72,
+    }) == {
+        "records_seen": 100,
+        "records_processed": 100,
+        "records_created": 72,
+        "records_updated": None,
+        "documents_created": None,
+        "chunks_created": None,
+        "relationships_processed": None,
+    }
+    assert _source_counts("open_targets", {
+        "processed": 10,
+        "matched": 9,
+        "relationships_created": 43,
+    }) == {
+        "records_seen": 10,
+        "records_processed": 10,
+        "records_created": 9,
+        "records_updated": None,
+        "documents_created": None,
+        "chunks_created": None,
+        "relationships_processed": 43,
+    }
+
+
 def test_common_source_payload_reports_cursor_lag_duration_and_counts():
     payload = source_job_payload({
         "source_key": "edgar_backfill",

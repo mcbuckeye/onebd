@@ -121,6 +121,16 @@ This starts 9 services and 10 containers (the processing worker has two replicas
 | `/api/clinical-trials/catalysts` | GET | Upcoming primary completions, stopped programs, and observed status changes |
 | `/api/clinical-trials/{nct_id}` | GET | Lossless source record, response/status history, and exact entity links |
 
+### Public Drug & Target Biology
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/drugs/{drug_id}/public-biology` | GET | Exact PubChem/ChEMBL identifiers, Open Targets profile, mechanisms, and indications |
+| `/api/public-biology/targets` | GET | Search canonical Ensembl targets, optionally filtered by linked drug |
+| `/api/public-biology/targets/{ensembl_id}` | GET | Target detail and exact source-derived drug mechanisms |
+| `/api/public-biology/diseases` | GET | Search Open Targets disease concepts, optionally filtered by linked drug |
+| `/api/public-biology/diseases/{disease_id}` | GET | Disease detail and linked drug development stages |
+
 ### Company & Drug Profiles
 
 | Endpoint | Method | Description |
