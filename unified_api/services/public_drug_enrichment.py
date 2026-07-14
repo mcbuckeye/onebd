@@ -29,6 +29,76 @@ CHEMBL_SOURCE = "chembl_api"
 OPEN_TARGETS_SOURCE = "open_targets_graphql"
 _public_drug_schema_ready = False
 
+CHEMBL_NONPROPRIETARY_ALIAS_TYPES = {
+    "INN": "inn",
+    "INN_FRENCH": "inn_french",
+    "INN_SPANISH": "inn_spanish",
+    "USAN": "usan",
+    "BAN": "ban",
+    "JAN": "jan",
+    "FDA": "fda_name",
+    "EMA": "ema_name",
+    "USP": "usp_name",
+    "DCF": "dcf_name",
+}
+
+
+def is_conservative_development_code(value: str) -> bool:
+    """Accept source-typed research codes while rejecting words and prose."""
+    value = str(value or "").strip()
+    return bool(
+        3 <= len(value) <= 50
+        and len(value.split()) <= 3
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .,/+_-]*", value)
+        and re.search(r"[A-Za-z]", value)
+        and re.search(r"\d", value)
+    )
+
+
+def classify_chembl_synonym(
+    synonym: dict[str, Any],
+) -> tuple[str, str, float] | None:
+    """Classify only authoritative nonproprietary names or research codes."""
+    source_type = str(synonym.get("syn_type") or "").strip().upper()
+    value = str(
+        synonym.get("molecule_synonym") or synonym.get("synonyms") or ""
+    ).strip()
+    if not value:
+        return None
+    alias_type = CHEMBL_NONPROPRIETARY_ALIAS_TYPES.get(source_type)
+    if alias_type:
+        return alias_type, value, 1.0
+    if source_type == "RESEARCH_CODE" and is_conservative_development_code(value):
+        return "development_code", value, 0.95
+    return None
+
+
+def chembl_typed_aliases(
+    molecule: dict[str, Any],
+) -> list[tuple[str, str, float, str]]:
+    """Return normalized, deduplicated typed aliases from one ChEMBL record."""
+    aliases: list[tuple[str, str, float, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for synonym in molecule.get("molecule_synonyms") or []:
+        if not isinstance(synonym, dict):
+            continue
+        classified = classify_chembl_synonym(synonym)
+        if not classified:
+            continue
+        alias_type, alias_value, confidence = classified
+        normalized = normalize_identifier_value("drug_alias", alias_value)
+        identity = (alias_type, normalized)
+        if not normalized or identity in seen:
+            continue
+        seen.add(identity)
+        aliases.append((
+            alias_type,
+            alias_value,
+            confidence,
+            str(synonym.get("syn_type") or "").strip().upper(),
+        ))
+    return aliases
+
 
 class ChEMBLClient:
     """Typed subset of the official ChEMBL data web services."""
@@ -413,6 +483,60 @@ def _chembl_candidates(source_version: str, batch_size: int) -> list[dict[str, A
         }).mappings().all()]
 
 
+def _upsert_chembl_typed_aliases(
+    session,
+    *,
+    drug_id: int,
+    chembl_id: str,
+    inchikey: str,
+    molecule: dict[str, Any],
+    source_version: str,
+    source_url: str,
+) -> int:
+    """Index only ChEMBL's typed, structure-backed drug-name evidence."""
+    written = 0
+    for alias_type, alias_value, confidence, synonym_type in chembl_typed_aliases(
+        molecule
+    ):
+        evidence = json.dumps({
+            "match_method": "exact_standard_inchikey",
+            "inchikey": inchikey,
+            "chembl_id": chembl_id,
+            "chembl_release": source_version,
+            "chembl_synonym_type": synonym_type,
+        }, sort_keys=True)
+        result = session.execute(text("""
+            INSERT INTO drug_aliases (
+                drug_id, alias_type, alias_value, normalized_value,
+                source, source_reference, evidence, confidence, review_status
+            ) VALUES (
+                :drug_id, :alias_type, :alias_value, :normalized_value,
+                :source, :source_url, CAST(:evidence AS JSONB),
+                :confidence, 'auto_accepted'
+            ) ON CONFLICT (drug_id, alias_type, normalized_value) DO UPDATE SET
+                alias_value = EXCLUDED.alias_value,
+                source = EXCLUDED.source,
+                source_reference = EXCLUDED.source_reference,
+                evidence = EXCLUDED.evidence,
+                confidence = EXCLUDED.confidence,
+                review_status = EXCLUDED.review_status
+            RETURNING id
+        """), {
+            "drug_id": drug_id,
+            "alias_type": alias_type,
+            "alias_value": alias_value,
+            "normalized_value": normalize_identifier_value(
+                "drug_alias", alias_value
+            ),
+            "source": CHEMBL_SOURCE,
+            "source_url": source_url,
+            "evidence": evidence,
+            "confidence": confidence,
+        }).scalar()
+        written += int(result is not None)
+    return written
+
+
 def _upsert_chembl_record(
     session,
     *,
@@ -523,6 +647,15 @@ def _upsert_chembl_record(
             "source_url": source_url,
             "evidence": evidence,
         })
+    _upsert_chembl_typed_aliases(
+        session,
+        drug_id=drug_id,
+        chembl_id=chembl_id,
+        inchikey=inchikey,
+        molecule=molecule,
+        source_version=source_version,
+        source_url=source_url,
+    )
     return 1
 
 
@@ -606,6 +739,79 @@ def enrich_chembl_identifiers(
             "identifiers_created": identifiers,
             "source_version": source_version,
             "source_data_at": source_status.get("chembl_release_date"),
+        }
+    finally:
+        try:
+            lock.execute(text(
+                "SELECT pg_advisory_unlock(hashtext('onebd_chembl_enrichment'))"
+            ))
+        finally:
+            lock.close()
+
+
+def backfill_chembl_typed_aliases(
+    *,
+    batch_size: int = 5000,
+    after_drug_id: int = 0,
+    after_chembl_id: str = "",
+) -> dict[str, Any]:
+    """Index typed aliases from retained exact-InChIKey ChEMBL records."""
+    ensure_public_drug_schema()
+    lock = get_cortellis_engine().connect()
+    acquired = bool(lock.execute(text(
+        "SELECT pg_try_advisory_lock(hashtext('onebd_chembl_enrichment'))"
+    )).scalar())
+    if not acquired:
+        lock.close()
+        return {"status": "skipped", "reason": "ChEMBL enrichment already running"}
+    try:
+        with get_cortellis_session() as session:
+            records = session.execute(text("""
+                SELECT drug_id, chembl_id, standard_inchi_key, source_version,
+                       source_url, raw_payload
+                FROM drug_chembl_records
+                WHERE (drug_id, chembl_id) > (:after_drug_id, :after_chembl_id)
+                ORDER BY drug_id, chembl_id
+                LIMIT :batch_size
+            """), {
+                "after_drug_id": after_drug_id,
+                "after_chembl_id": after_chembl_id,
+                "batch_size": batch_size,
+            }).mappings().all()
+            aliases = 0
+            for index, record in enumerate(records, start=1):
+                aliases += _upsert_chembl_typed_aliases(
+                    session,
+                    drug_id=int(record["drug_id"]),
+                    chembl_id=str(record["chembl_id"]),
+                    inchikey=str(record["standard_inchi_key"]),
+                    molecule=dict(record["raw_payload"]),
+                    source_version=str(record["source_version"]),
+                    source_url=str(record["source_url"]),
+                )
+                if index % 100 == 0:
+                    session.commit()
+
+            if records:
+                last_drug_id = int(records[-1]["drug_id"])
+                last_chembl_id = str(records[-1]["chembl_id"])
+            else:
+                last_drug_id = after_drug_id
+                last_chembl_id = after_chembl_id
+            remaining = int(session.execute(text("""
+                SELECT COUNT(*) FROM drug_chembl_records
+                WHERE (drug_id, chembl_id) > (:drug_id, :chembl_id)
+            """), {
+                "drug_id": last_drug_id,
+                "chembl_id": last_chembl_id,
+            }).scalar() or 0)
+        return {
+            "status": "completed",
+            "processed": len(records),
+            "aliases_upserted": aliases,
+            "remaining": remaining,
+            "next_after_drug_id": last_drug_id,
+            "next_after_chembl_id": last_chembl_id,
         }
     finally:
         try:
@@ -965,11 +1171,35 @@ def public_drug_enrichment_status() -> dict[str, Any]:
                 (SELECT COUNT(*) FROM public_drug_target_links) AS drug_target_links,
                 (SELECT COUNT(*) FROM public_drug_disease_links)
                     AS drug_disease_links,
+                (SELECT COUNT(*) FROM drug_aliases
+                 WHERE source = :chembl_source
+                   AND alias_type <> 'chembl_preferred_name')
+                    AS chembl_typed_aliases,
+                (SELECT COUNT(DISTINCT drug_id) FROM drug_aliases
+                 WHERE source = :chembl_source
+                   AND alias_type <> 'chembl_preferred_name')
+                    AS drugs_with_chembl_typed_aliases,
+                (SELECT COUNT(*) FROM drug_aliases
+                 WHERE source = :chembl_source
+                   AND alias_type IN ('inn', 'inn_french', 'inn_spanish'))
+                    AS chembl_inn_aliases,
+                (SELECT COUNT(*) FROM drug_aliases
+                 WHERE source = :chembl_source
+                   AND alias_type = 'development_code')
+                    AS chembl_development_codes,
+                (SELECT COUNT(*) FROM (
+                   SELECT normalized_value
+                   FROM drug_aliases
+                   WHERE source = :chembl_source
+                     AND alias_type <> 'chembl_preferred_name'
+                   GROUP BY normalized_value
+                   HAVING COUNT(DISTINCT drug_id) > 1
+                 ) shared) AS shared_chembl_typed_aliases,
                 (SELECT MAX(source_version) FROM drug_chembl_records)
                     AS chembl_version,
                 (SELECT MAX(source_version) FROM public_drug_profiles)
                     AS open_targets_version
-        """)).mappings().one()
+        """), {"chembl_source": CHEMBL_SOURCE}).mappings().one()
         states = [dict(item) for item in session.execute(text("""
             SELECT source, status, COUNT(*) AS records
             FROM public_drug_source_state

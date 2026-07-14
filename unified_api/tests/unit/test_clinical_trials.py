@@ -145,6 +145,18 @@ def test_invalid_nct_id_is_rejected():
         clinical_trials._study_fields(study)
 
 
+def test_drug_alias_match_requires_one_distinct_drug():
+    assert clinical_trials._unique_drug_alias_match([
+        {"drug_id": 42, "alias_value": "ABC-123", "confidence": 0.95},
+        {"drug_id": 42, "alias_value": "abc-123", "confidence": 1.0},
+    ]) == {"drug_id": 42, "alias_value": "abc-123", "confidence": 1.0}
+
+    assert clinical_trials._unique_drug_alias_match([
+        {"drug_id": 42, "alias_value": "ABC-123", "confidence": 1.0},
+        {"drug_id": 84, "alias_value": "ABC-123", "confidence": 1.0},
+    ]) is None
+
+
 def test_global_lock_skips_overlapping_lane(monkeypatch):
     class Result:
         @staticmethod

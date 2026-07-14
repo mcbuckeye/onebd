@@ -127,10 +127,45 @@ def test_open_targets_client_rejects_noncanonical_chembl_ids():
         client.drugs(["CHEMBL25\") { malicious }"])
 
 
+def test_chembl_typed_aliases_keep_inns_and_conservative_research_codes():
+    molecule = {"molecule_synonyms": [
+        {"syn_type": "INN", "molecule_synonym": "Acitretin"},
+        {"syn_type": "INN", "molecule_synonym": "ACITRETIN"},
+        {"syn_type": "INN_FRENCH", "molecule_synonym": "Acitretine"},
+        {"syn_type": "RESEARCH_CODE", "molecule_synonym": "RO 10-1670/000"},
+        {"syn_type": "RESEARCH_CODE", "molecule_synonym": "SAME"},
+        {"syn_type": "RESEARCH_CODE", "molecule_synonym": "DRUG COMPONENT OF X-1"},
+        {"syn_type": "TRADE_NAME", "molecule_synonym": "Soriatane"},
+        {"syn_type": "OTHER", "molecule_synonym": "Retinoid"},
+    ]}
+
+    assert public_drug_enrichment.chembl_typed_aliases(molecule) == [
+        ("inn", "Acitretin", 1.0, "INN"),
+        ("inn_french", "Acitretine", 1.0, "INN_FRENCH"),
+        ("development_code", "RO 10-1670/000", 0.95, "RESEARCH_CODE"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "accepted"),
+    [
+        ("ABT-001", True),
+        ("MK0217", True),
+        ("U-73,975", True),
+        ("SAM-E", False),
+        ("SAME", False),
+        ("AMLODIPINE COMPONENT OF CKD-330", False),
+    ],
+)
+def test_development_code_filter_requires_compact_alphanumeric_code(value, accepted):
+    assert public_drug_enrichment.is_conservative_development_code(value) is accepted
+
+
 @pytest.mark.parametrize(
     ("function_name", "lock_reason"),
     [
         ("enrich_chembl_identifiers", "ChEMBL enrichment already running"),
+        ("backfill_chembl_typed_aliases", "ChEMBL enrichment already running"),
         ("enrich_open_targets_profiles", "Open Targets enrichment already running"),
     ],
 )

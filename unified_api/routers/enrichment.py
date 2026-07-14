@@ -34,6 +34,7 @@ from unified_api.services.pubchem_enrichment import (
     pubchem_validation_status,
 )
 from unified_api.services.public_drug_enrichment import (
+    backfill_chembl_typed_aliases,
     public_drug_enrichment_status,
 )
 from unified_api.services.uniprot_enrichment import uniprot_enrichment_status
@@ -176,6 +177,21 @@ async def enrich_wikidata_company_domain_batch(
 async def wikidata_company_enrichment_status():
     """Return exact-LEI Wikidata domain coverage and review status."""
     return wikidata_company_domain_status()
+
+
+@router.post("/api/enrichment/chembl-typed-drug-aliases")
+async def backfill_chembl_typed_drug_alias_batch(
+    batch_size: int = Query(5000, ge=1, le=10000),
+    after_drug_id: int = Query(0, ge=0),
+    after_chembl_id: str = Query("", max_length=30),
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Index structure-backed ChEMBL INNs and conservative research codes."""
+    return backfill_chembl_typed_aliases(
+        batch_size=batch_size,
+        after_drug_id=after_drug_id,
+        after_chembl_id=after_chembl_id,
+    )
 
 
 @router.get("/api/enrichment/status")
