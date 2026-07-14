@@ -638,6 +638,27 @@ async def data_health_check():
             "detail": detail,
         })
 
+    for source_key, label in (
+        ("clinicaltrials_recent", "ClinicalTrials.gov Recent Sync"),
+        ("clinicaltrials_backfill", "ClinicalTrials.gov Historical Backfill"),
+    ):
+        source_state = common_states.get(source_key)
+        if not source_state:
+            continue
+        from unified_api.services.source_monitoring import (
+            SOURCE_POLICIES,
+            classify_source_job,
+        )
+
+        severity, detail = classify_source_job(
+            source_state, SOURCE_POLICIES[source_key]
+        )
+        sync_checks.append({
+            "name": label,
+            "status": severity,
+            "detail": detail,
+        })
+
     health["checks"].extend(sync_checks)
     degraded = any(check["status"] in {"warning", "critical"} for check in sync_checks)
 

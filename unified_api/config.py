@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     clinicaltrials_recent_overlap_days: int = 7
     clinicaltrials_recent_max_pages: int = 10
     clinicaltrials_backfill_window_days: int = 90
-    clinicaltrials_backfill_max_pages: int = 5
+    clinicaltrials_backfill_max_pages: int = 50
 
     # CORS
     allowed_origins: str = "*"

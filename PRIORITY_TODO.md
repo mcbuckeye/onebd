@@ -142,7 +142,9 @@ and fast retrieval before adding more external data volume.
    - [x] Preserve sponsor, phase, status history, endpoints, enrollment, dates,
          results, collaborators, and locations with source provenance.
          The official API-v2 adapter retains every raw response version and uses
-         two durable, globally serialized recent/history cursors.
+         two durable, globally serialized recent/history cursors. Production
+         validation loaded the complete initial seven-day current window (6,463
+         trials) and began the resumable full-registry backfill.
    - [x] Detect upcoming catalysts, stopped programs, and status changes.
          The catalyst API exposes upcoming primary completions, recent stopped
          programs, and status transitions observed by successive source syncs.
