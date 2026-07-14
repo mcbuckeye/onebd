@@ -378,7 +378,10 @@ Implemented:
 - [x] Celery task for daily alert check (`check_alerts` runs at 8:00 AM)
 - [x] In-app notification endpoint (`GET /api/notifications`)
 - [x] Manual trigger endpoint (`POST /api/alerts/trigger`)
-- [ ] Email notification integration (SendGrid/SES) - Future enhancement
+- [x] Email notification integration (SendGrid/SMTP), including alert/digest
+      delivery, authenticated test delivery, secure password-reset delivery, and
+      owner-visible readiness. Live outbound delivery awaits the owner-selected
+      provider credential tracked in the continuing roadmap above.
 
 ---
 
