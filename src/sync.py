@@ -192,6 +192,11 @@ def retrieval_covers_advertised_catalog(
     )
 
 
+def catalog_discovery_required(local_total: int, source_total: int) -> bool:
+    """Return whether search discovery could reveal a cardinality deficit."""
+    return local_total < source_total
+
+
 class DealTransformer:
     """Transform API response data into database models."""
 
@@ -1194,7 +1199,9 @@ class SyncService:
             reconciled = 0
             contracts_downloaded = 0
             errors: list[str] = []
-            if len(local_ids_before) != source_total_before:
+            if catalog_discovery_required(
+                len(local_ids_before), source_total_before
+            ):
                 first = client.search_deals(
                     query="*",
                     offset=0,
