@@ -5,7 +5,7 @@ Only accessible to users with role='admin'
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 from sqlalchemy import text
 import structlog
 
@@ -28,15 +28,15 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 class CreateUserRequest(BaseModel):
-    email: str
-    password: str
-    name: str
-    role: str = "analyst"
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
+    role: Literal["analyst", "admin"] = "analyst"
 
 
 class UpdateUserRequest(BaseModel):
-    name: Optional[str] = None
-    role: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    role: Optional[Literal["analyst", "admin"]] = None
 
 
 class MessageResponse(BaseModel):
@@ -202,11 +202,15 @@ async def create_user(
     current_user: TokenData = Depends(require_admin)
 ):
     """Create a new user (admin only)."""
+    email = req.email.strip().lower()
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required")
     with get_cortellis_session() as session:
         # Check if email exists
         existing = session.execute(
-            text("SELECT id FROM users WHERE email = :email"),
-            {"email": req.email}
+            text("SELECT id FROM users WHERE LOWER(email) = LOWER(:email)"),
+            {"email": email}
         ).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail="Email already registered")
@@ -219,9 +223,9 @@ async def create_user(
                 RETURNING id
             """),
             {
-                "email": req.email,
+                "email": email,
                 "password_hash": hash_password(req.password),
-                "name": req.name,
+                "name": name,
                 "role": req.role,
             }
         )
@@ -232,8 +236,8 @@ async def create_user(
 
         return UserResponse(
             id=user_id,
-            email=req.email,
-            name=req.name,
+            email=email,
+            name=name,
             role=req.role
         )
 
@@ -259,10 +263,23 @@ async def update_user(
         params = {"id": user_id}
 
         if req.name is not None:
+            normalized_name = req.name.strip()
+            if not normalized_name:
+                raise HTTPException(status_code=422, detail="Name is required")
             updates.append("name = :name")
-            params["name"] = req.name
+            params["name"] = normalized_name
 
         if req.role is not None:
+            if user_row.id == current_user.user_id and req.role != "admin":
+                admin_count = session.execute(text("""
+                    SELECT COUNT(*) FROM users
+                    WHERE role = 'admin' AND disabled IS NOT TRUE
+                """)).scalar() or 0
+                if admin_count <= 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Create another admin before removing the last admin role",
+                    )
             updates.append("role = :role")
             params["role"] = req.role
 
@@ -295,6 +312,8 @@ async def delete_user(
     current_user: TokenData = Depends(require_admin)
 ):
     """Disable user (admin only). Soft delete - sets disabled flag."""
+    if user_id == current_user.user_id:
+        raise HTTPException(status_code=400, detail="You cannot disable your own account")
     with get_cortellis_session() as session:
         # Check user exists
         user_row = session.execute(
@@ -304,10 +323,19 @@ async def delete_user(
         if not user_row:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Ensure 'disabled' column exists (soft delete)
-        session.execute(text("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE
-        """))
+        role = session.execute(
+            text("SELECT role FROM users WHERE id = :id"), {"id": user_id}
+        ).scalar()
+        if role == "admin":
+            admin_count = session.execute(text("""
+                SELECT COUNT(*) FROM users
+                WHERE role = 'admin' AND disabled IS NOT TRUE
+            """)).scalar() or 0
+            if admin_count <= 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Create another admin before disabling the last admin",
+                )
 
         # Disable user
         session.execute(

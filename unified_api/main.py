@@ -20,6 +20,7 @@ from unified_api.routers import (
     briefings,
     chat,
     clinical_trials,
+    collaboration,
     comps,
     competitors,
     contracts,
@@ -180,6 +181,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Cortellis archive schema initialization failed", error=str(exc))
     try:
+        from unified_api.services.account_schema import ensure_account_schema
+
+        ensure_account_schema()
+    except Exception as exc:
+        logger.warning("Account schema initialization failed", error=str(exc))
+    try:
+        from unified_api.services.collaboration import ensure_collaboration_schema
+
+        ensure_collaboration_schema()
+    except Exception as exc:
+        logger.warning("Collaboration schema initialization failed", error=str(exc))
+    try:
         from unified_api.services.api_credentials import ensure_api_access_schema
 
         ensure_api_access_schema()
@@ -259,6 +272,7 @@ app.include_router(
 app.include_router(watchlist.router, prefix="/api", tags=["Watchlist"])
 app.include_router(competitors.router, prefix="/api", tags=["Competitors"])
 app.include_router(conversations.router, prefix="/api", tags=["Conversations"])
+app.include_router(collaboration.router, prefix="/api", tags=["Collaboration"])
 app.include_router(data_access.router, prefix="/api", tags=["Governed Data API"])
 app.include_router(contracts.router, prefix="/api", tags=["Contract Intelligence"])
 app.include_router(comps.router, prefix="/api", tags=["Comps"])

@@ -3,16 +3,29 @@
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 
 from unified_api.routers import enrichment
-from unified_api.services.auth import create_access_token
+from unified_api.services.auth import create_access_token, decode_token
 
 
 def _client() -> TestClient:
     app = FastAPI()
     app.include_router(enrichment.router)
+    # These router tests isolate role enforcement; live account-status checks
+    # are covered in test_auth without requiring a database here.
+    def token_admin(authorization: str | None = Header(None)):
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        identity = decode_token(authorization.split(" ", 1)[1])
+        if not identity:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if identity.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        return identity
+
+    app.dependency_overrides[enrichment.require_admin] = token_admin
     return TestClient(app)
 
 

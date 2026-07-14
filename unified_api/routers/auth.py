@@ -2,7 +2,7 @@
 Authentication endpoints: register, login, get current user, password reset.
 """
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy import text
 import structlog
@@ -14,20 +14,21 @@ from unified_api.services.auth import (
     hash_password, verify_password, create_access_token, decode_token, TokenData
 )
 from unified_api.services.api_credentials import get_data_access_policy
+from unified_api.services.account_schema import ensure_account_schema
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    name: str
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=255)
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -44,12 +45,12 @@ class LoginResponse(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str
+    email: str = Field(min_length=3, max_length=255)
 
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class MessageResponse(BaseModel):
@@ -57,57 +58,32 @@ class MessageResponse(BaseModel):
 
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> TokenData:
-    """Extract and validate JWT from Authorization header."""
+    """Validate the JWT and the user's current database status and role."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
     token = authorization.split(" ", 1)[1]
     data = decode_token(token)
     if not data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return data
+    with get_cortellis_session() as session:
+        row = session.execute(text("""
+            SELECT id, email, role
+            FROM users
+            WHERE id = :id AND disabled IS NOT TRUE
+        """), {"id": data.user_id}).fetchone()
+    if not row:
+        raise HTTPException(status_code=401, detail="Account is disabled or unavailable")
+    return TokenData(user_id=row.id, email=row.email, role=row.role)
 
 
 def _ensure_users_table(session):
-    """Create users table if it doesn't exist."""
-    # Check if table already exists to avoid pg_type conflicts
-    result = session.execute(text(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='users')"
-    )).scalar()
-    if result:
-        return
-    session.execute(text("""
-        CREATE TABLE users (
-            id SERIAL PRIMARY KEY,
-            email VARCHAR(255) UNIQUE NOT NULL,
-            password_hash VARCHAR(255) NOT NULL,
-            name VARCHAR(255) NOT NULL,
-            role VARCHAR(50) DEFAULT 'analyst',
-            preferences JSONB DEFAULT '{}',
-            created_at TIMESTAMP DEFAULT NOW(),
-            last_login TIMESTAMP
-        )
-    """))
-    session.commit()
+    """Backward-compatible wrapper for account schema initialization."""
+    ensure_account_schema(session)
 
 
 def _ensure_password_reset_tokens_table(session):
-    """Create password_reset_tokens table if it doesn't exist."""
-    result = session.execute(text(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='password_reset_tokens')"
-    )).scalar()
-    if result:
-        return
-    session.execute(text("""
-        CREATE TABLE password_reset_tokens (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            token VARCHAR(255) UNIQUE NOT NULL,
-            expires_at TIMESTAMP NOT NULL,
-            used BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-    """))
-    session.commit()
+    """Backward-compatible wrapper for account schema initialization."""
+    ensure_account_schema(session)
 
 
 @router.post("/register", response_model=LoginResponse)
@@ -116,13 +92,17 @@ async def register(req: RegisterRequest):
     if not get_data_access_policy()["allow_self_registration"]:
         raise HTTPException(status_code=403, detail="Self-registration is disabled")
     role = "analyst"
+    email = req.email.strip().lower()
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required")
     with get_cortellis_session() as session:
         _ensure_users_table(session)
 
         # Check if email exists
         existing = session.execute(
             text("SELECT id FROM users WHERE email = :email"),
-            {"email": req.email}
+            {"email": email}
         ).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail="Email already registered")
@@ -135,19 +115,19 @@ async def register(req: RegisterRequest):
                 RETURNING id
             """),
             {
-                "email": req.email,
+                "email": email,
                 "password_hash": hash_password(req.password),
-                "name": req.name,
+                "name": name,
                 "role": role,
             }
         )
         user_id = result.fetchone()[0]
         session.commit()
 
-    token = create_access_token(user_id, req.email, role)
+    token = create_access_token(user_id, email, role)
     return LoginResponse(
         access_token=token,
-        user=UserResponse(id=user_id, email=req.email, name=req.name, role=role),
+        user=UserResponse(id=user_id, email=email, name=name, role=role),
     )
 
 
@@ -158,8 +138,12 @@ async def login(req: LoginRequest):
         _ensure_users_table(session)
 
         row = session.execute(
-            text("SELECT id, email, password_hash, name, role FROM users WHERE email = :email"),
-            {"email": req.email}
+            text("""
+                SELECT id, email, password_hash, name, role
+                FROM users
+                WHERE LOWER(email) = LOWER(:email) AND disabled IS NOT TRUE
+            """),
+            {"email": req.email.strip()}
         ).fetchone()
 
         if not row or not verify_password(req.password, row.password_hash):
@@ -184,7 +168,11 @@ async def get_me(current_user: TokenData = Depends(get_current_user)):
     """Get current authenticated user."""
     with get_cortellis_session() as session:
         row = session.execute(
-            text("SELECT id, email, name, role FROM users WHERE id = :id"),
+            text("""
+                SELECT id, email, name, role
+                FROM users
+                WHERE id = :id AND disabled IS NOT TRUE
+            """),
             {"id": current_user.user_id}
         ).fetchone()
         if not row:
@@ -205,7 +193,10 @@ async def forgot_password(req: ForgotPasswordRequest):
 
         # Check if user exists
         user_row = session.execute(
-            text("SELECT id, email FROM users WHERE email = :email"),
+            text("""
+                SELECT id, email FROM users
+                WHERE LOWER(email) = LOWER(:email) AND disabled IS NOT TRUE
+            """),
             {"email": req.email}
         ).fetchone()
 
@@ -254,9 +245,10 @@ async def reset_password(req: ResetPasswordRequest):
         # Find valid token
         token_row = session.execute(
             text("""
-                SELECT user_id, expires_at, used
-                FROM password_reset_tokens
-                WHERE token = :token
+                SELECT reset.user_id, reset.expires_at, reset.used
+                FROM password_reset_tokens reset
+                JOIN users account ON account.id = reset.user_id
+                WHERE reset.token = :token AND account.disabled IS NOT TRUE
             """),
             {"token": req.token}
         ).fetchone()

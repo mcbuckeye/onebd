@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { to: '/filings', icon: FileText, label: 'Filings' },
   { to: '/contracts', icon: ScrollText, label: 'Contracts' },
   { to: '/my-deals', icon: Star, label: 'My Deals' },
+  { to: '/collaboration', icon: Users, label: 'Teams' },
   { to: '/comps', icon: Scale, label: 'Comps' },
   { to: '/dd', icon: Shield, label: 'Due Diligence' },
   { to: '/agentic-rag', icon: Brain, label: 'Agentic RAG' },

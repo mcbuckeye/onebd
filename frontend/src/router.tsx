@@ -18,6 +18,7 @@ const FilingsPage = lazy(() => import('./pages/FilingsPage'));
 const FilingViewerPage = lazy(() => import('./pages/FilingViewerPage'));
 const ContractsPage = lazy(() => import('./pages/ContractsPage'));
 const MyDealsPage = lazy(() => import('./pages/MyDealsPage'));
+const CollaborationPage = lazy(() => import('./pages/CollaborationPage'));
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const AgenticRagPage = lazy(() => import('./pages/AgenticRagPage'));
 const CompanyProfilePage = lazy(() => import('./pages/CompanyProfilePage'));
@@ -66,6 +67,7 @@ export const router = createBrowserRouter([
       { path: 'filings/:filingId', element: withErrorBoundary(FilingViewerPage) },
       { path: 'contracts', element: withErrorBoundary(ContractsPage) },
       { path: 'my-deals', element: withErrorBoundary(MyDealsPage) },
+      { path: 'collaboration', element: withErrorBoundary(CollaborationPage) },
       { path: 'comps', element: withErrorBoundary(CompBuilderPage) },
       { path: 'dd', element: withErrorBoundary(DDPage) },
       { path: 'territory', element: withErrorBoundary(TerritoryPage) },
