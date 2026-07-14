@@ -233,6 +233,30 @@ source IDs/types, and a bounded source summary excerpt. This lets an agent cite
 the evidence and preserve uncertainty instead of converting metadata into a
 stronger claim.
 
+Rights events also include `document_checks`. These scan retained Cortellis
+timeline events and report explicit option grants/exercises, amendments,
+terminations, reversions, and retained-rights language. Indexed contracts are
+also searched for bounded candidate clauses. Those matches are explicitly
+labeled for review: a clause can be conditional, concern another party or
+asset, or have been superseded, so it does not independently establish that an
+event took effect. Coverage separately reports source-citation count, follow-up
+timeline count, contract metadata, indexed contract text, candidate-match
+count, and the latest local evidence date. Source-document text is never
+implied from a citation ID: when the press release or corporate source body is
+not archived, `source_document_text_archived` is false. A missing event means
+only “not observed in available local records,” never “did not happen.”
+
+The oncology-assets response now has a separately labeled
+`public_pipeline_observations` block sourced from ClinicalTrials.gov. It groups
+drug, biologic, genetic, and combination-product interventions from oncology
+trials connected through normalized-exact structured sponsor/collaborator
+links. Trial interventions can be combination partners or comparators, so they
+are returned as candidates with `ownership_or_control_established: false`.
+Exact matches to deal-referenced assets are identified, while otherwise this
+layer can reveal public trial interventions that do not occur in Cortellis deal
+records. Counts and truncation flags make the bounded coverage explicit, and
+the existing cursor-paginated clinical-trials endpoint supplies full detail.
+
 ### Owner-controlled enforcement
 
 `GET/PUT /api/admin/data-access-policy` controls the runtime policy:

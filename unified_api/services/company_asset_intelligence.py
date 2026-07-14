@@ -60,6 +60,54 @@ MANUFACTURING_TERMS = (
 )
 
 MAX_COMPANY_DEALS = 5_000
+MAX_PUBLIC_PIPELINE_TRIALS = 250
+MAX_PUBLIC_INTERVENTION_CANDIDATES = 250
+MAX_CONTRACT_ASSERTION_MATCHES_PER_TYPE = 3
+
+CONTRACT_ASSERTION_PATTERNS = {
+    "option_grant": {
+        "regex": (
+            r"option[[:space:]]+to[[:space:]]+"
+            r"(obtain|acquire|receive).{0,100}(license|rights)|"
+            r"grant(s|ed|ing)?.{0,60}option.{0,120}(license|rights)"
+        ),
+        "tsquery": "option & (acquire | license | rights)",
+    },
+    "option_exercise": {
+        "regex": (
+            r"(has|had)?[[:space:]]*exercised[[:space:]]+"
+            r"(its[[:space:]]+|the[[:space:]]+|an[[:space:]]+)?option|"
+            r"option.{0,40}(was|has been|had been)"
+            r"[[:space:]]+exercised"
+        ),
+        "tsquery": "option & exercise",
+    },
+    "termination": {
+        "regex": (
+            r"(agreement|collaboration|deal).{0,80}"
+            r"(was|has been|had been)[[:space:]]+terminated|"
+            r"(party|company|licensor|licensee).{0,80}"
+            r"terminated[[:space:]]+(the|this)[[:space:]]+agreement"
+        ),
+        "tsquery": "terminate & (agreement | collaboration | deal)",
+    },
+    "rights_reversion": {
+        "regex": (
+            r"(rights.{0,40}(were|have been)[[:space:]]+returned|"
+            r"regained.{0,60}rights|rights.{0,40}reverted)"
+        ),
+        "tsquery": "rights & (return | regain | revert)",
+    },
+    "retained_rights": {
+        "regex": (
+            r"retained[[:space:]]+rights|"
+            r"retain(ed|s|ing)?[[:space:]]+"
+            r"(all|any|exclusive|commercialization|development)"
+            r".{0,50}rights"
+        ),
+        "tsquery": "rights & retain",
+    },
+}
 
 
 def _list(value: Any) -> list[dict[str, Any]]:
@@ -154,6 +202,282 @@ def _deal_evidence(deal: Mapping[str, Any]) -> dict[str, Any]:
         "date_change_last": deal.get("date_change_last"),
         "source_citations": _source_citations(deal),
     }
+
+
+def _rights_evidence_checks(deal: Mapping[str, Any]) -> dict[str, Any]:
+    """Report explicit rights assertions and honest local evidence coverage."""
+    timeline = _list(deal.get("timeline"))
+    contracts = _list(deal.get("contracts"))
+    contract_assertions = _list(deal.get("contract_assertions"))
+    patterns = {
+        "option_grant": re.compile(
+            r"\boption\b.{0,120}\b(?:acquire|license|rights)\b|"
+            r"\bcollaboration and option agreement\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "option_exercise": re.compile(
+            r"\b(?:has|had)?\s*exercised\s+(?:its\s+|the\s+|an\s+)?option\b|"
+            r"\boption\b.{0,40}\b(?:was|has been|had been) exercised\b|"
+            r"\bexercise of (?:its\s+|the\s+|an\s+)?option\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "amendment": re.compile(
+            r"\b(?:amendment|amended|restated)\b",
+            re.IGNORECASE,
+        ),
+        "termination": re.compile(
+            r"\b(?:terminated|discontinued|cancelled|canceled)\b.{0,60}"
+            r"\b(?:agreement|collaboration|deal|development|program|study)\b|"
+            r"\b(?:agreement|collaboration|deal|development|program|study)\b"
+            r".{0,60}\b(?:was |were )?(?:terminated|discontinued|cancelled|canceled)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "rights_reversion": re.compile(
+            r"\b(?:revert(?:ed|s|ing)?|reversion|reacquir(?:e|ed|ing)|"
+            r"regain(?:ed|s|ing)?|"
+            r"rights (?:were )?returned|returned rights)\b",
+            re.IGNORECASE,
+        ),
+        "retained_rights": re.compile(
+            r"\b(?:retain(?:ed|s|ing)?|kept)\b.{0,80}\bright(?:s)?\b|"
+            r"\brights\b.{0,80}\boutside the licensed region",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    }
+    matches: list[dict[str, Any]] = []
+    observed = {name: False for name in patterns}
+    contract_language_observed = {name: False for name in patterns}
+    for event in timeline:
+        event_text = _plain_text(" ".join(str(event.get(field) or "") for field in (
+            "event_type", "stage_notes", "summary"
+        )))
+        assertions = [
+            name for name, pattern in patterns.items()
+            if pattern.search(event_text)
+        ]
+        event_type = str(event.get("event_type") or "").casefold()
+        if "option exercised" in event_type and "option_exercise" not in assertions:
+            assertions.append("option_exercise")
+        if (
+            any(term in event_type for term in ("deal terminated", "termination"))
+            and "termination" not in assertions
+        ):
+            assertions.append("termination")
+        if not assertions:
+            continue
+        for assertion in assertions:
+            observed[assertion] = True
+        matches.append({
+            "source": "cortellis_timeline",
+            "timeline_event_id": event.get("id"),
+            "event_date": event.get("event_date"),
+            "event_type": event.get("event_type"),
+            "assertions": assertions,
+            "evidence_excerpt": event_text[:1000] or None,
+        })
+
+    for contract in contracts:
+        contract_type = str(contract.get("contract_types") or "")
+        metadata_assertions = []
+        if re.search(r"\b(?:amendment|amended|restated)\b", contract_type, re.I):
+            metadata_assertions.append("amendment")
+        if re.search(r"\btermination agreement\b", contract_type, re.I):
+            metadata_assertions.append("termination")
+        if not metadata_assertions:
+            continue
+        for assertion in metadata_assertions:
+            observed[assertion] = True
+        matches.append({
+            "source": "contract_metadata",
+            "contract_id": contract.get("id"),
+            "contract_types": contract.get("contract_types"),
+            "contract_date": (
+                contract.get("date_contract") or contract.get("date_filing")
+            ),
+            "assertions": metadata_assertions,
+            "evidence_excerpt": None,
+        })
+
+    for assertion_match in contract_assertions:
+        assertion = str(assertion_match.get("assertion") or "")
+        if assertion not in contract_language_observed:
+            continue
+        contract_language_observed[assertion] = True
+        matches.append({
+            "source": "indexed_contract_candidate_text",
+            "contract_content_id": assertion_match.get("contract_content_id"),
+            "contract_id": assertion_match.get("contract_id"),
+            "contract_types": assertion_match.get("contract_types"),
+            "contract_date": (
+                assertion_match.get("date_contract")
+                or assertion_match.get("date_filing")
+            ),
+            "assertions": [assertion],
+            "evidence_excerpt": _plain_text(
+                assertion_match.get("evidence_excerpt")
+            )[:1000] or None,
+            "interpretation": (
+                "Candidate clause language only; the affected party, asset, "
+                "effective event, and current legal status require review."
+            ),
+        })
+
+    indexed_contracts = sum(
+        1 for contract in contracts if contract.get("has_indexed_content")
+    )
+    dates = [
+        str(value)
+        for value in [
+            deal.get("date_change_last"),
+            *(event.get("event_date") for event in timeline),
+            *(
+                contract.get("date_contract") or contract.get("date_filing")
+                for contract in contracts
+            ),
+        ]
+        if value
+    ]
+    latest_date = max(dates, default=None)
+    follow_up_events = [
+        event for event in timeline
+        if str(event.get("event_type") or "").casefold() != "original deal"
+    ]
+    if observed["option_exercise"]:
+        option_status = "explicitly_observed_in_available_timeline"
+    elif contract_language_observed["option_exercise"]:
+        option_status = "candidate_indexed_contract_language_requires_review"
+    elif observed["option_grant"]:
+        option_status = "not_observed_after_grant_in_available_local_records"
+    elif contract_language_observed["option_grant"]:
+        option_status = (
+            "candidate_option_grant_language_no_exercise_event_observed"
+        )
+    else:
+        option_status = "no_option_grant_observed"
+    if indexed_contracts:
+        verification_status = "partial_indexed_contract_and_timeline_evidence"
+    elif contracts:
+        verification_status = "partial_contract_metadata_without_indexed_text"
+    elif timeline:
+        verification_status = "timeline_only_no_contract_or_source_document_text"
+    else:
+        verification_status = "no_local_timeline_or_contract_evidence"
+    return {
+        "evidence_coverage": {
+            "source_citation_count": len(_source_citations(deal)),
+            "source_document_text_archived": False,
+            "timeline_event_count": len(timeline),
+            "follow_up_timeline_event_count": len(follow_up_events),
+            "contract_metadata_count": len(contracts),
+            "indexed_contract_text_count": indexed_contracts,
+            "indexed_contract_assertion_match_count": len(contract_assertions),
+            "contract_assertion_matches_per_type_limit": (
+                MAX_CONTRACT_ASSERTION_MATCHES_PER_TYPE
+            ),
+            "latest_local_evidence_date": latest_date,
+            "verification_status": verification_status,
+        },
+        "option_grant_observed": observed["option_grant"],
+        "option_exercise_observed": observed["option_exercise"],
+        "option_exercise_status": option_status,
+        "amendment_observed": observed["amendment"],
+        "termination_observed": observed["termination"],
+        "rights_reversion_observed": observed["rights_reversion"],
+        "retained_rights_observed": observed["retained_rights"],
+        "indexed_contract_candidate_language_observed": (
+            contract_language_observed
+        ),
+        "evidence_matches": matches,
+        "current_legal_status_established": False,
+        "methodology": (
+            "Event assertions require explicit timeline evidence or unambiguous "
+            "contract metadata. Indexed-contract text matches are candidate "
+            "clauses for review and do not independently establish an effective "
+            "event. Absence means not observed in available local evidence, not "
+            "that an exercise, amendment, termination, or reversion never occurred."
+        ),
+    }
+
+
+def _load_contract_assertions(
+    session,
+    deals: list[dict[str, Any]],
+) -> None:
+    """Attach bounded candidate clauses found in indexed contract text."""
+    deal_ids = [
+        int(deal["id"])
+        for deal in deals
+        if _contains_any(_joined_text(deal), LICENSE_TERMS)
+        and any(
+            contract.get("has_indexed_content")
+            for contract in _list(deal.get("contracts"))
+        )
+    ]
+    for deal in deals:
+        deal["contract_assertions"] = []
+    if not deal_ids:
+        return
+
+    values = []
+    parameters: dict[str, Any] = {
+        "deal_ids": deal_ids,
+        "per_type_limit": MAX_CONTRACT_ASSERTION_MATCHES_PER_TYPE,
+    }
+    for index, (assertion, definition) in enumerate(
+        CONTRACT_ASSERTION_PATTERNS.items()
+    ):
+        values.append(
+            f"(:assertion_{index}, :regex_{index}, :tsquery_{index})"
+        )
+        parameters[f"assertion_{index}"] = assertion
+        parameters[f"regex_{index}"] = definition["regex"]
+        parameters[f"tsquery_{index}"] = definition["tsquery"]
+
+    assertion_rows = session.execute(text(f"""
+        WITH assertion_patterns(assertion, regex_pattern, tsquery_text) AS (
+            VALUES {", ".join(values)}
+        ), candidate_matches AS (
+            SELECT content.id AS contract_content_id,
+                   content.contract_id, content.deal_id,
+                   contract.contract_types, contract.date_filing,
+                   contract.date_contract, pattern.assertion,
+                   regexp_instr(
+                       content.content, pattern.regex_pattern, 1, 1, 0, 'i'
+                   ) AS match_position,
+                   content.content
+            FROM contract_content content
+            JOIN deal_contracts contract ON contract.id = content.contract_id
+            CROSS JOIN assertion_patterns pattern
+            WHERE content.deal_id = ANY(CAST(:deal_ids AS INTEGER[]))
+              AND (
+                  content.content_tsvector IS NULL
+                  OR content.content_tsvector
+                     @@ to_tsquery('english', pattern.tsquery_text)
+              )
+        ), ranked_matches AS (
+            SELECT contract_content_id, contract_id, deal_id, contract_types,
+                   date_filing, date_contract, assertion, match_position,
+                   SUBSTRING(
+                       content FROM GREATEST(match_position - 250, 1) FOR 1000
+                   ) AS evidence_excerpt,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY deal_id, assertion
+                       ORDER BY date_contract DESC NULLS LAST,
+                                date_filing DESC NULLS LAST,
+                                contract_id
+                   ) AS assertion_rank
+            FROM candidate_matches
+            WHERE match_position > 0
+        )
+        SELECT contract_content_id, contract_id, deal_id, contract_types,
+               date_filing, date_contract, assertion, evidence_excerpt
+        FROM ranked_matches
+        WHERE assertion_rank <= :per_type_limit
+        ORDER BY deal_id, assertion, assertion_rank
+    """), parameters).mappings().all()
+    by_deal = {int(deal["id"]): deal for deal in deals}
+    for row in assertion_rows:
+        by_deal[int(row["deal_id"])]["contract_assertions"].append(dict(row))
 
 
 def _territory_assessment(deal: Mapping[str, Any]) -> dict[str, Any]:
@@ -283,6 +607,97 @@ def _portfolio(
     }
 
 
+def _normalized_candidate_name(value: Any) -> str:
+    return "".join(character for character in str(value or "").casefold()
+                   if character.isalnum())
+
+
+def _public_pipeline_observations(
+    trials: list[Mapping[str, Any]],
+    portfolio: Mapping[str, Any],
+    *,
+    total_linked_oncology_trials: int,
+    trials_truncated: bool,
+) -> dict[str, Any]:
+    """Group source-backed trial interventions without asserting ownership."""
+    deal_assets = {
+        _normalized_candidate_name(asset.get("asset_name")): asset
+        for asset in portfolio["assets"]
+        if _normalized_candidate_name(asset.get("asset_name"))
+    }
+    candidates: dict[tuple[str, str], dict[str, Any]] = {}
+    accepted_types = {"DRUG", "BIOLOGICAL", "GENETIC", "COMBINATION_PRODUCT"}
+    for trial in trials:
+        evidence = {
+            "nct_id": trial.get("nct_id"),
+            "brief_title": trial.get("brief_title"),
+            "overall_status": trial.get("overall_status"),
+            "phases": trial.get("phases") or [],
+            "conditions": trial.get("conditions") or [],
+            "lead_sponsor_name": trial.get("lead_sponsor_name"),
+            "last_update_posted": trial.get("last_update_posted"),
+            "source_url": trial.get("source_url"),
+            "company_relationships": _list(trial.get("company_relationships")),
+        }
+        for intervention in _list(trial.get("interventions")):
+            name = str(intervention.get("name") or "").strip()
+            intervention_type = str(intervention.get("type") or "").upper()
+            normalized = _normalized_candidate_name(name)
+            if not name or not normalized or intervention_type not in accepted_types:
+                continue
+            key = (normalized, intervention_type)
+            matched_asset = deal_assets.get(normalized)
+            candidate = candidates.setdefault(key, {
+                "intervention_name": name,
+                "intervention_type": intervention_type,
+                "company_association_status": (
+                    "trial_referenced_not_ownership_verified"
+                ),
+                "ownership_or_control_established": False,
+                "matches_deal_referenced_asset": matched_asset is not None,
+                "matched_drug_id": (
+                    matched_asset.get("drug_id") if matched_asset else None
+                ),
+                "trial_evidence": [],
+            })
+            if not any(
+                item["nct_id"] == evidence["nct_id"]
+                for item in candidate["trial_evidence"]
+            ):
+                candidate["trial_evidence"].append(evidence)
+
+    all_candidates = sorted(candidates.values(), key=lambda item: (
+        item["intervention_name"].casefold(), item["intervention_type"]
+    ))
+    for candidate in all_candidates:
+        candidate["trial_evidence"].sort(
+            key=lambda item: str(item["nct_id"] or "")
+        )
+        candidate["linked_trial_count"] = len(candidate["trial_evidence"])
+    returned = all_candidates[:MAX_PUBLIC_INTERVENTION_CANDIDATES]
+    return {
+        "source": "clinicaltrials_gov",
+        "relationship_basis": (
+            "normalized-exact company alias in a structured sponsor or "
+            "collaborator field"
+        ),
+        "is_complete_standalone_company_pipeline": False,
+        "linked_oncology_trial_count": total_linked_oncology_trials,
+        "returned_trial_count": len(trials),
+        "trials_truncated": trials_truncated,
+        "intervention_candidate_count_in_returned_trials": len(all_candidates),
+        "returned_intervention_candidate_count": len(returned),
+        "intervention_candidates_truncated": len(returned) < len(all_candidates),
+        "intervention_candidates": returned,
+        "limitations": [
+            "Trial interventions include combinations and comparators and are not "
+            "asserted to be company-owned pipeline assets.",
+            "Only exact structured company links and oncology-condition trials are "
+            "included; absence is not proof that the company has no other pipeline.",
+        ],
+    }
+
+
 def _rights(
     company: Mapping[str, Any],
     deals: list[Mapping[str, Any]],
@@ -348,6 +763,7 @@ def _rights(
                 participant for participant in _list(deal.get("participants"))
                 if int(participant.get("id") or 0) != int(company["id"])
             ],
+            "document_checks": _rights_evidence_checks(deal),
             "evidence": _deal_evidence(deal),
         }
         drugs = _list(deal.get("drugs"))
@@ -438,11 +854,26 @@ def _manufacturing(
 
 
 def build_company_asset_intelligence(
-    company: Mapping[str, Any], deals: list[Mapping[str, Any]]
+    company: Mapping[str, Any],
+    deals: list[Mapping[str, Any]],
+    *,
+    public_trials: list[Mapping[str, Any]] | None = None,
+    total_linked_oncology_trials: int = 0,
+    public_trials_truncated: bool = False,
 ) -> dict[str, Any]:
     """Build all three colleague answers from source-backed deal rows."""
     normalized_company = dict(company)
     portfolio = _portfolio(normalized_company, deals)
+    public_pipeline = _public_pipeline_observations(
+        public_trials or [],
+        portfolio,
+        total_linked_oncology_trials=total_linked_oncology_trials,
+        trials_truncated=public_trials_truncated,
+    )
+    public_pipeline["detail_endpoint_hint"] = (
+        f"/api/v1/clinical-trials?company_id={normalized_company['id']}&limit=100"
+    )
+    portfolio["public_pipeline_observations"] = public_pipeline
     return {
         "company": normalized_company,
         "deal_records_considered": len(deals),
@@ -546,7 +977,36 @@ def company_asset_intelligence(session, company_id: int) -> dict[str, Any] | Non
                    ) ORDER BY source.source_type, source.source_id)
                    FROM cortellis_deal_sources source
                    WHERE source.deal_id = deal.id AND source.is_current = TRUE
-               ), '[]'::jsonb) AS sources
+               ), '[]'::jsonb) AS sources,
+               COALESCE((
+                   SELECT jsonb_agg(jsonb_build_object(
+                       'id', event.id,
+                       'event_date', event.event_date,
+                       'event_type', event.event_type,
+                       'stage', event.stage,
+                       'stage_notes', event.stage_notes,
+                       'summary', event.summary
+                   ) ORDER BY event.event_date, event.id)
+                   FROM deal_timeline_events event
+                   WHERE event.deal_id = deal.id
+               ), '[]'::jsonb) AS timeline,
+               COALESCE((
+                   SELECT jsonb_agg(jsonb_build_object(
+                       'id', contract.id,
+                       'contract_types', contract.contract_types,
+                       'date_filing', contract.date_filing,
+                       'date_contract', contract.date_contract,
+                       'has_pdf', contract.has_pdf,
+                       'has_text', contract.has_text,
+                       'is_redacted', contract.is_redacted,
+                       'has_indexed_content', EXISTS (
+                           SELECT 1 FROM contract_content content
+                           WHERE content.contract_id = contract.id
+                       )
+                   ) ORDER BY contract.date_contract, contract.id)
+                   FROM deal_contracts contract
+                   WHERE contract.deal_id = deal.id
+               ), '[]'::jsonb) AS contracts
         FROM deal_companies company_deal
         JOIN deals deal ON deal.id = company_deal.deal_id
         LEFT JOIN therapy_areas therapy_area ON therapy_area.id = deal.therapy_area_id
@@ -559,7 +1019,56 @@ def company_asset_intelligence(session, company_id: int) -> dict[str, Any] | Non
     }).mappings().all()
     truncated = len(rows) > MAX_COMPANY_DEALS
     deals = [dict(row) for row in rows[:MAX_COMPANY_DEALS]]
-    result = build_company_asset_intelligence(dict(company), deals)
+    _load_contract_assertions(session, deals)
+    oncology_pattern = "|".join(ONCOLOGY_TERMS)
+    trial_rows = session.execute(text("""
+        SELECT trial.nct_id, trial.brief_title, trial.overall_status,
+               trial.phases, trial.conditions, trial.interventions,
+               trial.lead_sponsor_name, trial.last_update_posted,
+               trial.source_url,
+               COUNT(*) OVER () AS linked_oncology_trial_total,
+               COALESCE((
+                   SELECT jsonb_agg(jsonb_build_object(
+                       'organization_name', company_link.organization_name,
+                       'organization_role', company_link.organization_role,
+                       'matched_alias', company_link.matched_alias,
+                       'match_method', company_link.match_method,
+                       'confidence', company_link.confidence,
+                       'source', company_link.source
+                   ) ORDER BY company_link.organization_role,
+                              company_link.organization_name)
+                   FROM clinical_trial_companies company_link
+                   WHERE company_link.nct_id = trial.nct_id
+                     AND company_link.company_id = :company_id
+               ), '[]'::jsonb) AS company_relationships
+        FROM clinical_trials trial
+        WHERE EXISTS (
+            SELECT 1 FROM clinical_trial_companies company_link
+            WHERE company_link.nct_id = trial.nct_id
+              AND company_link.company_id = :company_id
+        )
+          AND LOWER(trial.conditions::text) ~ :oncology_pattern
+        ORDER BY trial.last_update_posted DESC NULLS LAST, trial.nct_id
+        LIMIT :trial_limit
+    """), {
+        "company_id": company_id,
+        "oncology_pattern": oncology_pattern,
+        "trial_limit": MAX_PUBLIC_PIPELINE_TRIALS + 1,
+    }).mappings().all()
+    total_linked_trials = int(
+        trial_rows[0]["linked_oncology_trial_total"] if trial_rows else 0
+    )
+    public_trials_truncated = len(trial_rows) > MAX_PUBLIC_PIPELINE_TRIALS
+    public_trials = [
+        dict(row) for row in trial_rows[:MAX_PUBLIC_PIPELINE_TRIALS]
+    ]
+    result = build_company_asset_intelligence(
+        dict(company),
+        deals,
+        public_trials=public_trials,
+        total_linked_oncology_trials=total_linked_trials,
+        public_trials_truncated=public_trials_truncated,
+    )
     result["scope_truncated"] = truncated
     result["deal_record_limit"] = MAX_COMPANY_DEALS
     return result
