@@ -1,4 +1,4 @@
-"""Dependency-free MCP stdio adapter for the governed OneBD data API.
+"""MCP protocol adapter for the governed OneBD data API.
 
 Run with::
 
@@ -7,7 +7,9 @@ Run with::
 
 The adapter intentionally calls the governed HTTP surface. It never receives
 database credentials and therefore follows the same revocation, scope, dataset,
-and owner-policy controls as other colleague integrations.
+and owner-policy controls as other colleague integrations. The local entrypoint
+uses stdio; :mod:`unified_api.routers.mcp_http` exposes the same implementation
+as a hosted, stateless Streamable HTTP endpoint.
 """
 
 from __future__ import annotations
@@ -253,7 +255,14 @@ class OneBDMCPServer:
         self.api_key = api_key if api_key is not None else os.environ.get(
             "ONEBD_API_KEY"
         )
-        self.client = client or httpx.Client(timeout=30.0)
+        # Keep client creation lazy so the hosted transport can use an async
+        # in-process ASGI client without also allocating an unused sync client.
+        self.client = client
+
+    def _sync_client(self) -> httpx.Client:
+        if self.client is None:
+            self.client = httpx.Client(timeout=30.0)
+        return self.client
 
     def _result(self, request_id: Any, result: Any) -> dict[str, Any]:
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
@@ -290,7 +299,70 @@ class OneBDMCPServer:
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         try:
-            response = self.client.get(
+            response = self._sync_client().get(
+                f"{self.base_url}/{path}", params=params, headers=headers
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            message = f"OneBD API returned HTTP {exc.response.status_code}"
+            try:
+                detail = exc.response.json().get("detail")
+                if detail:
+                    message += f": {detail}"
+            except (ValueError, AttributeError):
+                pass
+            return {
+                "content": [{"type": "text", "text": message}],
+                "isError": True,
+            }
+        except (httpx.HTTPError, ValueError) as exc:
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": f"OneBD API request failed: {type(exc).__name__}",
+                }],
+                "isError": True,
+            }
+        return {
+            "content": [{
+                "type": "text",
+                "text": json.dumps(payload, default=str, separators=(",", ":")),
+            }],
+            "structuredContent": payload,
+            "isError": False,
+        }
+
+    async def _call_tool_async(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        client: httpx.AsyncClient,
+    ) -> dict[str, Any]:
+        """Call a governed route without blocking the hosted ASGI worker."""
+        route = TOOL_ROUTES.get(name)
+        if route is None:
+            return {
+                "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
+                "isError": True,
+            }
+        path, path_argument = route
+        params = dict(arguments)
+        if path_argument:
+            if path_argument not in params:
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": f"Missing required argument: {path_argument}",
+                    }],
+                    "isError": True,
+                }
+            path = path.format(**{path_argument: params.pop(path_argument)})
+        headers = {"Accept": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        try:
+            response = await client.get(
                 f"{self.base_url}/{path}", params=params, headers=headers
             )
             response.raise_for_status()
@@ -366,7 +438,10 @@ class OneBDMCPServer:
         if message.get("jsonrpc") != "2.0" or not isinstance(method, str):
             return self._error(request_id, -32600, "Invalid JSON-RPC request")
         if method == "initialize":
-            requested = message.get("params", {}).get("protocolVersion")
+            params = message.get("params") or {}
+            if not isinstance(params, dict):
+                return self._error(request_id, -32602, "Params must be an object")
+            requested = params.get("protocolVersion")
             protocol = PROTOCOL_VERSION
             if requested == PROTOCOL_VERSION:
                 protocol = requested
@@ -385,6 +460,8 @@ class OneBDMCPServer:
             return self._result(request_id, {"tools": TOOLS})
         if method == "tools/call":
             params = message.get("params") or {}
+            if not isinstance(params, dict):
+                return self._error(request_id, -32602, "Params must be an object")
             name = params.get("name", "")
             arguments = params.get("arguments") or {}
             if not isinstance(arguments, dict):
@@ -394,6 +471,35 @@ class OneBDMCPServer:
                 return self._error(request_id, -32602, validation_error)
             return self._result(request_id, self._call_tool(name, arguments))
         return self._error(request_id, -32601, f"Method not found: {method}")
+
+    async def handle_async(
+        self,
+        message: dict[str, Any],
+        client: httpx.AsyncClient,
+    ) -> dict[str, Any] | None:
+        """Handle one MCP message for the hosted HTTP transport."""
+        if message.get("method") != "tools/call":
+            return self.handle(message)
+
+        request_id = message.get("id")
+        if "id" not in message:
+            return None
+        if message.get("jsonrpc") != "2.0":
+            return self._error(request_id, -32600, "Invalid JSON-RPC request")
+        params = message.get("params") or {}
+        if not isinstance(params, dict):
+            return self._error(request_id, -32602, "Params must be an object")
+        name = params.get("name", "")
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return self._error(
+                request_id, -32602, "Tool arguments must be an object"
+            )
+        validation_error = self._validate_tool_arguments(name, arguments)
+        if validation_error:
+            return self._error(request_id, -32602, validation_error)
+        result = await self._call_tool_async(name, arguments, client)
+        return self._result(request_id, result)
 
 
 def main() -> None:

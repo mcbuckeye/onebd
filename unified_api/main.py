@@ -35,6 +35,7 @@ from unified_api.routers import (
     export_docs,
     graph,
     health,
+    mcp_http,
     public_biology,
     recommendations,
     search,
@@ -251,6 +252,7 @@ app.add_middleware(OwnerAccessPolicyMiddleware)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
+app.include_router(mcp_http.router)
 app.include_router(auth.router, prefix="/api", tags=["Auth"])
 app.include_router(admin.router, prefix="/api", tags=["Admin"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])

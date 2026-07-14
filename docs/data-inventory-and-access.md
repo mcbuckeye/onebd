@@ -297,23 +297,34 @@ an account takes effect immediately instead of waiting for its JWT to expire.
 
 ## MCP access
 
-The MCP server is a thin stdio adapter over the governed HTTP API; it does not
-receive database credentials and cannot bypass API policy.
+The recommended colleague connection is the hosted, stateless Streamable HTTP
+endpoint. It requires no OneBD repository checkout, Python installation, or
+database credentials:
 
 ```json
 {
   "mcpServers": {
     "onebd": {
-      "command": "python",
-      "args": ["-m", "unified_api.mcp_server"],
-      "env": {
-        "ONEBD_API_URL": "https://onebd.pchomelab.com/api/v1",
-        "ONEBD_API_KEY": "onebd_..."
+      "url": "https://onebd.pchomelab.com/mcp",
+      "headers": {
+        "X-API-Key": "onebd_..."
       }
     }
   }
 }
 ```
+
+Clients that use a standard bearer header may send an `Authorization` header
+with the value `Bearer onebd_...` instead. The endpoint supports MCP Streamable
+HTTP JSON-RPC requests and is stateless; it does not maintain a long-lived
+server-side session.
+
+The hosted MCP server is a thin adapter over the governed HTTP API. Every tool
+call traverses the versioned REST endpoint, so it cannot bypass key expiry,
+revocation, scope enforcement, owner dataset switches, or the global owner
+access mode. The local `python -m unified_api.mcp_server` stdio adapter remains
+available for OneBD developers but is not required or recommended for
+colleagues.
 
 Available MCP tools cover the catalog, deals, normalized deal financial terms,
 companies, drugs, trials, targets, diseases, EDGAR documents, and source status.

@@ -344,6 +344,33 @@ def require_data_access(scope: str, dataset: str):
     return dependency
 
 
+def authorize_mcp_request(
+    request: Request,
+    api_key: str | None,
+) -> DataPrincipal:
+    """Authenticate a hosted MCP request without preselecting a dataset scope.
+
+    Individual tool calls still traverse the governed API and enforce the
+    precise scope and dataset switch for the selected tool.
+    """
+    policy = get_data_access_policy()
+    if policy["access_mode"] == "open":
+        return DataPrincipal(
+            principal_type="anonymous",
+            principal_id="anonymous",
+            name="anonymous",
+            scopes=["data:read"],
+        )
+    principal = _api_key_principal(api_key, request.url.path)
+    if principal is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A valid API key is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return principal
+
+
 def authorize_existing_api_request(request: Request) -> DataPrincipal | None:
     """Apply the owner policy to legacy application APIs when opted in."""
     policy = get_data_access_policy()
