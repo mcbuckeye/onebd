@@ -1,6 +1,6 @@
 # Cortellis API coverage audit
 
-**Observed:** 2026-07-13  
+**Observed:** 2026-07-14
 **Credential type:** legacy HTTP Digest credential configured for the Cortellis
 Deals API
 
@@ -9,22 +9,23 @@ Deals API
 The local database is **not** a complete, field-for-field copy of everything
 exposed by the configured credential.
 
-1. `deals-v2/deal/expanded/search` advertises **149,006** deals. Two repair
-   passes raised the local `deals` table from **146,931** to **149,013**, but
-   neither offset scan returned all advertised unique IDs. The latest sorted
-   pass returned **148,910 unique IDs**, restored five more records, and
-   correctly remained `partial`.
-2. The local schema is a normalized projection of expanded deal records, not a
-   raw archive. A sampled expanded record exposed `ProductNumber` and root
-   attributes that the current transformer does not persist. Other complex
-   fields such as finance detail and cross-references are retained as JSON, but
-   the complete source response is not stored.
-3. The credential returns deal-linked source citations from
-   `deals-v2/deal/sources/{dealId}`. The local ingestion path does not call or
-   store that endpoint.
-4. Contract coverage is not complete. The durable scanner has checked only
-   **3,000 of 149,013 deals (2.01%)** and currently holds 41,786 contract
-   records. Eighteen advertised PDFs do not have a recorded local path.
+1. `deals-v2/deal/expanded/search` advertises **149,028** deals, but its count
+   is not the credential's full retrievable surface. Exhaustively requesting
+   every integer ID across the stable advertised bounds 100,063 through
+   506,108 returned **172,638 unique deals with zero request errors**. The
+   local `deals` table has **149,035** rows: **23,608 retrievable records are
+   missing locally**, and five local IDs now return successful empty responses.
+2. Sampled missing IDs return complete historical expanded records through
+   direct retrieval while exact `dealId` searches report zero hits. These are
+   hidden or archived records excluded from search, not pagination artifacts.
+3. Lossless retention and deal-source citation ingestion are deployed, but the
+   backfill is incomplete. PostgreSQL currently holds **2,510 exact individual
+   expanded responses**, 94 batch-response deal fragments, **2,510 exact source
+   responses**, and 7,947 normalized citations for 2,510 deals.
+4. Contract coverage is not complete. The durable scanner has checked
+   **46,780 of 149,035 local deals (31.39%)** and currently holds 41,892
+   contract records. It reports 21,200 advertised PDFs versus 21,070 recorded
+   PDF paths, and 26,121 advertised text documents versus 26,098 paths.
 5. The companies, drugs, indications, technologies, actions, therapy areas, and
    patents in the local database are entities embedded in deal responses. They
    are not standalone full copies of Clarivate's broader Companies or Drugs
@@ -34,17 +35,18 @@ exposed by the configured credential.
 
 | Local object | Rows | Scope |
 |---|---:|---|
-| Deals | 149,013 | Expanded Deals API projection; exact source set not proven |
-| Companies | 53,656 | Companies referenced by deals |
-| Drugs/assets | 33,888 | Drugs referenced by deals; display name and phase fields |
-| Indications | 2,596 | Indications referenced by deals |
-| Technologies | 672 | Technologies referenced by deals |
+| Deals | 149,035 | Expanded Deals API projection; 23,608 directly retrievable IDs missing |
+| Companies | 53,662 | Companies referenced by deals |
+| Drugs/assets | 33,892 | Drugs referenced by deals; display name and phase fields |
+| Indications | 2,597 | Indications referenced by deals |
+| Technologies | 673 | Technologies referenced by deals |
 | Actions/targets | 7,932 | Actions referenced by deals |
 | Therapy areas | 20 | Therapy areas referenced by deals |
 | Patents | 2,156 | Limited patent references embedded in deals |
-| Timeline events | 206,199 | Deal timeline events and embedded payment JSON |
-| Contract metadata | 41,786 | Contract endpoint results obtained to date |
-| Deal source citations | 0 | Accessible endpoint is not ingested |
+| Timeline events | 206,265 | Deal timeline events and embedded payment JSON |
+| Contract metadata | 41,892 | Contract endpoint results obtained to date |
+| Exact expanded responses | 2,510 | Individual-response backfill; 94 additional batch fragments retained |
+| Deal source citations | 7,947 | Normalized citations covering 2,510 deals; exact source XML retained |
 
 ## First reconciliation result
 
@@ -70,14 +72,40 @@ Catalog proof now needs either validated/retried page-boundary scanning or a
 full retrieval-based membership audit. Row-count equality or a union of
 incomplete scans is not sufficient evidence.
 
+## Exhaustive numeric-ID audit
+
+The 2026-07-14 audit first retrieved every one of the 149,035 local IDs in
+30-record batches. Cortellis returned 149,030 of them while the search count
+remained stable at 149,028. Five local IDs returned HTTP 200 with empty batch,
+individual, and exact-search results: 168114, 327122, 465219, 491157, and
+492264. The two-record excess over the advertised count proved that even
+retrieval of every local ID plus count equality could not characterize the
+source set.
+
+The acceptance audit therefore stopped trusting both count and offset
+pagination. It requested every integer ID from the stable minimum search ID
+100,063 through stable maximum ID 506,108, using 13,535 bounded requests. The
+bounds and advertised count were unchanged before and after the run. The API
+returned 172,638 unique requested IDs with zero request errors. Comparing that
+set with PostgreSQL found 23,608 remote-only IDs and the same five local-only
+IDs.
+
+Spot checks of remote-only IDs, including 110202, 111083, 114499, 126831, and
+128220, returned populated historical deal records through direct retrieval
+while `dealId:<id>` searches returned zero hits. The expanded retrieval surface
+therefore includes hidden or archived deals that the search catalog does not
+advertise. A complete credential archive must use bounded numeric-ID discovery
+or an equivalent Clarivate-supported export; search pagination cannot supply
+it.
+
 ## Credentialed Deals API surface
 
 The credential exposes the `deals-v2` WADL and successfully serves the expanded
 search/retrieval, contract metadata/document, and per-deal source-citation
-operations. The application currently ingests expanded deal records and
-contract data, but not `deal/sources/{dealId}`. Other documented legacy
-operations returned `400 Operation not found` or `500 Error processing API
-service` during the live audit and are not counted as demonstrated access.
+operations. The application ingests all four surfaces, with durable backfills
+still in progress. Other documented legacy operations returned `400 Operation
+not found` or `500 Error processing API service` during the live audit and are
+not counted as demonstrated access.
 
 ## Broader Cortellis products
 
@@ -88,28 +116,31 @@ contain substantially broader company profiles, drug-development history,
 chemical structures, targets, indications/diseases, trials, sales forecasts,
 patents, publications, and source metadata.
 
-The configured legacy credential successfully authenticated and returned data
-from the Deals expanded search/retrieval operations. Fresh authenticated probes
-of the legacy drugs and company operations reached the services but returned
-`500 Error processing API service`; therefore usable access to those products
-has not been demonstrated. The newer Clarivate developer-portal APIs use API-key
-subscriptions, not this legacy username/password credential. Contract paperwork
-or Clarivate support is still the authoritative way to confirm whether the
-account should have additional product entitlements.
+The configured legacy credential successfully minted a time-limited auth token
+and returned data from Deals operations. The Drugs and Companies WADLs were
+reachable, but fresh record and metadata requests against their declared
+service base returned `500 Error processing API service` even with that token;
+usable access to those products has not been demonstrated. The newer Clarivate
+developer-portal APIs use API-key subscriptions, not this legacy
+username/password credential. Contract paperwork or Clarivate support is still
+the authoritative way to confirm whether the account should have additional
+product entitlements.
 
 ## Remediation
 
 - The daily incremental worker now compares the advertised source count with
   the local count and marks the source partial on a mismatch.
-- A weekly full-ID reconciliation scans the authoritative Deals catalog,
-  restores only missing deal IDs, retrieves their contracts, and preserves
-  local-only IDs for review rather than deleting them.
+- The weekly reconciliation no longer accepts offset-pagination results as a
+  membership proof and preserves local-only IDs for review rather than deleting
+  them. Its next required change is to promote the successful bounded numeric-ID
+  enumeration into the durable repair path and ingest the 23,608 missing rows.
 - Both parallel scans exposed unstable offset pagination: the unsorted pass
   produced 148,754 unique IDs and the `dealId`-sorted pass produced 148,910.
   The reconciler rejects either result because neither equals the advertised
   total.
 - Source/local counts and the reconciliation result flow through the common
-  health/alert model.
+  health/alert model. The advertised search count remains useful as a drift
+  signal, but it is not a completeness denominator.
 - A complete contract scan still needs to be resumed from durable database
   state before contract completeness can be claimed. The replacement scanner
   stores a versioned per-deal checkpoint in PostgreSQL, advances in bounded
@@ -118,7 +149,9 @@ account should have additional product entitlements.
   A direct credentialed probe confirmed that no-contract deals return HTTP 200
   with `<dealContractsOutput/>`. The legacy client incorrectly converted every
   contract API error into `has_contract = false`.
-- Add lossless raw expanded-response retention with a response hash, fetch
-  timestamp, and parser version if archive fidelity is required.
-- Ingest deal-linked source citations from `deal/sources/{dealId}` with source
-  IDs and types, preserving their API provenance.
+- Lossless individual expanded responses and source responses are stored with
+  endpoint, response hash, first/last fetch timestamps, and parser version.
+  The scheduled scanner must continue until every accessible ID is covered.
+- Deal-linked source citations from `deal/sources/{dealId}` are normalized with
+  source IDs, types, and API provenance. Their backfill uses the same durable
+  per-deal checkpoint as exact-response retention.
