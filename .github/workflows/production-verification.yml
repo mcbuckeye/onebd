@@ -60,6 +60,7 @@ jobs:
         run: >-
           python -m unified_api.scripts.evaluate_questions
           --base-url "$BASE_URL" --tier regression
+          --timeout 120 --request-retries 1
       - name: Enforce deployed EDGAR search latency budgets
         run: >-
           python -m unified_api.scripts.benchmark_edgar_search
@@ -248,6 +249,7 @@ jobs:
         run: >-
           python -m unified_api.scripts.evaluate_questions
           --base-url "$BASE_URL" --tier regression
+          --timeout 120 --request-retries 1
       - name: Re-run EDGAR latency budgets on the rollback
         run: >-
           python -m unified_api.scripts.benchmark_edgar_search

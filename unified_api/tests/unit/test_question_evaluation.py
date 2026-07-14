@@ -2,11 +2,13 @@
 
 from pathlib import Path
 
+import httpx
 import yaml
 
 from unified_api.scripts.evaluate_questions import (
     evaluate_assertion,
     get_path,
+    run_case,
     validate_suite,
 )
 
@@ -40,6 +42,21 @@ def test_excludes_detects_unsupported_claims():
     )
 
     assert passed
+
+
+def test_run_case_reports_transport_error_without_crashing_suite():
+    def delayed(request):
+        raise httpx.ReadTimeout("upstream response delayed", request=request)
+
+    case = {
+        "request": {"method": "GET", "path": "/slow"},
+        "assertions": [],
+    }
+    with httpx.Client(transport=httpx.MockTransport(delayed)) as client:
+        failures = run_case(client, case)
+
+    assert len(failures) == 1
+    assert failures[0].startswith("transport error: ReadTimeout:")
 
 
 def test_versioned_suite_covers_all_65_questions():

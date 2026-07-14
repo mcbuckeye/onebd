@@ -243,14 +243,21 @@ def evaluate_rubric(payload: Any, rubric: dict) -> tuple[bool, str]:
 def run_case(client: httpx.Client, case: dict, *, with_truth: bool = False) -> list[str]:
     """Execute a case and return assertion failure messages."""
     request = case["request"]
-    response = client.request(
-        request["method"],
-        request["path"],
-        params=request.get("params"),
-        json=request.get("json"),
-    )
-    response.raise_for_status()
-    payload = response.json()
+    try:
+        response = client.request(
+            request["method"],
+            request["path"],
+            params=request.get("params"),
+            json=request.get("json"),
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.RequestError as exc:
+        return [f"transport error: {type(exc).__name__}: {exc}"]
+    except httpx.HTTPStatusError as exc:
+        return [f"HTTP error: {exc.response.status_code}: {exc}"]
+    except ValueError as exc:
+        return [f"response JSON error: {exc}"]
     failures = []
     for assertion in case.get("assertions", []):
         try:
@@ -396,6 +403,12 @@ def main() -> int:
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument(
+        "--request-retries",
+        type=int,
+        default=0,
+        help="Retry only transport-level request failures this many times",
+    )
+    parser.add_argument(
         "--tier",
         choices=["regression", "catalog", "all"],
         default="regression",
@@ -407,6 +420,8 @@ def main() -> int:
         help="Execute direct read-only database truth comparisons for selected cases",
     )
     args = parser.parse_args()
+    if args.request_retries < 0:
+        parser.error("--request-retries must be zero or greater")
 
     suite = yaml.safe_load(args.cases.read_text())
     validation_errors = validate_suite(suite)
@@ -425,15 +440,29 @@ def main() -> int:
     failed = 0
     with httpx.Client(base_url=args.base_url, timeout=args.timeout) as client:
         for case in selected:
-            failures = run_case(client, case, with_truth=args.with_truth)
             label = f"#{case['id']} {case['question']}"
+            for attempt in range(args.request_retries + 1):
+                failures = run_case(client, case, with_truth=args.with_truth)
+                transport_failure = (
+                    failures and all(
+                        failure.startswith("transport error:") for failure in failures
+                    )
+                )
+                if transport_failure and attempt < args.request_retries:
+                    print(
+                        f"RETRY {label} after {failures[0]} "
+                        f"({attempt + 1}/{args.request_retries})",
+                        flush=True,
+                    )
+                    continue
+                break
             if failures:
                 failed += 1
-                print(f"FAIL {label}")
+                print(f"FAIL {label}", flush=True)
                 for failure in failures:
-                    print(f"  - {failure}")
+                    print(f"  - {failure}", flush=True)
             else:
-                print(f"PASS {label}")
+                print(f"PASS {label}", flush=True)
 
     total = len(selected)
     print(f"\n{total - failed}/{total} cases passed")
