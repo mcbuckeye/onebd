@@ -1,6 +1,6 @@
 # Cortellis Financial-Term Analytics — Production Report
 
-**Verified:** 2026-07-14
+**Verified:** 2026-07-14 18:38 UTC
 
 **Environment:** `onebd.pchomelab.com`
 
@@ -15,8 +15,8 @@ Chat queries. It is no longer awaiting deployment or database enrichment.
 | Measure | Verified value |
 |---|---:|
 | Cortellis deals | 172,643 |
-| Deals with `FinanceDetail` payloads | 125,360 |
-| Normalized financial terms | 445,904 |
+| Deals with `FinanceDetail` payloads | 150,898 |
+| Normalized financial terms | 503,525 |
 | Parser version | 4 |
 | Parse coverage | 100% |
 | Failed source replays | 0 |

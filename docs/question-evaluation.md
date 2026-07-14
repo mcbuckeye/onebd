@@ -44,16 +44,19 @@ questions require source-backed claims and a refusal when evidence is insufficie
 
 ## Current Production Baseline
 
+The counts below were re-verified at 2026-07-14 18:38 UTC and will continue to
+move as scheduled enrichment and linking jobs run.
+
 - 172,643 Cortellis rows and 67,177 companies. Exhaustive retrieval proved
   172,638 currently accessible deals plus five preserved retired records; the
   API search endpoint advertises only 149,028.
-- 41,341 deals with at least one disclosed financial total (23.9%).
-- 125,360 deals with typed `FinanceDetail` payloads and 445,904 normalized
+- 41,503 deals with at least one disclosed financial total (24.0%).
+- 150,898 deals with typed `FinanceDetail` payloads and 503,525 normalized
   financial terms; parser v4 has 100% source-payload coverage and no failures.
-- 25,978 indexed contracts and 897,130 embedded contract chunks.
+- 25,977 indexed contracts and 897,041 embedded contract chunks.
 - 330,818 EDGAR filings and 3,580,771 filing chunks.
 - 692 company mappings with CIKs (1,648 cross-references of all types).
-- 69,179 candidate deal–filing links generated from company and date proximity.
+- 76,448 candidate deal–filing links generated from company and date proximity.
 - 2,157 patent records and 2,863 deal–patent associations; this is not a
   comprehensive patent landscape.
 - Archive-backed phase repair populated phase-at-start for 63,772 deals and
@@ -191,7 +194,7 @@ downgraded until graph identity, YoY period semantics, or conversational context
 is made deterministic.
 
 The Cortellis financial source was also re-audited. `finance_detail_raw` is JSONB,
-not unstructured text: 125,360 deals contain typed paid/projected payments,
+not unstructured text: 150,898 deals contain typed paid/projected payments,
 recipient side, dates, currencies, USD conversions, disclosure status, milestone
 breakdowns, royalty percentages, notes, and accuracy metadata. The old regex-only
 enrichment route treated this payload as a string and could not populate governed
@@ -200,7 +203,7 @@ the source JSON/path and parser version, and records resumable per-deal extracti
 Parser v4 corrects Cortellis `B`/`T` unit scaling, captures bounded percentage
 terms beyond royalties, and normalizes one impossible vendor `%`/money unit
 conflict while preserving the raw source node. The production gate now covers
-all 125,360 payloads and 445,904 terms with zero structural failures and 100%
+all 150,898 payloads and 503,525 terms with zero structural failures and 100%
 accuracy across 475 deterministic source replays. The job remains resumable and
 scheduled. Governed SQL and question-specific truth are now live for Phase 2 ADC
 upfronts, Phase 3 license milestone totals, oncology bispecific royalties, and
@@ -299,7 +302,7 @@ limitation, not a confidence score to hide.
 |---|---|---:|---|
 | 41 | Full DD on Company X. | 🟡 | Overview, deals, drugs, partners, financials, and basic risks are populated; four sections are empty. |
 | 42 | What territories are available for Drug Y? | 🟡 | Territory-rights endpoint works for a concrete drug ID; the placeholder question has no resolvable asset. |
-| 43 | Contracts mentioning royalty rates for this drug. | 🟡 | 25,978 contracts/897,130 chunks are searchable; exact drug scoping and structured extraction need validation. |
+| 43 | Contracts mentioning royalty rates for this drug. | 🟡 | 25,977 contracts/897,041 chunks are searchable; exact drug scoping and structured extraction need validation. |
 | 44 | Risk flags for this acquisition target. | 🟡 | Basic heuristic flags exist, but litigation, filings, contracts, clinical, and financial-risk evidence are absent. |
 | 45 | Export a comp set with deal values to Excel. | 🔧 | Comp PowerPoint export is shipped; comp-specific Excel export is not. |
 | 46 | What SEC filings relate to this deal? | 🟡 | 66,980 candidate links exist, but only 692 CIK mappings and date-proximity matching needs precision review. |
