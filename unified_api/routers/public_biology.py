@@ -76,7 +76,8 @@ async def public_target_detail(ensembl_id: str):
         drugs = session.execute(text("""
             SELECT link.drug_id, drug.name_display, link.chembl_id,
                    profile.name AS public_name, link.mechanism_of_action,
-                   link.action_type, link.target_name, link.references,
+                   link.action_type, link.target_name,
+                   link.source_references,
                    link.source, link.source_version, profile.source_url
             FROM public_drug_target_links link
             JOIN drugs drug ON drug.id = link.drug_id
@@ -221,7 +222,8 @@ async def drug_public_biology(
             SELECT target.ensembl_id, target.approved_symbol,
                    target.approved_name, target.biotype, target.protein_ids,
                    link.chembl_id, link.mechanism_of_action,
-                   link.action_type, link.target_name, link.references,
+                   link.action_type, link.target_name,
+                   link.source_references,
                    link.source, link.source_version
             FROM public_drug_target_links link
             JOIN public_targets target

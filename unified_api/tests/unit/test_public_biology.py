@@ -89,7 +89,7 @@ def test_target_detail_returns_exact_mechanism_evidence(monkeypatch):
             "drug_id": 42,
             "chembl_id": "CHEMBL25",
             "mechanism_of_action": "Inhibitor",
-            "references": [{"source": "FDA"}],
+            "source_references": [{"source": "FDA"}],
         }],
     ])
 
