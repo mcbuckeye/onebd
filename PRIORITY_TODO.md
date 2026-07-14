@@ -184,7 +184,11 @@ and fast retrieval before adding more external data volume.
           royalty/milestone/upfront candidate pipeline with exact excerpts,
           replay validation, authenticated admin review queue, immutable reviewer
           identity, audit trail, and a 100-clause human-review gate is in progress.
-    - [ ] Deal-to-trial and deal-to-regulatory-event timelines.
+    - [ ] Deal-to-trial and deal-to-regulatory-event timelines. The first
+          precision-gated slice extracts exact NCT citations from lossless
+          Cortellis payloads, combines linked trial dates with explicit Cortellis
+          regulatory/development milestones, and keeps broad shared-asset joins
+          out of deal-specific claims; full-corpus backfill is in progress.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.
 

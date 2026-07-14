@@ -59,6 +59,39 @@ export interface TimelineEvent {
   summary?: string;
 }
 
+export interface EvidenceTimelineEvent {
+  event_date?: string | null;
+  date_precision?: string | null;
+  date_type?: string | null;
+  category: 'deal' | 'development' | 'regulatory' | 'clinical_trial' | 'clinical_status';
+  event_type: string;
+  stage?: string | null;
+  summary?: string | null;
+  source: string;
+  source_record_id: string;
+  source_url?: string | null;
+  nct_id?: string | null;
+  link_method?: string | null;
+  citation_evidence: Array<{
+    source_type: string;
+    source_record_id: number;
+    source_sha256: string;
+    source_char_start: number;
+    source_char_end: number;
+    source_excerpt: string;
+  }>;
+}
+
+export interface EvidenceTimelineSummary {
+  event_count: number;
+  cortellis_event_count: number;
+  explicit_regulatory_event_count: number;
+  exact_cited_trial_count: number;
+  matched_registry_trial_count: number;
+  link_method: string;
+  parser_version: number;
+}
+
 export interface ContractInfo {
   id: number;
   contract_types?: string;
@@ -108,6 +141,8 @@ export interface DealDetail {
   territories_excluded: string[];
   finance?: FinanceSummary;
   timeline: TimelineEvent[];
+  evidence_timeline?: EvidenceTimelineEvent[];
+  evidence_timeline_summary?: EvidenceTimelineSummary;
   contracts: ContractInfo[];
   sources?: DealSourceInfo[];
 }

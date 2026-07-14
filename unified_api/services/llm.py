@@ -65,7 +65,9 @@ Available tables and key columns:
 - clinical_trials: nct_id, brief_title, overall_status, phases (JSONB),
   primary_completion_date, lead_sponsor_name, source_url
 - clinical_trial_drugs: nct_id, drug_id, intervention_name, matched_alias,
-  match_method, confidence (exact source-backed links only)
+  match_method, confidence (exact trial-to-drug links, not deal-specific)
+- deal_clinical_trial_links: deal_id, nct_id, link_method, source_type,
+  source_record_id, source_sha256, source_excerpt, parser_version
 - drug_identifiers: drug_id, identifier_type, identifier_value, source,
   source_reference, confidence, review_status
 - public_drug_profiles: drug_id, chembl_id, name, description, drug_type,
@@ -106,10 +108,12 @@ Important notes:
 - Never treat total_projected_current_amount as an upfront, milestone, royalty, or
   acquisition-premium value. If the requested metric has no governed column, do
   not substitute a different financial field.
-- Never infer a drug, trial, target, or disease link from text. Use only the exact
-  clinical_trial_drugs, public_drug_target_links, and public_drug_disease_links
-  relationships. Use public_target_literature_links for literature-to-target
-  claims, and return identifiers/source fields as evidence.
+- Never infer a drug, trial, target, or disease link from text. Use
+  deal_clinical_trial_links for deal-specific trial claims; joining a deal to a
+  trial merely because both share a drug or indication is not sufficient. Use
+  clinical_trial_drugs for trial-to-drug claims, public_drug_target_links and
+  public_drug_disease_links for biology claims, and public_target_literature_links
+  for literature-to-target claims. Return identifiers/source fields as evidence.
 
 Resolved entities (JSON):
 {resolved_entities}

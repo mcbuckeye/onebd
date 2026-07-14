@@ -60,7 +60,9 @@ class SQLTool(BaseTool):
     - clinical_trials: nct_id, brief_title, overall_status, phases,
       primary_completion_date, lead_sponsor_name, source_url
     - clinical_trial_drugs: nct_id, drug_id, matched_alias, match_method,
-      confidence
+      confidence (trial-to-drug, not deal-specific)
+    - deal_clinical_trial_links: deal_id, nct_id, link_method, source_type,
+      source_record_id, source_sha256, source_excerpt, parser_version
     - drug_identifiers: drug_id, identifier_type, identifier_value, source,
       source_reference, confidence, review_status
     - public_drug_profiles: drug_id, chembl_id, name, drug_type,
@@ -84,8 +86,9 @@ class SQLTool(BaseTool):
     - public_drug_disease_links: drug_id, chembl_id, disease_id,
       maximum_clinical_stage, source, source_version
 
-    Use only these exact link tables for drug/trial/target/disease claims. Join
-    UniProt records to targets through ensembl_id and literature through
+    Use deal_clinical_trial_links for deal-specific trial claims; never create a
+    deal-to-trial claim merely because a deal and trial share a drug or disease.
+    Join UniProt records to targets through ensembl_id and literature through
     public_target_literature_links. Never infer links from titles, abstracts,
     descriptions, or other free text.
 

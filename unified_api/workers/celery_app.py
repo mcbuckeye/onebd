@@ -126,6 +126,15 @@ celery_app.conf.update(
             ),
             "schedule": crontab(minute="10,40"),
         },
+        # Exact NCT citations create high-precision deal-to-trial links without
+        # treating broad shared drug or disease names as deal-specific evidence.
+        "extract-deal-clinical-trial-links": {
+            "task": (
+                "unified_api.workers.tasks.enrichment."
+                "extract_deal_clinical_trial_links"
+            ),
+            "schedule": crontab(minute="8,28,48"),
+        },
         # Per-alias PubChem enrichment stays below the official five-request/s
         # ceiling while advancing the corpus in bounded resumable batches.
         "enrich-pubchem-identifiers": {
@@ -426,6 +435,87 @@ def rebuild_contract_financial_clauses():
         return result
     except Exception as exc:
         logger.error("Contract financial clause rebuild failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+@celery_app.task(
+    name=(
+        "unified_api.workers.tasks.enrichment."
+        "extract_deal_clinical_trial_links"
+    )
+)
+def extract_deal_clinical_trial_links():
+    """Advance exact Cortellis NCT-citation extraction in one bounded batch."""
+    logger.info("Starting exact deal-to-trial citation extraction")
+    try:
+        from unified_api.services.database import get_cortellis_session
+        from unified_api.services.deal_evidence_timeline import (
+            extract_deal_trial_link_batch,
+        )
+
+        with get_cortellis_session() as session:
+            result = extract_deal_trial_link_batch(session, batch_size=5000)
+        logger.info("Exact deal-to-trial citation extraction complete", **result)
+        return result
+    except Exception as exc:
+        logger.error("Exact deal-to-trial citation extraction failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+@celery_app.task(
+    name=(
+        "unified_api.workers.tasks.enrichment."
+        "rebuild_deal_clinical_trial_links"
+    )
+)
+def rebuild_deal_clinical_trial_links():
+    """Run the exact NCT-citation backfill serially to completion."""
+    logger.info("Starting exact deal-to-trial citation rebuild")
+    try:
+        import time
+
+        from unified_api.services.database import get_cortellis_session
+        from unified_api.services.deal_evidence_timeline import (
+            extract_deal_trial_link_batch,
+        )
+
+        totals = {
+            "batches": 0,
+            "processed": 0,
+            "citation_mentions": 0,
+            "errors": 0,
+        }
+        busy_retries = 0
+        with get_cortellis_session() as session:
+            for _ in range(50):
+                result = extract_deal_trial_link_batch(session, batch_size=5000)
+                if result.get("status") == "busy":
+                    session.rollback()
+                    busy_retries += 1
+                    if busy_retries > 40:
+                        return {
+                            **totals,
+                            "status": "busy",
+                            "busy_retries": busy_retries,
+                        }
+                    time.sleep(0.25)
+                    continue
+                busy_retries = 0
+                session.commit()
+                processed = int(result.get("processed") or 0)
+                totals["batches"] += 1
+                totals["processed"] += processed
+                totals["citation_mentions"] += int(
+                    result.get("citation_mentions") or 0
+                )
+                totals["errors"] += int(result.get("errors") or 0)
+                if processed == 0:
+                    break
+        result = {**totals, "status": "completed", "busy_retries": busy_retries}
+        logger.info("Exact deal-to-trial citation rebuild complete", **result)
+        return result
+    except Exception as exc:
+        logger.error("Exact deal-to-trial citation rebuild failed", error=str(exc))
         return {"status": "failed", "error": str(exc)}
 
 

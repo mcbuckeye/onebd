@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 import structlog
 
+from unified_api.services.deal_evidence_timeline import deal_evidence_timeline
+
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
@@ -125,6 +127,8 @@ class DealDetail(BaseModel):
     territories_excluded: List[str] = []
     finance: Optional[FinanceSummary] = None
     timeline: List[TimelineEvent] = []
+    evidence_timeline: List[dict] = []
+    evidence_timeline_summary: dict = {}
     contracts: List[ContractInfo] = []
     sources: List[DealSourceInfo] = []
     # Links to SEC filings (from Edgar BD)
@@ -559,6 +563,9 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
             for row in sources_result
         ]
 
+        # Merge explicit Cortellis milestones with only directly cited NCT trials.
+        evidence_timeline_result = deal_evidence_timeline(session, deal_id)
+
         # Build finance summary if any financial data exists
         finance = None
         if deal.total_projected_current_amount or deal.total_paid_amount:
@@ -592,10 +599,26 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
             territories_excluded=territories_excluded,
             finance=finance,
             timeline=timeline,
+            evidence_timeline=(evidence_timeline_result or {}).get("events", []),
+            evidence_timeline_summary=(
+                (evidence_timeline_result or {}).get("summary", {})
+            ),
             contracts=contracts,
             sources=sources,
             related_filings=[],  # TODO: From Edgar via Neo4j
         )
+
+
+@router.get("/deal/{deal_id}/evidence-timeline")
+async def get_deal_evidence_timeline(deal_id: int = Path(..., gt=0)):
+    """Return source-labeled deal, regulatory, and exactly cited trial events."""
+    from unified_api.services.database import get_cortellis_session
+
+    with get_cortellis_session() as session:
+        result = deal_evidence_timeline(session, deal_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    return result
 
 
 class PartnerSummary(BaseModel):

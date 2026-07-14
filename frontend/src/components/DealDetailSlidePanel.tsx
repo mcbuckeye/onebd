@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { X, Building2, DollarSign, Calendar, FileText, MapPin, Tag, TrendingUp } from 'lucide-react';
 import api from '../lib/api';
 import { DealDetail } from '../types';
+import EvidenceTimelineList from './EvidenceTimelineList';
 
 interface DealDetailSlidePanelProps {
   dealId: number | null;
@@ -359,8 +360,20 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                 </section>
               )}
 
-              {/* Timeline */}
-              {deal.timeline.length > 0 && (
+              {/* Source-labeled timeline */}
+              {(deal.evidence_timeline?.length ?? 0) > 0 ? (
+                <section>
+                  <h3 className="text-sm font-medium text-slate-400 flex items-center gap-2 mb-1">
+                    <Calendar className="w-4 h-4" />
+                    Evidence timeline
+                  </h3>
+                  <p className="mb-3 text-xs text-slate-500">
+                    {deal.evidence_timeline_summary?.exact_cited_trial_count ?? 0} exact cited trials ·{' '}
+                    {deal.evidence_timeline_summary?.explicit_regulatory_event_count ?? 0} explicit regulatory events
+                  </p>
+                  <EvidenceTimelineList events={deal.evidence_timeline ?? []} />
+                </section>
+              ) : deal.timeline.length > 0 ? (
                 <section>
                   <h3 className="text-sm font-medium text-slate-400 flex items-center gap-2 mb-3">
                     <Calendar className="w-4 h-4" />
@@ -394,7 +407,7 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                     ))}
                   </div>
                 </section>
-              )}
+              ) : null}
 
               {/* Contracts */}
               {deal.contracts.length > 0 && (
