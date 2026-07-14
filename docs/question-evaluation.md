@@ -253,14 +253,14 @@ question-specific database truths are added.
 | 32 | Who is most actively acquiring oncology assets? | ✅ | Top-acquirers analytics supports therapy filtering. |
 | 33 | Compare our deal pace to Merck's. | 🟡 | “Our company” is not configured and comparison selection is cumbersome. |
 | 34 | Alert me when a competitor does an ADC deal. | 🟡 | Saved-search alerts, Celery checks, notifications, and email exist; configuration UX/validation remains limited. |
-| 35 | What is Roche's oncology strategy from its deal pattern? | 🔧 | Empty evidence now returns a grounded limitation, but a source-backed strategy workflow is not implemented. |
+| 35 | What is Roche's oncology strategy from its deal pattern? | 🟡 | Canonical-company chat is checked against agreement-pattern truth, and the company profile now adds deterministic five-year deal-pattern statements, focus areas, evidence deal IDs, overlap peers, and explicit non-inference caveats. The chat path does not yet call that richer service directly. |
 | 36 | Which companies just entered the bispecific space? | 🔧 | Query logic is feasible but no tested new-entrant workflow exists. |
 | 37 | Show Pfizer's partnership network. | 🔧 | The direct ID endpoint works, but chat currently extracts the company name heuristically rather than binding canonical ID 18767. |
 | 38 | How does AbbVie's deal structure differ from Gilead's? | 🟡 | Distributions can be retrieved; grounded comparison synthesis is not proven. |
 | 39 | Are competitors building ADC portfolios faster than us? | ❌ | “Us,” portfolio boundaries, and velocity metric are not defined. |
 | 40 | Weekly competitive briefing for oncology. | 🟡 | Weekly personalized email digests now exist; competitor-focused narrative and delivery QA remain incomplete. |
 
-**Provisional score: 1 Strong, 5 Partial, 3 Needs Work, 1 Cannot**
+**Provisional score: 1 Strong, 6 Partial, 2 Needs Work, 1 Cannot**
 
 ---
 
@@ -398,7 +398,9 @@ Evaluation rules:
 
 11. Milestone and royalty extraction/analytics.
 12. Dynamic company comparison and “my company” configuration.
-13. Target screening, new-entrant detection, and strategy summaries after grounding.
+13. 🟡 Evidence-limited company strategy summaries and first-observed indication
+    entrant snapshots are implemented; add general target screening and durable,
+    scheduled entrant alerts.
 14. Board/quarterly report templates and analytics PDF export.
 15. 🟡 ClinicalTrials.gov API-v2 current/history ingestion, provenance, exact
     company/asset/indication links, and catalyst endpoints are implemented.

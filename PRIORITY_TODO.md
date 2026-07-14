@@ -184,12 +184,19 @@ and fast retrieval before adding more external data volume.
           royalty/milestone/upfront candidate pipeline with exact excerpts,
           replay validation, authenticated admin review queue, immutable reviewer
           identity, audit trail, and a 100-clause human-review gate is in progress.
-    - [ ] Deal-to-trial and deal-to-regulatory-event timelines. The first
-          precision-gated slice extracts exact NCT citations from lossless
-          Cortellis payloads, combines linked trial dates with explicit Cortellis
-          regulatory/development milestones, and keeps broad shared-asset joins
-          out of deal-specific claims; full-corpus backfill is in progress.
+    - [x] Deal-to-trial and deal-to-regulatory-event timelines. The production
+          precision-gated scan covers all 172,638 API-eligible deals: 920 exact
+          citation mentions link 509 deals to 535 distinct NCT IDs, 531 of which
+          match the registry. Validation reports zero failed deals, invalid IDs,
+          provenance errors, missing raw sources, hash mismatches, or offset
+          mismatches. Timelines combine those exact trial citations with explicit
+          Cortellis regulatory/development milestones and exclude broad shared-
+          asset joins from deal-specific claims.
     - [ ] Company strategy summaries, competitive maps, and new-entrant alerts.
+          Deterministic, evidence-limited strategy summaries, normalized deal-
+          portfolio overlap maps, and first-observed indication entrant snapshots
+          are implemented on company profiles. Persisted tracked-company alert
+          state, deduplicated scheduled delivery, and review UX remain.
     - [ ] Catalyst calendars, scheduled reports, and decision-ready exports.
 
 ### Immediate Reliability Sprint
