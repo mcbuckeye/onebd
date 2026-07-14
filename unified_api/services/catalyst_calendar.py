@@ -275,6 +275,23 @@ def _ical_escape(value: Any) -> str:
     )
 
 
+def _ical_fold_line(line: str, limit: int = 75) -> list[str]:
+    """Fold one content line without splitting a UTF-8 code point."""
+    folded: list[str] = []
+    current = ""
+    byte_limit = limit
+    for character in line:
+        candidate = current + character
+        if current and len(candidate.encode("utf-8")) > byte_limit:
+            folded.append(current)
+            current = " " + character
+            byte_limit = limit
+        else:
+            current = candidate
+    folded.append(current)
+    return folded
+
+
 def catalyst_calendar_ics(events: list[dict[str, Any]]) -> str:
     """Serialize catalyst events as all-day RFC 5545 calendar entries."""
     generated_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -341,4 +358,5 @@ def catalyst_calendar_ics(events: list[dict[str, Any]]) -> str:
             "END:VEVENT",
         ])
     lines.append("END:VCALENDAR")
-    return "\r\n".join(lines) + "\r\n"
+    folded_lines = [physical for line in lines for physical in _ical_fold_line(line)]
+    return "\r\n".join(folded_lines) + "\r\n"

@@ -136,3 +136,16 @@ def test_ical_export_creates_all_day_event_and_escapes_content():
     assert "X-ONEBD-DATE-TYPE:ESTIMATED\r\n" in rendered
     assert "TRANSP:TRANSPARENT\r\n" in rendered
     assert rendered.endswith("END:VCALENDAR\r\n")
+
+
+def test_ical_export_folds_long_utf8_content_lines_to_75_octets():
+    event = _event()
+    event["brief_title"] = "Pivotal étude — " + "very long title " * 12
+
+    rendered = catalyst_calendar_ics([event])
+
+    physical_lines = rendered.split("\r\n")
+    assert max(len(line.encode("utf-8")) for line in physical_lines) <= 75
+    assert any(line.startswith(" ") for line in physical_lines)
+    unfolded = rendered.replace("\r\n ", "")
+    assert "Pivotal étude — very long title" in unfolded
