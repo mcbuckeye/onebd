@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import hashlib
 import json
 import time
 from typing import Any, Callable, Mapping
@@ -119,15 +120,64 @@ class PublicSourceHttpClient:
         not_found_is_none: bool = False,
         use_cache: bool = False,
     ) -> PublicSourceResponse | None:
+        return self._request_json(
+            "GET",
+            path,
+            params,
+            not_found_is_none=not_found_is_none,
+            use_cache=use_cache,
+        )
+
+    def post_json(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+        params: Mapping[str, Any] | None = None,
+        *,
+        not_found_is_none: bool = False,
+        use_cache: bool = False,
+    ) -> PublicSourceResponse | None:
+        """POST a JSON object using the same policy and body-aware cache."""
+        return self._request_json(
+            "POST",
+            path,
+            params,
+            json_body=payload,
+            not_found_is_none=not_found_is_none,
+            use_cache=use_cache,
+        )
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        params: Mapping[str, Any] | None,
+        *,
+        json_body: Mapping[str, Any] | None = None,
+        not_found_is_none: bool,
+        use_cache: bool,
+    ) -> PublicSourceResponse | None:
         url = self._url(path, params)
+        body = (
+            json.dumps(json_body, sort_keys=True, separators=(",", ":")).encode()
+            if json_body is not None else None
+        )
+        cache_key = url
+        if body is not None:
+            cache_key = f"{url}#{hashlib.sha256(body).hexdigest()}"
         now = self._monotonic()
-        cached = self._cache.get(url) if use_cache else None
+        cached = self._cache.get(cache_key) if use_cache else None
         if cached and now - cached[0] <= self.cache_ttl_seconds:
             return replace(cached[1], cache_hit=True)
 
+        headers = {"Accept": "application/json", "User-Agent": self.user_agent}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         request = Request(
             url,
-            headers={"Accept": "application/json", "User-Agent": self.user_agent},
+            data=body,
+            headers=headers,
+            method=method,
         )
         policy = self.retry_policy
         for attempt in range(policy.max_retries + 1):
@@ -155,7 +205,7 @@ class PublicSourceHttpClient:
                         source_date=headers.get("Date"),
                     )
                     if use_cache and self.cache_ttl_seconds > 0:
-                        self._cache[url] = (self._monotonic(), result)
+                        self._cache[cache_key] = (self._monotonic(), result)
                     return result
             except HTTPError as exc:
                 if exc.code == 404 and not_found_is_none:

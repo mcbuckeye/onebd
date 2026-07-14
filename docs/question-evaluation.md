@@ -401,6 +401,8 @@ Evaluation rules:
 13. Target screening, new-entrant detection, and strategy summaries after grounding.
 14. Board/quarterly report templates and analytics PDF export.
 15. 🟡 ClinicalTrials.gov API-v2 current/history ingestion, provenance, exact
-    company/asset/indication links, and catalyst endpoints are implemented;
-    complete the production backfill, add canonical target identifiers, and
-    integrate trial evidence into governed chat/profile workflows.
+    company/asset/indication links, and catalyst endpoints are implemented.
+    Exact PubChem InChIKey → ChEMBL → Open Targets mappings now add canonical
+    Ensembl targets, mechanisms, public drug profiles, and disease-stage links;
+    complete the production backfill and integrate this evidence into governed
+    chat and profile workflows.

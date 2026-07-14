@@ -84,6 +84,15 @@ class Settings(BaseSettings):
     clinicaltrials_backfill_window_days: int = 90
     clinicaltrials_backfill_max_pages: int = 50
 
+    # Free public drug/target sources
+    public_data_user_agent: str = (
+        "OneBD onebd.pchomelab.com admin@pchomelab.com"
+    )
+    chembl_base_url: str = "https://www.ebi.ac.uk/chembl/api/data"
+    chembl_request_interval_seconds: float = 0.2
+    open_targets_base_url: str = "https://api.platform.opentargets.org/api/v4"
+    open_targets_request_interval_seconds: float = 0.25
+
     # CORS
     allowed_origins: str = "*"
 

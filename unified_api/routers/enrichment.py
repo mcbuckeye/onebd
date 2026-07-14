@@ -25,6 +25,9 @@ from unified_api.services.pubchem_enrichment import (
     pubchem_enrichment_status,
     pubchem_validation_status,
 )
+from unified_api.services.public_drug_enrichment import (
+    public_drug_enrichment_status,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["enrichment"])
@@ -80,6 +83,7 @@ async def enrichment_status():
     contract_metadata_status = contract_scan_status()
     deal_api_status = deal_api_scan_status()
     pubchem_status = pubchem_enrichment_status()
+    public_drug_status = public_drug_enrichment_status()
 
     return {
         "finance_enrichment": finance_status,
@@ -87,6 +91,7 @@ async def enrichment_status():
         "cortellis_contract_metadata_scan": contract_metadata_status,
         "cortellis_deal_api_scan": deal_api_status,
         "pubchem_enrichment": pubchem_status,
+        "public_drug_target_enrichment": public_drug_status,
     }
 
 

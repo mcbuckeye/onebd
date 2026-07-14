@@ -114,6 +114,35 @@ def test_minimum_request_interval_is_enforced_across_calls():
     assert sleeps == [0.75]
 
 
+def test_post_json_sends_canonical_body_and_uses_body_aware_cache():
+    requests = []
+    ticks = iter([0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0])
+
+    def opener(request, timeout):
+        requests.append((request.method, request.data, request.headers, timeout))
+        return Response({"data": {"ok": True}})
+
+    client = PublicSourceHttpClient(
+        source="graphql",
+        base_url="https://example.test/graphql",
+        user_agent="OneBD",
+        opener=opener,
+        monotonic=lambda: next(ticks),
+        cache_ttl_seconds=60,
+    )
+    first = client.post_json("", {"variables": {"id": 1}, "query": "query"}, use_cache=True)
+    cached = client.post_json("", {"query": "query", "variables": {"id": 1}}, use_cache=True)
+    different = client.post_json("", {"query": "different"}, use_cache=True)
+
+    assert first.cache_hit is False
+    assert cached.cache_hit is True
+    assert different.cache_hit is False
+    assert len(requests) == 2
+    assert requests[0][0] == "POST"
+    assert requests[0][1] == b'{"query":"query","variables":{"id":1}}'
+    assert requests[0][2]["Content-type"] == "application/json"
+
+
 def test_optional_ttl_cache_returns_provenance_marked_cache_hit():
     calls = []
     ticks = iter([0.0, 0.0, 0.0, 1.0])
