@@ -142,6 +142,11 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.enrichment.open_targets_profiles",
             "schedule": crontab(minute="2,6,10,14,18,22,26,30,34,38,42,46,50,54,58"),
         },
+        # Exact Swiss-Prot IDs from Open Targets unlock reviewed protein records.
+        "enrich-uniprot-targets": {
+            "task": "unified_api.workers.tasks.enrichment.uniprot_targets",
+            "schedule": crontab(minute="3,7,11,15,19,23,27,31,35,39,43,47,51,55,59"),
+        },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
             "task": "unified_api.workers.tasks.pageindex.batch_index_contracts",
@@ -471,6 +476,24 @@ def enrich_open_targets_drug_profiles():
         logger.error("Open Targets drug enrichment failed", error=str(exc))
         return _finish_source_job(
             "open_targets", {"status": "failed", "error": str(exc)}
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.enrichment.uniprot_targets")
+def enrich_uniprot_target_records():
+    """Retain reviewed UniProt records for exact Open Targets accessions."""
+    logger.info("Starting UniProt target enrichment")
+    _start_source_job("uniprot")
+    try:
+        from unified_api.services.uniprot_enrichment import enrich_uniprot_targets
+
+        result = enrich_uniprot_targets(batch_size=50)
+        logger.info("UniProt target enrichment complete", **result)
+        return _finish_source_job("uniprot", result)
+    except Exception as exc:
+        logger.error("UniProt target enrichment failed", error=str(exc))
+        return _finish_source_job(
+            "uniprot", {"status": "failed", "error": str(exc)}
         )
 
 

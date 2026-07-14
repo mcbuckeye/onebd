@@ -115,6 +115,23 @@ def build_citations(mode: str, data: list[dict], query: Optional[str] = None) ->
             if len(citations) == 10:
                 break
             continue
+        if row.get("primary_accession"):
+            record_id = str(row["primary_accession"])
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            citations.append({
+                "id": f"C{len(citations) + 1}",
+                "source": "UniProt",
+                "record_type": "protein",
+                "record_id": record_id,
+                "label": (
+                    row.get("protein_name") or row.get("gene_symbol") or record_id
+                ),
+            })
+            if len(citations) == 10:
+                break
+            continue
         if row.get("ensembl_id"):
             record_id = "|".join(str(value) for value in (
                 row.get("chembl_id"), row.get("ensembl_id"), row.get("drug_id")

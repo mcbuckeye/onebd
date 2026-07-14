@@ -37,6 +37,7 @@ def test_response_retains_source_and_http_provenance():
                 "ETag": '"abc"',
                 "Last-Modified": "Mon, 13 Jul 2026 13:00:05 GMT",
                 "Date": "Tue, 14 Jul 2026 03:00:00 GMT",
+                "X-UniProt-Release": "2026_02",
             },
         )
 
@@ -54,6 +55,7 @@ def test_response_retains_source_and_http_provenance():
     assert response.etag == '"abc"'
     assert response.last_modified == "Mon, 13 Jul 2026 13:00:05 GMT"
     assert response.source_date == "Tue, 14 Jul 2026 03:00:00 GMT"
+    assert response.response_headers["x-uniprot-release"] == "2026_02"
     assert response.attempts == 1
     assert response.cache_hit is False
     assert captured["timeout"] == 12

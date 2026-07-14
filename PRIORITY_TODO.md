@@ -76,15 +76,16 @@ and fast retrieval before adding more external data volume.
          overwrite shared monitoring state.
    - [x] Persist every successful exhaustive numeric-ID proof independently of
          mutable job-monitoring state and use it for incremental health checks.
-   - [ ] Complete the durable all-deal contract metadata scan. The deployed
-         versioned PostgreSQL scanner has checked 50,260 of 172,643 current local
-         deals (29.11%), has no terminal failures, and holds 41,939 contract rows.
+   - [x] Complete the durable all-deal contract metadata scan. The deployed
+         versioned PostgreSQL scanner checked all 172,643 current local deals
+         with zero retryable or terminal failures and retained 42,573 contract
+         records; the durable completeness report is at 100%.
    - [x] Add lossless raw expanded-response/source retention and normalize the
          credentialed `deal/sources/{dealId}` citations with API provenance.
-   - [ ] Complete the exact-response and source-citation backfill. As of the
-         2026-07-14 02:04 UTC audit, it covers 4,010 deals and stores 11,716
-         current normalized citations; scheduled durable batches continue from
-         PostgreSQL state.
+   - [x] Complete the exact-response and source-citation backfill. It covers all
+         172,638 API-eligible deals with zero failures, 196,340 immutable raw
+         response versions, and 268,543 current normalized source citations;
+         the five local-only catalog records are correctly outside this API scan.
 
 5. **Improve EDGAR full-text and semantic-search performance**
    - [x] Rank a bounded indexed candidate set instead of every matching chunk.
@@ -127,7 +128,8 @@ and fast retrieval before adding more external data volume.
    - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
          Exact PubChem InChIKeys now establish ChEMBL IDs, which in turn establish
          Open Targets drug profiles and Ensembl target/disease relationships;
-         broader INN/development-code normalization and UniProt remain.
+         exact Swiss-Prot accessions now feed the reusable UniProt target adapter;
+         broader INN/development-code normalization remains.
    - [x] Seed normalized Cortellis display names and conservative development-code
          candidates for all drugs without treating organization suffixes as aliases.
    - [x] Store match evidence, confidence, method, review status, reviewer, and
@@ -162,7 +164,9 @@ and fast retrieval before adding more external data volume.
          PubChem, ClinicalTrials.gov, ChEMBL, and Open Targets now use the
          reusable primitives directly. Their retained profiles, disease links,
          and exact drug-target mechanisms are queryable through the public-
-         biology API; UniProt and Europe PMC remain.
+         biology API. UniProt now retains reviewed protein, gene, function,
+         disease, location, sequence-metadata, release, raw-response, and history
+         records from exact Open Targets Swiss-Prot accessions; Europe PMC remains.
 
 10. **Build higher-value intelligence workflows after the foundation is stable**
     - [x] Normalize Cortellis JSON upfront, milestone, and royalty terms into a

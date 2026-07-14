@@ -252,6 +252,22 @@ export default function DrugProfilePage() {
                           <a href={`https://platform.opentargets.org/target/${target.ensembl_id}`} target="_blank" rel="noreferrer" className="text-xs text-cyan-400 hover:text-cyan-300">{target.ensembl_id}</a>
                         </div>
                         <div className="mt-2 text-xs text-slate-400">{target.mechanism_of_action || target.target_name || 'Mechanism not reported'}{target.action_type ? ` · ${formatLabel(target.action_type)}` : ''}</div>
+                        {target.uniprot_records?.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {target.uniprot_records.map((record) => (
+                              <a
+                                key={record.requested_accession}
+                                href={record.source_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={record.protein_name || record.uniprot_id || record.primary_accession}
+                                className="inline-flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"
+                              >
+                                UniProt {record.primary_accession}<ExternalLink className="w-3 h-3" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                     {biology.targets.length > 12 && <CountNote shown={12} total={biology.targets.length} />}

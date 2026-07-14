@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from unified_api.services.database import get_cortellis_session
-from unified_api.services.public_drug_enrichment import ensure_public_drug_schema
+from unified_api.services.uniprot_enrichment import ensure_public_target_schema
 
 
 router = APIRouter()
@@ -20,7 +20,7 @@ async def list_public_targets(
     offset: int = Query(default=0, ge=0),
 ):
     """Search canonical Ensembl targets and optionally require an exact drug link."""
-    ensure_public_drug_schema()
+    ensure_public_target_schema()
     filters: list[str] = []
     params: dict[str, object] = {"limit": limit, "offset": offset}
     if query:
@@ -44,10 +44,14 @@ async def list_public_targets(
                    target.source, target.source_version,
                    target.first_seen_at, target.last_seen_at,
                    COUNT(DISTINCT link.drug_id) AS linked_drugs,
-                   COUNT(DISTINCT link.chembl_id) AS linked_chembl_compounds
+                   COUNT(DISTINCT link.chembl_id) AS linked_chembl_compounds,
+                   COUNT(DISTINCT uniprot.requested_accession)
+                       AS uniprot_records
             FROM public_targets target
             LEFT JOIN public_drug_target_links link
               ON link.ensembl_id = target.ensembl_id
+            LEFT JOIN public_target_uniprot_records uniprot
+              ON uniprot.ensembl_id = target.ensembl_id
             {where}
             GROUP BY target.ensembl_id
             ORDER BY linked_drugs DESC, target.approved_symbol,
@@ -65,7 +69,7 @@ async def list_public_targets(
 @router.get("/public-biology/targets/{ensembl_id}")
 async def public_target_detail(ensembl_id: str):
     """Return a canonical target and its exact source-derived drug mechanisms."""
-    ensure_public_drug_schema()
+    ensure_public_target_schema()
     ensembl_id = ensembl_id.upper()
     with get_cortellis_session() as session:
         target = session.execute(text("""
@@ -88,9 +92,23 @@ async def public_target_detail(ensembl_id: str):
             ORDER BY drug.name_display, link.chembl_id,
                      link.mechanism_of_action
         """), {"ensembl_id": ensembl_id}).mappings().all()
+        uniprot_records = session.execute(text("""
+            SELECT requested_accession, primary_accession, uniprot_id,
+                   entry_type, reviewed, protein_name, gene_symbol,
+                   gene_synonyms, organism_name, organism_taxon_id,
+                   function_text, disease_annotations,
+                   subcellular_locations, sequence_length,
+                   sequence_checksum, source, source_version,
+                   source_release_date, source_url,
+                   first_seen_at, last_seen_at
+            FROM public_target_uniprot_records
+            WHERE ensembl_id = :ensembl_id
+            ORDER BY requested_accession
+        """), {"ensembl_id": ensembl_id}).mappings().all()
     return {
         "target": dict(target),
         "linked_drugs": [dict(row) for row in drugs],
+        "uniprot_records": [dict(row) for row in uniprot_records],
     }
 
 
@@ -102,7 +120,7 @@ async def list_public_diseases(
     offset: int = Query(default=0, ge=0),
 ):
     """Search source-defined disease concepts and exact drug indication links."""
-    ensure_public_drug_schema()
+    ensure_public_target_schema()
     filters: list[str] = []
     params: dict[str, object] = {"limit": limit, "offset": offset}
     if query:
@@ -144,7 +162,7 @@ async def list_public_diseases(
 @router.get("/public-biology/diseases/{disease_id}")
 async def public_disease_detail(disease_id: str):
     """Return a source disease concept and linked drug development stages."""
-    ensure_public_drug_schema()
+    ensure_public_target_schema()
     with get_cortellis_session() as session:
         disease = session.execute(text("""
             SELECT * FROM public_diseases WHERE disease_id = :disease_id
@@ -176,7 +194,7 @@ async def drug_public_biology(
     include_raw: bool = Query(default=False),
 ):
     """Return exact public identifiers, profiles, targets, and indications."""
-    ensure_public_drug_schema()
+    ensure_public_target_schema()
     with get_cortellis_session() as session:
         drug = session.execute(text("""
             SELECT id, name_display FROM drugs WHERE id = :drug_id
@@ -224,7 +242,21 @@ async def drug_public_biology(
                    link.chembl_id, link.mechanism_of_action,
                    link.action_type, link.target_name,
                    link.source_references,
-                   link.source, link.source_version
+                   link.source, link.source_version,
+                   COALESCE((
+                     SELECT jsonb_agg(jsonb_build_object(
+                       'requested_accession', record.requested_accession,
+                       'primary_accession', record.primary_accession,
+                       'uniprot_id', record.uniprot_id,
+                       'protein_name', record.protein_name,
+                       'gene_symbol', record.gene_symbol,
+                       'function_text', record.function_text,
+                       'source_version', record.source_version,
+                       'source_url', record.source_url
+                     ) ORDER BY record.requested_accession)
+                     FROM public_target_uniprot_records record
+                     WHERE record.ensembl_id = target.ensembl_id
+                   ), '[]'::jsonb) AS uniprot_records
             FROM public_drug_target_links link
             JOIN public_targets target
               ON target.ensembl_id = link.ensembl_id
