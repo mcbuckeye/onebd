@@ -187,11 +187,14 @@ and fast retrieval before adding more external data volume.
           payloads and 445,904 terms; the production gate reports zero failures,
           invalid units/rates, or source mismatches, 100% percentage capture,
           100% replay accuracy across 475 stratified terms, and release ready.
-    - [ ] Add contract-derived financial-clause extraction at scale and validate
-          semantic precision before governed use. A deterministic, no-API-cost
-          royalty/milestone/upfront candidate pipeline with exact excerpts,
-          replay validation, authenticated admin review queue, immutable reviewer
-          identity, audit trail, and a 100-clause human-review gate is in progress.
+    - [x] Add contract-derived financial-clause extraction at scale and validate
+          semantic precision before governed use. The deterministic, no-API-cost
+          parser covers all 20,453 eligible contracts with 4,487 current clauses,
+          zero failed extractions or invalid bounds/provenance, and 100% replay
+          accuracy. Review decisions are bound to exact assertion fingerprints,
+          so unchanged reviewed evidence safely survives parser upgrades while
+          changed assertions return to the queue. The governed gate requires at
+          least 100 valid decisions and 95% precision before aggregate use.
     - [x] Deal-to-trial and deal-to-regulatory-event timelines. The production
           precision-gated scan covers all 172,638 API-eligible deals: 920 exact
           citation mentions link 509 deals to 535 distinct NCT IDs, 531 of which

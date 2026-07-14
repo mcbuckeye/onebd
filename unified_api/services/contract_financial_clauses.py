@@ -1916,6 +1916,16 @@ def _clause_review_key(clause: dict) -> tuple:
     )
 
 
+def _clause_review_fingerprint(clause: dict) -> str:
+    """Hash the exact assertion a reviewer accepted or rejected."""
+    payload = json.dumps(
+        _clause_review_key(clause),
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def ensure_contract_financial_clause_schema(session) -> None:
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS contract_financial_clauses (
@@ -1935,6 +1945,7 @@ def ensure_contract_financial_clause_schema(session) -> None:
             review_note TEXT,
             reviewed_at TIMESTAMPTZ,
             review_parser_version INTEGER,
+            review_assertion_hash CHAR(64),
             source_text TEXT NOT NULL,
             source_char_start INTEGER NOT NULL,
             source_char_end INTEGER NOT NULL,
@@ -1964,11 +1975,36 @@ def ensure_contract_financial_clause_schema(session) -> None:
         ADD COLUMN IF NOT EXISTS review_parser_version INTEGER
     """))
     session.execute(text("""
+        ALTER TABLE contract_financial_clauses
+        ADD COLUMN IF NOT EXISTS review_assertion_hash CHAR(64)
+    """))
+    session.execute(text("""
         UPDATE contract_financial_clauses
         SET review_parser_version = parser_version
         WHERE review_status IN ('accepted', 'rejected')
           AND review_parser_version IS NULL
     """))
+    reviewed_without_hash = session.execute(text("""
+        SELECT id, clause_type, source_hash,
+               rate_min_pct, rate_max_pct,
+               amount_min_millions, amount_max_millions,
+               currency, is_tiered
+        FROM contract_financial_clauses
+        WHERE review_status IN ('accepted', 'rejected')
+          AND review_assertion_hash IS NULL
+    """)).mappings().all()
+    if reviewed_without_hash:
+        session.execute(text("""
+            UPDATE contract_financial_clauses
+            SET review_assertion_hash = :review_assertion_hash
+            WHERE id = :id
+        """), [
+            {
+                "id": row["id"],
+                "review_assertion_hash": _clause_review_fingerprint(row),
+            }
+            for row in reviewed_without_hash
+        ])
     session.execute(text("""
         CREATE INDEX IF NOT EXISTS ix_contract_financial_clauses_analytics
         ON contract_financial_clauses (
@@ -2059,7 +2095,7 @@ def extract_contract_financial_clause_batch(
                     reviewed_rows = session.execute(text("""
                         SELECT clause_type, source_hash, review_status,
                                reviewer, review_note, reviewed_at,
-                               review_parser_version,
+                               review_parser_version, review_assertion_hash,
                                rate_min_pct, rate_max_pct,
                                amount_min_millions, amount_max_millions,
                                currency, is_tiered
@@ -2088,7 +2124,7 @@ def extract_contract_financial_clause_batch(
                                 amount_min_millions, amount_max_millions,
                                 currency, is_tiered, confidence, review_status,
                                 reviewer, review_note, reviewed_at,
-                                review_parser_version,
+                                review_parser_version, review_assertion_hash,
                                 source_text, source_char_start, source_char_end,
                                 source_line_start, source_line_end, source_hash,
                                 parser_version, extracted_values
@@ -2098,7 +2134,7 @@ def extract_contract_financial_clause_batch(
                                 :amount_min_millions, :amount_max_millions,
                                 :currency, :is_tiered, :confidence, :review_status,
                                 :reviewer, :review_note, :reviewed_at,
-                                :review_parser_version,
+                                :review_parser_version, :review_assertion_hash,
                                 :source_text, :source_char_start, :source_char_end,
                                 :source_line_start, :source_line_end, :source_hash,
                                 :parser_version, CAST(:extracted_values AS JSONB)
@@ -2118,6 +2154,9 @@ def extract_contract_financial_clause_batch(
                             "reviewed_at": previous_review.get("reviewed_at"),
                             "review_parser_version": previous_review.get(
                                 "review_parser_version"
+                            ),
+                            "review_assertion_hash": previous_review.get(
+                                "review_assertion_hash"
                             ),
                             "extracted_values": json.dumps(
                                 clause["extracted_values"]
@@ -2276,13 +2315,24 @@ def review_contract_financial_clause(
     if not reviewer:
         raise ValueError("reviewer is required")
     ensure_contract_financial_clause_schema(session)
+    assertion = session.execute(text("""
+        SELECT id, clause_type, source_hash,
+               rate_min_pct, rate_max_pct,
+               amount_min_millions, amount_max_millions,
+               currency, is_tiered
+        FROM contract_financial_clauses
+        WHERE id = :clause_id
+    """), {"clause_id": clause_id}).mappings().one_or_none()
+    if assertion is None:
+        return None
     row = session.execute(text("""
         UPDATE contract_financial_clauses
         SET review_status = :review_status,
             reviewer = :reviewer,
             review_note = :note,
             reviewed_at = NOW(),
-            review_parser_version = :parser_version
+            review_parser_version = :parser_version,
+            review_assertion_hash = :review_assertion_hash
         WHERE id = :clause_id
         RETURNING id, contract_id, deal_id, clause_type, review_status,
                   reviewer, review_note, reviewed_at, review_parser_version
@@ -2292,8 +2342,45 @@ def review_contract_financial_clause(
         "reviewer": reviewer,
         "note": note,
         "parser_version": CONTRACT_CLAUSE_PARSER_VERSION,
+        "review_assertion_hash": _clause_review_fingerprint(assertion),
     }).mappings().one_or_none()
     return dict(row) if row else None
+
+
+def _review_evidence_summary(rows: list[dict], *, parser_version: int) -> dict:
+    """Validate review hashes and summarize portable current-assertion evidence."""
+    valid_accepted = 0
+    valid_rejected = 0
+    current_parser_reviews = 0
+    carried_forward_reviews = 0
+    invalid_ids = []
+    for row in rows:
+        if row.get("review_assertion_hash") != _clause_review_fingerprint(row):
+            invalid_ids.append(row.get("id"))
+            continue
+        if row.get("review_status") == "accepted":
+            valid_accepted += 1
+        elif row.get("review_status") == "rejected":
+            valid_rejected += 1
+        else:
+            continue
+        if row.get("review_parser_version") == parser_version:
+            current_parser_reviews += 1
+        else:
+            carried_forward_reviews += 1
+    reviewed = valid_accepted + valid_rejected
+    return {
+        "valid_reviewed_accepted": valid_accepted,
+        "valid_reviewed_rejected": valid_rejected,
+        "valid_reviewed_clauses": reviewed,
+        "valid_review_precision_pct": (
+            round(100 * valid_accepted / reviewed, 2) if reviewed else None
+        ),
+        "current_parser_reviews": current_parser_reviews,
+        "carried_forward_reviews": carried_forward_reviews,
+        "invalid_review_assertion_hashes": len(invalid_ids),
+        "invalid_review_clause_ids": invalid_ids[:20],
+    }
 
 
 def _same_value(actual: Any, expected: Any) -> bool:
@@ -2333,18 +2420,25 @@ def contract_financial_clause_validation_status(
             ) AS invalid_provenance_clauses,
             COUNT(*) FILTER (WHERE review_status = 'accepted') AS reviewed_accepted,
             COUNT(*) FILTER (WHERE review_status = 'rejected') AS reviewed_rejected,
-            COUNT(*) FILTER (
-                WHERE review_status = 'accepted'
-                  AND review_parser_version = :parser_version
-            ) AS fresh_reviewed_accepted,
-            COUNT(*) FILTER (
-                WHERE review_status = 'rejected'
-                  AND review_parser_version = :parser_version
-            ) AS fresh_reviewed_rejected,
             COUNT(*) FILTER (WHERE review_status = 'unreviewed') AS unreviewed_clauses
         FROM contract_financial_clauses
         WHERE parser_version = :parser_version
     """), {"parser_version": CONTRACT_CLAUSE_PARSER_VERSION}).mappings().one())
+
+    reviewed_rows = [dict(row) for row in session.execute(text("""
+        SELECT id, clause_type, source_hash,
+               rate_min_pct, rate_max_pct,
+               amount_min_millions, amount_max_millions,
+               currency, is_tiered, review_status,
+               review_parser_version, review_assertion_hash
+        FROM contract_financial_clauses
+        WHERE parser_version = :parser_version
+          AND review_status IN ('accepted', 'rejected')
+    """), {"parser_version": CONTRACT_CLAUSE_PARSER_VERSION}).mappings().all()]
+    review_evidence = _review_evidence_summary(
+        reviewed_rows,
+        parser_version=CONTRACT_CLAUSE_PARSER_VERSION,
+    )
 
     rows = session.execute(text("""
         WITH sampled AS (
@@ -2422,16 +2516,12 @@ def contract_financial_clause_validation_status(
     reviewed_rejected = int(population["reviewed_rejected"] or 0)
     reviewed = reviewed_accepted + reviewed_rejected
     review_precision = round(100 * reviewed_accepted / reviewed, 2) if reviewed else None
-    fresh_reviewed_accepted = int(population["fresh_reviewed_accepted"] or 0)
-    fresh_reviewed_rejected = int(population["fresh_reviewed_rejected"] or 0)
-    fresh_reviewed = fresh_reviewed_accepted + fresh_reviewed_rejected
-    fresh_review_precision = (
-        round(100 * fresh_reviewed_accepted / fresh_reviewed, 2)
-        if fresh_reviewed else None
-    )
+    valid_reviewed = review_evidence["valid_reviewed_clauses"]
+    valid_review_precision = review_evidence["valid_review_precision_pct"]
     report = {
         **status,
         **population,
+        **review_evidence,
         "sampled_clauses": sampled,
         "sample_replay_failures": replay_failures,
         "sample_replay_accuracy_pct": round(
@@ -2440,8 +2530,13 @@ def contract_financial_clause_validation_status(
         ) if sampled else 0.0,
         "reviewed_clauses": reviewed,
         "review_precision_pct": review_precision,
-        "fresh_reviewed_clauses": fresh_reviewed,
-        "fresh_review_precision_pct": fresh_review_precision,
+        # Backward-compatible names for the existing admin UI. These now mean
+        # reviews whose exact assertion fingerprint matches the current row;
+        # unchanged evidence remains valid across parser versions.
+        "fresh_reviewed_accepted": review_evidence["valid_reviewed_accepted"],
+        "fresh_reviewed_rejected": review_evidence["valid_reviewed_rejected"],
+        "fresh_reviewed_clauses": valid_reviewed,
+        "fresh_review_precision_pct": valid_review_precision,
         "failure_samples": failures,
     }
     report["technical_release_ready"] = bool(
@@ -2455,8 +2550,9 @@ def contract_financial_clause_validation_status(
     )
     report["governed_release_ready"] = bool(
         report["technical_release_ready"]
-        and fresh_reviewed >= 100
-        and fresh_review_precision is not None
-        and fresh_review_precision >= 95.0
+        and not report["invalid_review_assertion_hashes"]
+        and valid_reviewed >= 100
+        and valid_review_precision is not None
+        and valid_review_precision >= 95.0
     )
     return report

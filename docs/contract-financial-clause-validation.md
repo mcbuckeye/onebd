@@ -54,6 +54,12 @@ replay against current contract content. Passing those checks sets
 `technical_release_ready`.
 
 `governed_release_ready` additionally requires at least 100 candidates to be
-manually accepted/rejected and at least 95% precision. Until then, candidates
-may support review and retrieval, but they must not drive aggregate royalty,
+accepted/rejected and at least 95% precision. Each decision now stores a hash of
+the exact clause type, source excerpt hash, normalized bounds, currency, and
+tiered flag that was reviewed. A decision remains valid after a parser upgrade
+only when the current row has that same assertion fingerprint; changed
+assertions automatically return to the unreviewed queue. The validation report
+separately identifies current-parser decisions, safely carried-forward exact
+decisions, and any invalid review hashes. Until the gate passes, candidates may
+support review and retrieval, but they must not drive aggregate royalty,
 milestone, or upfront claims.

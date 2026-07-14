@@ -1635,6 +1635,81 @@ def test_review_key_changes_when_the_extracted_assertion_changes():
     assert _clause_review_key(corrected) != _clause_review_key(reviewed)
 
 
+def test_review_fingerprint_is_portable_only_for_the_exact_assertion():
+    from unified_api.services.contract_financial_clauses import (
+        _clause_review_fingerprint,
+    )
+
+    reviewed = {
+        "clause_type": "royalty_rate",
+        "source_hash": "a" * 64,
+        "rate_min_pct": 5.0,
+        "rate_max_pct": 8.0,
+        "amount_min_millions": None,
+        "amount_max_millions": None,
+        "currency": None,
+        "is_tiered": True,
+    }
+
+    assert _clause_review_fingerprint(dict(reviewed)) == (
+        _clause_review_fingerprint(reviewed)
+    )
+    assert _clause_review_fingerprint({**reviewed, "rate_max_pct": 9.0}) != (
+        _clause_review_fingerprint(reviewed)
+    )
+
+
+def test_review_evidence_accepts_exact_carryforward_and_rejects_stale_hashes():
+    from unified_api.services.contract_financial_clauses import (
+        _clause_review_fingerprint,
+        _review_evidence_summary,
+    )
+
+    accepted = {
+        "id": 1,
+        "clause_type": "upfront_payment",
+        "source_hash": "b" * 64,
+        "rate_min_pct": None,
+        "rate_max_pct": None,
+        "amount_min_millions": 10.0,
+        "amount_max_millions": 10.0,
+        "currency": "USD",
+        "is_tiered": False,
+        "review_status": "accepted",
+        "review_parser_version": 10,
+    }
+    accepted["review_assertion_hash"] = _clause_review_fingerprint(accepted)
+    rejected = {
+        **accepted,
+        "id": 2,
+        "review_status": "rejected",
+        "review_parser_version": 11,
+    }
+    rejected["review_assertion_hash"] = _clause_review_fingerprint(rejected)
+    stale = {
+        **accepted,
+        "id": 3,
+        "amount_max_millions": 12.0,
+        "review_assertion_hash": accepted["review_assertion_hash"],
+    }
+
+    result = _review_evidence_summary(
+        [accepted, rejected, stale],
+        parser_version=11,
+    )
+
+    assert result == {
+        "valid_reviewed_accepted": 1,
+        "valid_reviewed_rejected": 1,
+        "valid_reviewed_clauses": 2,
+        "valid_review_precision_pct": 50.0,
+        "current_parser_reviews": 1,
+        "carried_forward_reviews": 1,
+        "invalid_review_assertion_hashes": 1,
+        "invalid_review_clause_ids": [3],
+    }
+
+
 def test_contract_clause_batch_returns_busy_when_lock_is_held():
     from unified_api.services.contract_financial_clauses import (
         CONTRACT_CLAUSE_PARSER_VERSION,
