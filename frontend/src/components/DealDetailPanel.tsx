@@ -5,6 +5,7 @@ import {
   Download
 } from 'lucide-react';
 import { DealDetail, SelectedEntity } from '../types';
+import EvidenceTimelineList from './EvidenceTimelineList';
 
 interface DealDetailPanelProps {
   dealId: number | null;
@@ -345,8 +346,22 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
                 </Section>
               )}
 
-              {/* Timeline Section */}
-              {deal.timeline.length > 0 && (
+              {/* Source-labeled timeline */}
+              {(deal.evidence_timeline?.length ?? 0) > 0 ? (
+                <Section
+                  title="Evidence Timeline"
+                  icon={<Clock className="w-4 h-4" />}
+                  expanded={expandedSections.has('timeline')}
+                  onToggle={() => toggleSection('timeline')}
+                  badge={deal.evidence_timeline?.length}
+                >
+                  <p className="mb-3 text-xs text-slate-500">
+                    {deal.evidence_timeline_summary?.exact_cited_trial_count ?? 0} exact cited trials ·{' '}
+                    {deal.evidence_timeline_summary?.explicit_regulatory_event_count ?? 0} explicit regulatory events
+                  </p>
+                  <EvidenceTimelineList events={deal.evidence_timeline ?? []} />
+                </Section>
+              ) : deal.timeline.length > 0 ? (
                 <Section
                   title="Timeline"
                   icon={<Clock className="w-4 h-4" />}
@@ -378,7 +393,7 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
                     ))}
                   </div>
                 </Section>
-              )}
+              ) : null}
 
               {/* Contracts Section */}
               {deal.contracts.length > 0 && (

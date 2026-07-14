@@ -17,6 +17,11 @@ from unified_api.services.contract_financial_clauses import (
     extract_contract_financial_clause_batch,
     review_contract_financial_clause,
 )
+from unified_api.services.deal_evidence_timeline import (
+    deal_trial_link_validation_status,
+    deal_trial_link_status,
+    extract_deal_trial_link_batch,
+)
 from unified_api.services.cortellis_contract_sync import contract_scan_status
 from unified_api.services.cortellis_deal_api_sync import deal_api_scan_status
 from unified_api.services.financial_terms import (
@@ -80,12 +85,23 @@ async def parse_contract_financial_clauses(
         )
 
 
+@router.post("/api/enrichment/link-deal-clinical-trials")
+async def link_deal_clinical_trials(
+    batch_size: int = Query(1000, ge=1, le=5000),
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Extract exact NCT citations from lossless Cortellis deal payloads."""
+    with get_cortellis_session() as session:
+        return extract_deal_trial_link_batch(session, batch_size=batch_size)
+
+
 @router.get("/api/enrichment/status")
 async def enrichment_status():
     """Get current enrichment status across all data sources."""
     with get_cortellis_session() as session:
         finance_status = financial_term_status(session)
         contract_clause_status = contract_financial_clause_status(session)
+        deal_trial_status = deal_trial_link_status(session)
     contract_metadata_status = contract_scan_status()
     deal_api_status = deal_api_scan_status()
     pubchem_status = pubchem_enrichment_status()
@@ -96,6 +112,7 @@ async def enrichment_status():
     return {
         "finance_enrichment": finance_status,
         "contract_financial_clause_enrichment": contract_clause_status,
+        "exact_deal_clinical_trial_links": deal_trial_status,
         "cortellis_contract_metadata_scan": contract_metadata_status,
         "cortellis_deal_api_scan": deal_api_status,
         "pubchem_enrichment": pubchem_status,
@@ -144,6 +161,19 @@ async def contract_financial_clause_validation(
                     session,
                     sample_per_type=sample_per_type,
                 )
+            )
+        }
+
+
+@router.get("/api/enrichment/deal-clinical-trials/validation")
+async def deal_clinical_trial_link_validation(
+    _current_user: TokenData = Depends(require_admin),
+):
+    """Validate exact NCT IDs, archived offsets/hashes, and registry matches."""
+    with get_cortellis_session() as session:
+        return {
+            "deal_clinical_trial_link_validation": (
+                deal_trial_link_validation_status(session)
             )
         }
 
