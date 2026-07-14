@@ -326,6 +326,7 @@ class EDGARClient:
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 filings = []
+                allowed_forms = forms if forms is not None else self.PRIORITY_FORMS
 
                 async for page_data in self._iter_submission_pages(client, cik_padded, headers):
                     recent = page_data.get("filings", {}).get("recent", {})
@@ -338,7 +339,7 @@ class EDGARClient:
                     for i in range(filing_count):
                         form = recent["form"][i]
 
-                        if forms and form not in forms:
+                        if not is_priority_form(form, allowed_forms):
                             continue
 
                         filing_date_str = recent["filingDate"][i]

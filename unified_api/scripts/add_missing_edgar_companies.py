@@ -40,10 +40,11 @@ MISSING_COMPANIES = [
 
 async def add_missing_companies():
     """Add missing companies and fetch their filings."""
+    from unified_api.config import settings
     from unified_api.services.database import get_edgar_session
     from unified_api.services.edgar import get_edgar_client
 
-    client = get_edgar_client()
+    client = get_edgar_client(settings.edgar_user_agent)
 
     for company in MISSING_COMPANIES:
         cik = company["cik"]

@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -53,8 +53,9 @@ async def test_existing_company_still_fetches_and_inserts_missing_filings(monkey
         "accession_number": "0000889131-26-000001",
         "primary_document": "roche-6k.htm",
     }]))
+    get_client = Mock(return_value=client)
     monkeypatch.setattr(database, "get_edgar_session", fake_session)
-    monkeypatch.setattr(edgar, "get_edgar_client", lambda: client)
+    monkeypatch.setattr(edgar, "get_edgar_client", get_client)
     monkeypatch.setattr(script, "MISSING_COMPANIES", [{
         "cik": "0000889131",
         "ticker": "RHHBY",
@@ -66,6 +67,8 @@ async def test_existing_company_still_fetches_and_inserts_missing_filings(monkey
 
     await script.add_missing_companies()
 
+    get_client.assert_called_once()
+    assert "@" in get_client.call_args.args[0]
     client.get_company_filings.assert_awaited_once()
     assert len(session.inserted_documents) == 1
     assert session.inserted_documents[0]["company_id"] == 77

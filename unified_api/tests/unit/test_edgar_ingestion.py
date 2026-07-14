@@ -66,6 +66,32 @@ def test_priority_forms_include_amendments():
     assert not is_priority_form("4")
 
 
+@pytest.mark.asyncio
+async def test_company_filings_default_to_priority_forms_and_include_amendments():
+    client = EDGARClient(user_agent="OneBD tests@example.org")
+
+    async def pages(*_args, **_kwargs):
+        yield {
+            "filings": {
+                "recent": {
+                    "accessionNumber": [
+                        "0000889131-26-000001",
+                        "0000889131-26-000002",
+                    ],
+                    "form": ["6-K/A", "4"],
+                    "filingDate": ["2026-07-01", "2026-07-02"],
+                    "primaryDocument": ["six-k.htm", "ownership.xml"],
+                }
+            }
+        }
+
+    client._iter_submission_pages = pages
+
+    filings = await client.get_company_filings("0000889131")
+
+    assert [filing["form"] for filing in filings] == ["6-K/A"]
+
+
 def test_extract_submission_primary_and_priority_exhibits():
     documents = extract_submission_documents(SGML_SUBMISSION, "8-K")
 
