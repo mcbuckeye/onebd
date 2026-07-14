@@ -19,6 +19,12 @@ def _request(path: str = "/api/v1/deals"):
     )
 
 
+def _authorized_request(token: str = "valid-token"):
+    request = _request()
+    request.headers = {"authorization": f"Bearer {token}"}
+    return request
+
+
 def test_create_credential_stores_hash_and_returns_plaintext_once(monkeypatch):
     captured = {}
 
@@ -213,3 +219,68 @@ def test_owner_can_protect_existing_api_with_broad_key(monkeypatch):
     )
 
     assert principal.name == "system integration"
+
+
+def test_bearer_principal_rechecks_live_account(monkeypatch):
+    class Result:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {"id": 11, "email": "current@example.test"}
+
+    class Session:
+        def execute(self, _statement, params):
+            assert params == {"user_id": 11}
+            return Result()
+
+    @contextmanager
+    def fake_session():
+        yield Session()
+
+    monkeypatch.setattr(
+        api_credentials,
+        "decode_token",
+        lambda _token: api_credentials.TokenData(
+            user_id=11,
+            email="stale@example.test",
+            role="analyst",
+        ),
+    )
+    monkeypatch.setattr(api_credentials, "get_cortellis_session", fake_session)
+
+    principal = api_credentials._bearer_principal(_authorized_request())
+
+    assert principal is not None
+    assert principal.principal_id == "11"
+    assert principal.name == "current@example.test"
+
+
+def test_bearer_principal_rejects_disabled_or_missing_account(monkeypatch):
+    class Result:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return None
+
+    class Session:
+        def execute(self, _statement, _params):
+            return Result()
+
+    @contextmanager
+    def fake_session():
+        yield Session()
+
+    monkeypatch.setattr(
+        api_credentials,
+        "decode_token",
+        lambda _token: api_credentials.TokenData(
+            user_id=11,
+            email="disabled@example.test",
+            role="analyst",
+        ),
+    )
+    monkeypatch.setattr(api_credentials, "get_cortellis_session", fake_session)
+
+    assert api_credentials._bearer_principal(_authorized_request()) is None

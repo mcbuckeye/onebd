@@ -193,6 +193,15 @@ owner cannot lock out the control plane. Health checks remain public. Existing
 application data routes follow the same global mode when
 `protect_existing_api` is enabled.
 
+Administrators can manage the same controls in **Admin -> API Access**. The
+console issues scoped keys, shows plaintext once, reports use/expiry/revocation,
+and can revoke a key immediately. It also exposes every policy and dataset
+switch above, with warnings before opening anonymous access or applying
+key-only protection to legacy application routes. Key issuance, revocation, and
+policy changes are recorded in the audit log without storing key plaintext.
+Signed-in API access rechecks the live user record on every request, so disabling
+an account takes effect immediately instead of waiting for its JWT to expire.
+
 ## MCP access
 
 The MCP server is a thin stdio adapter over the governed HTTP API; it does not

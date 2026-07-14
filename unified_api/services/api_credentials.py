@@ -240,16 +240,25 @@ def update_data_access_policy(
 
 
 def _bearer_principal(request: Request) -> DataPrincipal | None:
+    """Resolve a signed-in user and re-check current account status."""
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
         return None
     token: TokenData | None = decode_token(authorization.split(" ", 1)[1])
     if token is None:
         return None
+    with get_cortellis_session() as session:
+        account = session.execute(text("""
+            SELECT id, email
+            FROM users
+            WHERE id = :user_id AND disabled IS NOT TRUE
+        """), {"user_id": token.user_id}).mappings().first()
+    if account is None:
+        return None
     return DataPrincipal(
         principal_type="user",
-        principal_id=str(token.user_id),
-        name=token.email,
+        principal_id=str(account["id"]),
+        name=account["email"],
         scopes=["data:read"],
     )
 

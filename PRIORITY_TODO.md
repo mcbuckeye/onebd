@@ -227,6 +227,13 @@ and fast retrieval before adding more external data volume.
     - [ ] Configure an owner-selected email provider credential in Dokploy and
           use Settings -> Send test to prove live outbound delivery. Production
           had no OneBD SendGrid or SMTP credential during the 2026-07-14 audit.
+    - [x] Add a governed colleague API/MCP control plane. The owner can issue,
+          scope, expire, inspect, and immediately revoke hashed API keys; choose
+          open, signed-in, or key-required access; enable or disable scope and
+          dataset enforcement; control self-registration and legacy route
+          protection; and make every change in the Admin UI. License metadata is
+          explicitly advisory, all control-plane changes are audit logged, and
+          signed-in access rechecks live account disablement on every request.
 
 ### Immediate Reliability Sprint
 
