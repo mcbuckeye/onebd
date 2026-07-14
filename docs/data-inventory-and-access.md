@@ -158,11 +158,12 @@ The versioned API is rooted at:
 https://onebd.pchomelab.com/api/v1
 ```
 
-It provides live catalog, deals, deal detail, normalized financial terms,
-companies, drugs, clinical trials, biology targets/diseases, EDGAR filing
-metadata, and source-health endpoints.
-Every list uses a bounded cursor (`after_id` or `after_nct_id`) and a maximum of
-100 records per request. It does not accept arbitrary SQL.
+It provides live catalog, deals, deal and asset advanced search, deal detail,
+normalized financial terms, companies, drugs, clinical trials, biology
+targets/diseases, EDGAR filing metadata, and source-health endpoints. Every list
+uses a bounded cursor (`after_id`, `after_nct_id`, or an opaque advanced-search
+cursor) and a maximum of 100 records per request. It does not accept arbitrary
+SQL.
 
 Interactive Swagger documentation and the machine-readable schema are public
 documentation surfaces at:
@@ -195,6 +196,108 @@ curl -H "X-API-Key: $ONEBD_API_KEY" \
 curl -H "X-API-Key: $ONEBD_API_KEY" \
   'https://onebd.pchomelab.com/api/v1/financial-terms?term_type=upfront_payment&min_amount_usd_millions=100&limit=25'
 ```
+
+### Structured deal and asset search
+
+The two `POST` endpoints accept the same strict, typed filter document:
+
+- `/api/v1/deals/search` returns one row per deal;
+- `/api/v1/assets/search` returns one row per deal-referenced asset, together
+  with the supporting deal IDs and asset- versus deal-level attribution.
+
+They require `deals:read` (or `data:read`). Public biology joins are included
+only when the owner has not disabled the `public_biology` dataset. Unknown
+fields and invalid ranges return `422`; the API never silently discards a
+misspelled filter.
+
+```bash
+curl -X POST \
+  -H "X-API-Key: $ONEBD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @- \
+  https://onebd.pchomelab.com/api/v1/assets/search <<'JSON'
+{
+  "query": "oncology",
+  "companies": {
+    "any": [
+      {"name": "DotBio", "match_mode": "contains"}
+    ]
+  },
+  "assets": {
+    "names": {"any": ["DB-003", "DB-004"], "match_mode": "exact"},
+    "modalities": {"any": ["antibody"], "match_mode": "contains"}
+  },
+  "targets": {
+    "names": {"any": ["PD-L1"], "match_mode": "contains"}
+  },
+  "diseases": {
+    "names": {"any": ["cancer", "solid tumor"], "match_mode": "contains"}
+  },
+  "deals": {
+    "types": {"include": ["License"], "match_mode": "contains"},
+    "territories": {"any": ["US"]}
+  },
+  "dates": [
+    {"field": "date_start", "gte": "2020-01-01", "lte": "2026-12-31"}
+  ],
+  "values": {
+    "total_projected_current_millions": {
+      "gte": 100,
+      "currencies": ["USD"],
+      "disclosure_status": ["Known"]
+    },
+    "upfront_usd_millions": {"gte": 10}
+  },
+  "evidence": {
+    "allowed_attribution": ["asset", "deal"],
+    "sources": ["cortellis_deals", "public_biology"],
+    "missing_data": "exclude"
+  },
+  "sort": [{"field": "asset_name", "direction": "asc"}],
+  "limit": 25,
+  "include_total": true
+}
+JSON
+```
+
+The main filter families are:
+
+| Family | Supported filters |
+|---|---|
+| Broad text | Deal title/summary, asset display name/alias, and company name |
+| Companies | IDs or names/aliases, `any`/`all`/`exclude`, Principal/Partner role |
+| Assets | IDs, display names/aliases, phases, modalities, deal asset types |
+| Targets and diseases | Public concept IDs/names and deal-level action/indication names; `any`/`all`/`exclude` |
+| Deals | Deal, agreement, transaction, status, and phase text; territory; optional/M&A/contract flags |
+| Dates | Deal start/end/change/added/recent-event, active interval, timeline-event date, and contract date |
+| Values | Paid/projected totals by explicit source currency; USD-normalized upfront/milestone terms; royalty-rate ranges |
+| Evidence | Asset/deal attribution, Cortellis/public-biology source selection, and unknown-data behavior |
+
+For related concepts, `any` means at least one requested value, `all` requires a
+separate match for every requested value, and `exclude` rejects matching records.
+Scalar deal fields use `include` and `exclude`. Text matching is either `exact`
+or `contains`.
+
+Summary deal amounts retain their reported currency and unit and are normalized
+to millions for range comparison. A summary-value range must explicitly provide
+one or more currencies. Sorting by a financial summary additionally requires
+the corresponding value filter to name exactly one currency; this prevents a
+misleading ranking across USD, EUR, JPY, and other unlike currencies. Parsed
+upfront and milestone filters use the separately retained USD-normalized term
+amount. Royalty filters use the retained percentage range.
+
+Set the response's `next_cursor` as the next request's `cursor` without changing
+any other request field. Cursors are opaque and bound to the complete filter,
+sort, and page-size document. Each result reports active filter categories,
+evidence policy, citations or supporting deal IDs, and limitations. In
+particular, a deal-level indication, target, or modality may apply to one of
+several assets in that deal, and company participation does not establish asset
+ownership or current commercial rights.
+
+The hosted MCP endpoint exposes the same operations as
+`search_deals_advanced` and `search_assets_advanced`. MCP arguments are the JSON
+body shown above; the adapter validates the nested document before issuing the
+governed HTTP request.
 
 ### Company asset-intelligence calls
 
@@ -339,9 +442,11 @@ access mode. The local `python -m unified_api.mcp_server` stdio adapter remains
 available for OneBD developers but is not required or recommended for
 colleagues.
 
-Available MCP tools cover the catalog, deals, normalized deal financial terms,
-companies, drugs, trials, targets, diseases, EDGAR documents, and source status.
-The dedicated `get_company_oncology_assets`, `get_company_asset_rights`, and
+Available MCP tools cover the catalog, simple and structured deal/asset search,
+normalized deal financial terms, companies, drugs, trials, targets, diseases,
+EDGAR documents, and source status. `search_deals_advanced` and
+`search_assets_advanced` expose the composable filters documented above. The
+dedicated `get_company_oncology_assets`, `get_company_asset_rights`, and
 `get_company_manufacturing_relationships` tools expose the three company
 workflows above without requiring an agent to join and interpret many generic
 records. The same key scopes, revocation, dataset toggles, and owner access mode

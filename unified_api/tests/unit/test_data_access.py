@@ -4,6 +4,7 @@ from contextlib import contextmanager
 
 import unified_api.routers.data_access as data_access
 from unified_api.routers.data_access import SOURCE_CATALOG, _page
+from unified_api.services.advanced_search import AdvancedSearchRequest
 
 
 def test_source_catalog_separates_cortellis_from_public_enrichment():
@@ -12,8 +13,9 @@ def test_source_catalog_separates_cortellis_from_public_enrichment():
     assert sources["cortellis_deals"]["kind"] == "commercial"
     assert "separately licensed" in sources["cortellis_deals"]["not_in_scope"]
     assert "advisory" in sources["cortellis_deals"]["license_note"]
-    assert "owner policy controls technical enforcement" in (
-        sources["cortellis_deals"]["license_note"]
+    assert (
+        "owner policy controls technical enforcement"
+        in (sources["cortellis_deals"]["license_note"])
     )
     assert sources["open_targets"]["kind"] == "open_data"
     assert sources["clinicaltrials_gov"]["id"] != "cortellis_deals"
@@ -111,3 +113,69 @@ async def test_company_oncology_assets_exposes_scope_and_truncation(monkeypatch)
     assert result["assets"][0]["asset_name"] == "HCB-101"
     assert result["deal_records_considered"] == 5
     assert result["scope_truncated"] is False
+
+
+async def test_advanced_deal_search_respects_public_biology_policy(monkeypatch):
+    observed = {}
+
+    @contextmanager
+    def session():
+        yield "session"
+
+    monkeypatch.setattr(data_access, "get_cortellis_session", session)
+    monkeypatch.setattr(
+        data_access,
+        "get_data_access_policy",
+        lambda: {"disabled_datasets": ["public_biology"]},
+    )
+    monkeypatch.setattr(
+        data_access,
+        "run_advanced_deal_search",
+        lambda db, request, allow_public_biology: (
+            observed.update(
+                {
+                    "db": db,
+                    "request": request,
+                    "allow_public_biology": allow_public_biology,
+                }
+            )
+            or {"items": []}
+        ),
+    )
+
+    result = await data_access.advanced_deal_search(
+        AdvancedSearchRequest(limit=5), _principal=None
+    )
+
+    assert result == {"items": []}
+    assert observed["db"] == "session"
+    assert observed["request"].limit == 5
+    assert observed["allow_public_biology"] is False
+
+
+async def test_advanced_asset_search_translates_cursor_errors_to_422(monkeypatch):
+    @contextmanager
+    def session():
+        yield object()
+
+    monkeypatch.setattr(data_access, "get_cortellis_session", session)
+    monkeypatch.setattr(
+        data_access,
+        "get_data_access_policy",
+        lambda: {"disabled_datasets": []},
+    )
+    monkeypatch.setattr(
+        data_access,
+        "run_advanced_asset_search",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad cursor")),
+    )
+
+    try:
+        await data_access.advanced_asset_search(
+            AdvancedSearchRequest(), _principal=None
+        )
+    except data_access.HTTPException as exc:
+        assert exc.status_code == 422
+        assert exc.detail == "bad cursor"
+    else:
+        raise AssertionError("Expected HTTPException")

@@ -8,7 +8,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
 
-from unified_api.services.api_credentials import DataPrincipal, require_data_access
+from unified_api.services.api_credentials import (
+    DataPrincipal,
+    get_data_access_policy,
+    require_data_access,
+)
+from unified_api.services.advanced_search import (
+    AdvancedSearchRequest,
+    search_assets as run_advanced_asset_search,
+    search_deals as run_advanced_deal_search,
+)
 from unified_api.services.database import get_cortellis_session, get_edgar_session
 from unified_api.services.company_asset_intelligence import (
     company_asset_intelligence,
@@ -152,13 +161,13 @@ def _page(rows: list[dict[str, Any]], limit: int, cursor_field: str) -> dict[str
 
 @router.get("/catalog")
 async def data_catalog(
-    _principal: DataPrincipal = Depends(
-        require_data_access("catalog:read", "catalog")
-    ),
+    _principal: DataPrincipal = Depends(require_data_access("catalog:read", "catalog")),
 ):
     """Return live inventory counts, provenance, and advisory license metadata."""
     with get_cortellis_session() as session:
-        cortellis = dict(session.execute(text("""
+        cortellis = dict(
+            session.execute(
+                text("""
             SELECT
               (SELECT COUNT(*) FROM deals) AS deals,
               (SELECT COUNT(*) FROM companies) AS deal_embedded_companies,
@@ -212,11 +221,18 @@ async def data_catalog(
                 AS catalog_verified_at,
               (SELECT COUNT(*) FROM cortellis_contract_scan_state)
                 AS contract_scan_states
-        """), {
-            "finance_parser_version": FINANCE_PARSER_VERSION,
-        }).mappings().one())
+        """),
+                {
+                    "finance_parser_version": FINANCE_PARSER_VERSION,
+                },
+            )
+            .mappings()
+            .one()
+        )
     with get_edgar_session() as session:
-        edgar = dict(session.execute(text("""
+        edgar = dict(
+            session.execute(
+                text("""
             SELECT
               (SELECT COUNT(*) FROM documents) AS documents,
               (SELECT COUNT(*) FROM doc_text) AS documents_with_text,
@@ -224,7 +240,11 @@ async def data_catalog(
               (SELECT COUNT(*) FROM companies) AS companies,
               (SELECT COUNT(*) FROM deals) AS extracted_deals,
               (SELECT COUNT(*) FROM deal_terms) AS extracted_deal_terms
-        """)).mappings().one())
+        """)
+            )
+            .mappings()
+            .one()
+        )
     minimum_id = cortellis["numeric_id_min"]
     maximum_id = cortellis["numeric_id_max"]
     membership_method = (
@@ -239,9 +259,7 @@ async def data_catalog(
         "technical_access_is_owner_controlled": True,
         "cortellis_completeness": {
             "credential_surface": "legacy Cortellis Deals API",
-            "retrievable_remote_deals": int(
-                cortellis["retrievable_remote_deals"] or 0
-            ),
+            "retrievable_remote_deals": int(cortellis["retrievable_remote_deals"] or 0),
             "local_deals": int(cortellis["deals"]),
             "remote_deals_missing_locally": max(
                 0,
@@ -290,19 +308,27 @@ async def list_deals(
         filters.append("(deal.title ILIKE :query OR deal.summary ILIKE :query)")
         params["query"] = f"%{query}%"
     if company_id is not None:
-        filters.append("EXISTS (SELECT 1 FROM deal_companies link WHERE "
-                       "link.deal_id=deal.id AND link.company_id=:company_id)")
+        filters.append(
+            "EXISTS (SELECT 1 FROM deal_companies link WHERE "
+            "link.deal_id=deal.id AND link.company_id=:company_id)"
+        )
         params["company_id"] = company_id
     if drug_id is not None:
-        filters.append("EXISTS (SELECT 1 FROM deal_drugs link WHERE "
-                       "link.deal_id=deal.id AND link.drug_id=:drug_id)")
+        filters.append(
+            "EXISTS (SELECT 1 FROM deal_drugs link WHERE "
+            "link.deal_id=deal.id AND link.drug_id=:drug_id)"
+        )
         params["drug_id"] = drug_id
     if indication_id is not None:
-        filters.append("EXISTS (SELECT 1 FROM deal_indications link WHERE "
-                       "link.deal_id=deal.id AND link.indication_id=:indication_id)")
+        filters.append(
+            "EXISTS (SELECT 1 FROM deal_indications link WHERE "
+            "link.deal_id=deal.id AND link.indication_id=:indication_id)"
+        )
         params["indication_id"] = indication_id
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT deal.id, deal.title, deal.deal_type, deal.status,
                    deal.date_start, deal.date_end, deal.date_change_last,
                    deal.agreement_type, deal.asset_type, deal.transaction_type,
@@ -312,11 +338,59 @@ async def list_deals(
                    finance.total_projected_current_currency
             FROM deals deal
             LEFT JOIN deal_finance_summary finance ON finance.deal_id=deal.id
-            WHERE {' AND '.join(filters)}
+            WHERE {" AND ".join(filters)}
             ORDER BY deal.id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "id")
+
+
+def _public_biology_allowed() -> bool:
+    policy = get_data_access_policy()
+    return "public_biology" not in set(policy.get("disabled_datasets") or [])
+
+
+@router.post("/deals/search")
+async def advanced_deal_search(
+    request: AdvancedSearchRequest,
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Search deals using typed Boolean, date, evidence, and value filters."""
+    try:
+        with get_cortellis_session() as session:
+            return run_advanced_deal_search(
+                session,
+                request,
+                allow_public_biology=_public_biology_allowed(),
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/assets/search")
+async def advanced_asset_search(
+    request: AdvancedSearchRequest,
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Search deal-referenced assets with asset- and deal-attributed evidence."""
+    try:
+        with get_cortellis_session() as session:
+            return run_advanced_asset_search(
+                session,
+                request,
+                allow_public_biology=_public_biology_allowed(),
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/deals/{deal_id}")
@@ -328,12 +402,19 @@ async def deal_detail(
 ):
     """Return a normalized deal with its source-backed related entities."""
     with get_cortellis_session() as session:
-        deal = session.execute(text("""
+        deal = (
+            session.execute(
+                text("""
             SELECT deal.*, finance.*
             FROM deals deal
             LEFT JOIN deal_finance_summary finance ON finance.deal_id=deal.id
             WHERE deal.id=:deal_id
-        """), {"deal_id": deal_id}).mappings().first()
+        """),
+                {"deal_id": deal_id},
+            )
+            .mappings()
+            .first()
+        )
         if not deal:
             raise HTTPException(status_code=404, detail="Deal not found")
         relationships = {}
@@ -449,7 +530,9 @@ async def list_financial_terms(
         )
         params["min_rate_pct"] = min_rate_pct
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT term.id, term.deal_id, deal.title AS deal_title,
                    term.recipient, term.basis, term.term_type,
                    term.source_payment_type, term.payment_date,
@@ -461,10 +544,15 @@ async def list_financial_terms(
                    term.parser_version, term.extracted_at
             FROM deal_financial_terms term
             JOIN deals deal ON deal.id=term.deal_id
-            WHERE {' AND '.join(filters)}
+            WHERE {" AND ".join(filters)}
             ORDER BY term.id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "id")
 
 
@@ -484,7 +572,9 @@ async def list_companies(
         where += " AND company.name ILIKE :query"
         params["query"] = f"%{query}%"
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT company.id, company.name, company.company_type,
                    company.hq_location,
                    COUNT(DISTINCT link.deal_id) AS deal_count,
@@ -503,7 +593,12 @@ async def list_companies(
             GROUP BY company.id
             ORDER BY company.id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "id")
 
 
@@ -581,7 +676,9 @@ async def list_drugs(
         where += "AND alias.alias_value ILIKE :query))"
         params["query"] = f"%{query}%"
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT drug.id, drug.name_display, drug.phase_highest_start,
                    drug.phase_highest_now,
                    COUNT(DISTINCT deal_link.deal_id) AS deal_count,
@@ -600,7 +697,12 @@ async def list_drugs(
             GROUP BY drug.id
             ORDER BY drug.id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "id")
 
 
@@ -622,15 +724,21 @@ async def list_trials(
         filters.append("trial.overall_status=:status")
         params["status"] = status.upper()
     if drug_id is not None:
-        filters.append("EXISTS (SELECT 1 FROM clinical_trial_drugs link WHERE "
-                       "link.nct_id=trial.nct_id AND link.drug_id=:drug_id)")
+        filters.append(
+            "EXISTS (SELECT 1 FROM clinical_trial_drugs link WHERE "
+            "link.nct_id=trial.nct_id AND link.drug_id=:drug_id)"
+        )
         params["drug_id"] = drug_id
     if company_id is not None:
-        filters.append("EXISTS (SELECT 1 FROM clinical_trial_companies link WHERE "
-                       "link.nct_id=trial.nct_id AND link.company_id=:company_id)")
+        filters.append(
+            "EXISTS (SELECT 1 FROM clinical_trial_companies link WHERE "
+            "link.nct_id=trial.nct_id AND link.company_id=:company_id)"
+        )
         params["company_id"] = company_id
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT trial.nct_id, trial.brief_title, trial.official_title,
                    trial.overall_status, trial.phases, trial.study_type,
                    trial.enrollment, trial.start_date,
@@ -639,10 +747,15 @@ async def list_trials(
                    trial.conditions, trial.interventions, trial.has_results,
                    trial.source_url
             FROM clinical_trials trial
-            WHERE {' AND '.join(filters)}
+            WHERE {" AND ".join(filters)}
             ORDER BY trial.nct_id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "nct_id")
 
 
@@ -663,7 +776,9 @@ async def list_targets(
         where += "target.approved_name ILIKE :query)"
         params["query"] = f"%{query}%"
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT target.ensembl_id, target.approved_symbol,
                    target.approved_name, target.biotype, target.protein_ids,
                    target.source, target.source_version,
@@ -675,7 +790,12 @@ async def list_targets(
             GROUP BY target.ensembl_id
             ORDER BY target.ensembl_id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "ensembl_id")
 
 
@@ -695,7 +815,9 @@ async def list_diseases(
         where += " AND disease.name ILIKE :query"
         params["query"] = f"%{query}%"
     with get_cortellis_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT disease.disease_id, disease.name, disease.source,
                    disease.source_version,
                    COUNT(DISTINCT link.drug_id) AS linked_drugs
@@ -706,7 +828,12 @@ async def list_diseases(
             GROUP BY disease.disease_id
             ORDER BY disease.disease_id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "disease_id")
 
 
@@ -730,7 +857,9 @@ async def list_edgar_documents(
         filters.append("company.cik=:cik")
         params["cik"] = cik.strip().zfill(10)
     with get_edgar_session() as session:
-        rows = session.execute(text(f"""
+        rows = (
+            session.execute(
+                text(f"""
             SELECT document.id, document.doc_type, document.subtype,
                    document.title, document.published_at, document.accession_no,
                    document.parse_ok, raw.url AS source_url, raw.filing_date,
@@ -738,10 +867,15 @@ async def list_edgar_documents(
             FROM documents document
             JOIN raw_documents raw ON raw.id=document.raw_document_id
             LEFT JOIN companies company ON company.id=raw.company_id
-            WHERE {' AND '.join(filters)}
+            WHERE {" AND ".join(filters)}
             ORDER BY document.id
             LIMIT :limit
-        """), params).mappings().all()
+        """),
+                params,
+            )
+            .mappings()
+            .all()
+        )
     return _page([dict(row) for row in rows], limit, "id")
 
 
@@ -753,9 +887,15 @@ async def source_status(
 ):
     """Return current monitored sync state without exposing credentials or errors."""
     with get_cortellis_session() as session:
-        rows = session.execute(text("""
+        rows = (
+            session.execute(
+                text("""
             SELECT source_key, label, status, alert_status, last_success_at,
                    source_data_at, source_cursor, duration_seconds, counts
             FROM source_job_state ORDER BY source_key
-        """)).mappings().all()
+        """)
+            )
+            .mappings()
+            .all()
+        )
     return {"sources": [dict(row) for row in rows]}
