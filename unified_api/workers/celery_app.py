@@ -42,9 +42,9 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.edgar.fetch_new_filings",
             "schedule": crontab(hour=2, minute=0),
         },
-        # Temporarily advance the historical backlog every two hours. Each run
-        # is bounded and the EDGAR queue has concurrency=1, so runs cannot
-        # issue concurrent SEC requests.
+        # Maintain the caught-up historical cursor every two hours. Each run is
+        # bounded and the EDGAR queue has concurrency=1, so runs cannot issue
+        # concurrent SEC requests.
         "backfill-edgar-filings": {
             "task": "unified_api.workers.tasks.edgar.backfill_filings",
             "schedule": crontab(hour="*/2", minute=15),
@@ -422,21 +422,37 @@ def sync_cortellis_deals():
         # every run and expose the source watermark in the common payload.
         from sqlalchemy import text
         from src.api_client import CortellisClient
+        from src.cortellis_catalog import (
+            assess_catalog_cardinality,
+            ensure_catalog_exclusion_schema,
+            read_catalog_proof,
+        )
         from unified_api.services.database import get_cortellis_session
 
         with CortellisClient(cortellis_config) as client:
             catalog_total = client.search_deals("*", offset=0, hits=1).total_results
         with get_cortellis_session() as session:
+            ensure_catalog_exclusion_schema(session)
             snapshot = session.execute(text("""
                 SELECT COUNT(*) AS local_total,
-                       MAX(date_change_last) AS source_cursor
+                       MAX(date_change_last) AS source_cursor,
+                       (SELECT COUNT(*)
+                        FROM cortellis_catalog_exclusions) AS exclusion_total
                 FROM deals
             """)).mappings().one()
-        local_total = int(snapshot["local_total"])
+            proof = read_catalog_proof(session)
+        cardinality = assess_catalog_cardinality(
+            advertised_total=catalog_total,
+            local_total=int(snapshot["local_total"]),
+            exclusion_total=int(snapshot["exclusion_total"]),
+            verified_retrievable_total=proof.get("retrievable_total"),
+        )
         result.update({
-            "catalog_total": catalog_total,
-            "local_total": local_total,
-            "catalog_gap": catalog_total - local_total,
+            **cardinality,
+            "catalog_verified_at": (
+                proof["verified_at"].isoformat()
+                if proof.get("verified_at") else None
+            ),
             "cursor": (
                 snapshot["source_cursor"].isoformat()
                 if snapshot["source_cursor"] else None
@@ -446,12 +462,22 @@ def sync_cortellis_deals():
                 if snapshot["source_cursor"] else None
             ),
         })
-        if catalog_total != local_total and result["status"] == "completed":
+        if not cardinality["catalog_cardinality_complete"] and result["status"] == "completed":
             result["status"] = "partial"
-            result["error"] = (
-                "Cortellis catalog/local count mismatch: "
-                f"source={catalog_total}, local={local_total}"
-            )
+            if proof:
+                result["error"] = (
+                    "Cortellis verified catalog/local count mismatch: "
+                    f"verified_source={proof['retrievable_total']}, "
+                    f"eligible_local={cardinality['eligible_local_total']}, "
+                    f"retained_local_only={cardinality['catalog_exclusions']}"
+                )
+            else:
+                result["error"] = (
+                    "Cortellis advertised catalog/local count mismatch before "
+                    "the first exhaustive proof: "
+                    f"source={catalog_total}, "
+                    f"eligible_local={cardinality['eligible_local_total']}"
+                )
         logger.info("Cortellis sync complete", **result)
         return _finish_source_job("cortellis", result)
 
