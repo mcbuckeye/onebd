@@ -320,7 +320,7 @@ def ensure_public_drug_schema() -> None:
                 mechanism_of_action TEXT,
                 action_type VARCHAR(100),
                 target_name TEXT,
-                references JSONB NOT NULL DEFAULT '[]'::jsonb,
+                source_references JSONB NOT NULL DEFAULT '[]'::jsonb,
                 source VARCHAR(100) NOT NULL,
                 source_version VARCHAR(50) NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -751,7 +751,7 @@ def _upsert_open_targets_profile(
     relationships = 0
     mechanisms = (profile.get("mechanismsOfAction") or {}).get("rows") or []
     for mechanism in mechanisms:
-        references = mechanism.get("references") or []
+        source_references = mechanism.get("references") or []
         for target in mechanism.get("targets") or []:
             ensembl_id = str(target.get("id") or "")
             if not re.fullmatch(r"ENSG\d{11}", ensembl_id):
@@ -789,12 +789,13 @@ def _upsert_open_targets_profile(
             inserted = session.execute(text("""
                 INSERT INTO public_drug_target_links (
                     drug_id, chembl_id, ensembl_id, mechanism_hash,
-                    mechanism_of_action, action_type, target_name, references,
+                    mechanism_of_action, action_type, target_name,
+                    source_references,
                     source, source_version
                 ) VALUES (
                     :drug_id, :chembl_id, :ensembl_id, :mechanism_hash,
                     :mechanism, :action_type, :target_name,
-                    CAST(:references AS JSONB), :source, :source_version
+                    CAST(:source_references AS JSONB), :source, :source_version
                 ) ON CONFLICT DO NOTHING RETURNING drug_id
             """), {
                 "drug_id": drug_id,
@@ -804,7 +805,7 @@ def _upsert_open_targets_profile(
                 "mechanism": mechanism.get("mechanismOfAction"),
                 "action_type": mechanism.get("actionType"),
                 "target_name": mechanism.get("targetName"),
-                "references": json.dumps(references),
+                "source_references": json.dumps(source_references),
                 "source": OPEN_TARGETS_SOURCE,
                 "source_version": source_version,
             }).scalar()
