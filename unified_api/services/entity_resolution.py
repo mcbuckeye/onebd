@@ -10,6 +10,7 @@ Creates and manages the company_xref cross-reference table.
 """
 import re
 from dataclasses import dataclass
+from threading import Lock
 from typing import Callable, Optional, List, Tuple
 from urllib.parse import urlparse
 
@@ -19,6 +20,14 @@ import structlog
 from unified_api.services.database import get_cortellis_session, get_edgar_session
 
 logger = structlog.get_logger(__name__)
+
+
+# Schema creation is invoked by several independently scheduled enrichment
+# workers. Serialize DDL across processes and skip repeat work in each process;
+# concurrent ALTER TABLE statements otherwise can deadlock on company_aliases.
+IDENTITY_SCHEMA_ADVISORY_LOCK = 6_931_004_212_026_071_401
+_identity_schema_ready = False
+_identity_schema_process_lock = Lock()
 
 
 def normalize_identifier_value(identifier_type: str, value: str) -> str:
@@ -243,142 +252,157 @@ class EntityResolutionService:
 
     def ensure_identity_schema(self) -> None:
         """Create durable alias and ownership structures used during resolution."""
-        with get_cortellis_session() as session:
-            session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS company_aliases (
-                    id SERIAL PRIMARY KEY,
-                    xref_id INTEGER REFERENCES company_xref(id) ON DELETE CASCADE,
-                    alias_type VARCHAR(50) NOT NULL,
-                    alias_value VARCHAR(500) NOT NULL,
-                    effective_from DATE,
-                    effective_to DATE,
-                    source VARCHAR(50) NOT NULL,
-                    created_at TIMESTAMP DEFAULT NOW()
+        global _identity_schema_ready
+        if _identity_schema_ready:
+            return
+        with _identity_schema_process_lock:
+            if _identity_schema_ready:
+                return
+            with get_cortellis_session() as session:
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                    {"lock_key": IDENTITY_SCHEMA_ADVISORY_LOCK},
                 )
-            """))
-            session.execute(text("""
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_company_alias_identity
-                ON company_aliases (xref_id, alias_type, LOWER(alias_value))
-            """))
-            session.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_aliases_value_trgm
-                ON company_aliases USING gin (alias_value gin_trgm_ops)
-            """))
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS company_identity_relationships (
-                    id SERIAL PRIMARY KEY,
-                    parent_company_id INTEGER NOT NULL REFERENCES companies(id),
-                    child_company_id INTEGER NOT NULL REFERENCES companies(id),
-                    relationship_type VARCHAR(50) NOT NULL,
-                    effective_from DATE,
-                    effective_to DATE,
-                    source VARCHAR(100) NOT NULL,
-                    source_reference TEXT,
-                    confidence FLOAT NOT NULL DEFAULT 1.0,
-                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW(),
-                    UNIQUE (parent_company_id, child_company_id, relationship_type)
-                )
-            """))
-            session.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_identity_relationship_child
-                ON company_identity_relationships(child_company_id)
-            """))
-            session.execute(text("""
-                ALTER TABLE company_aliases
-                ADD COLUMN IF NOT EXISTS normalized_value VARCHAR(500),
-                ADD COLUMN IF NOT EXISTS source_reference TEXT,
-                ADD COLUMN IF NOT EXISTS evidence JSONB,
-                ADD COLUMN IF NOT EXISTS confidence FLOAT NOT NULL DEFAULT 1.0,
-                ADD COLUMN IF NOT EXISTS review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
-                ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(255),
-                ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
-            """))
-            session.execute(text("""
-                UPDATE company_aliases
-                SET normalized_value = LOWER(REGEXP_REPLACE(alias_value, '[^[:alnum:]]+', '', 'g'))
-                WHERE normalized_value IS NULL
-            """))
-            session.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_company_alias_normalized
-                ON company_aliases (normalized_value)
-            """))
-            session.execute(text("""
-                ALTER TABLE company_identity_relationships
-                ADD COLUMN IF NOT EXISTS evidence JSONB,
-                ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(255),
-                ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
-            """))
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS company_identifiers (
-                    id BIGSERIAL PRIMARY KEY,
-                    company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-                    identifier_type VARCHAR(50) NOT NULL,
-                    identifier_value VARCHAR(500) NOT NULL,
-                    normalized_value VARCHAR(500) NOT NULL,
-                    source VARCHAR(100) NOT NULL,
-                    source_reference TEXT,
-                    evidence JSONB,
-                    confidence FLOAT NOT NULL,
-                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
-                    reviewed_by VARCHAR(255),
-                    reviewed_at TIMESTAMPTZ,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (identifier_type, normalized_value)
-                )
-            """))
-            session.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_company_identifiers_company
-                ON company_identifiers (company_id)
-            """))
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS drug_aliases (
-                    id BIGSERIAL PRIMARY KEY,
-                    drug_id INTEGER NOT NULL REFERENCES drugs(id) ON DELETE CASCADE,
-                    alias_type VARCHAR(50) NOT NULL,
-                    alias_value VARCHAR(1000) NOT NULL,
-                    normalized_value VARCHAR(1000) NOT NULL,
-                    source VARCHAR(100) NOT NULL,
-                    source_reference TEXT,
-                    evidence JSONB,
-                    confidence FLOAT NOT NULL,
-                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
-                    reviewed_by VARCHAR(255),
-                    reviewed_at TIMESTAMPTZ,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (drug_id, alias_type, normalized_value)
-                )
-            """))
-            session.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_drug_alias_normalized
-                ON drug_aliases (normalized_value)
-            """))
-            session.execute(text("""
-                CREATE TABLE IF NOT EXISTS drug_identifiers (
-                    id BIGSERIAL PRIMARY KEY,
-                    drug_id INTEGER NOT NULL REFERENCES drugs(id) ON DELETE CASCADE,
-                    identifier_type VARCHAR(50) NOT NULL,
-                    identifier_value VARCHAR(500) NOT NULL,
-                    normalized_value VARCHAR(500) NOT NULL,
-                    source VARCHAR(100) NOT NULL,
-                    source_reference TEXT,
-                    evidence JSONB,
-                    confidence FLOAT NOT NULL,
-                    review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
-                    reviewed_by VARCHAR(255),
-                    reviewed_at TIMESTAMPTZ,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (identifier_type, normalized_value)
-                )
-            """))
-            session.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_drug_identifiers_drug
-                ON drug_identifiers (drug_id)
-            """))
+                self._ensure_identity_schema_locked(session)
+            _identity_schema_ready = True
+
+    def _ensure_identity_schema_locked(self, session) -> None:
+        """Run identity DDL while the cross-process transaction lock is held."""
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS company_aliases (
+                id SERIAL PRIMARY KEY,
+                xref_id INTEGER REFERENCES company_xref(id) ON DELETE CASCADE,
+                alias_type VARCHAR(50) NOT NULL,
+                alias_value VARCHAR(500) NOT NULL,
+                effective_from DATE,
+                effective_to DATE,
+                source VARCHAR(50) NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        session.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_company_alias_identity
+            ON company_aliases (xref_id, alias_type, LOWER(alias_value))
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_aliases_value_trgm
+            ON company_aliases USING gin (alias_value gin_trgm_ops)
+        """))
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS company_identity_relationships (
+                id SERIAL PRIMARY KEY,
+                parent_company_id INTEGER NOT NULL REFERENCES companies(id),
+                child_company_id INTEGER NOT NULL REFERENCES companies(id),
+                relationship_type VARCHAR(50) NOT NULL,
+                effective_from DATE,
+                effective_to DATE,
+                source VARCHAR(100) NOT NULL,
+                source_reference TEXT,
+                confidence FLOAT NOT NULL DEFAULT 1.0,
+                review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE (parent_company_id, child_company_id, relationship_type)
+            )
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_identity_relationship_child
+            ON company_identity_relationships(child_company_id)
+        """))
+        session.execute(text("""
+            ALTER TABLE company_aliases
+            ADD COLUMN IF NOT EXISTS normalized_value VARCHAR(500),
+            ADD COLUMN IF NOT EXISTS source_reference TEXT,
+            ADD COLUMN IF NOT EXISTS evidence JSONB,
+            ADD COLUMN IF NOT EXISTS confidence FLOAT NOT NULL DEFAULT 1.0,
+            ADD COLUMN IF NOT EXISTS review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+            ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
+        """))
+        session.execute(text("""
+            UPDATE company_aliases
+            SET normalized_value = LOWER(REGEXP_REPLACE(alias_value, '[^[:alnum:]]+', '', 'g'))
+            WHERE normalized_value IS NULL
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_company_alias_normalized
+            ON company_aliases (normalized_value)
+        """))
+        session.execute(text("""
+            ALTER TABLE company_identity_relationships
+            ADD COLUMN IF NOT EXISTS evidence JSONB,
+            ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ
+        """))
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS company_identifiers (
+                id BIGSERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                identifier_type VARCHAR(50) NOT NULL,
+                identifier_value VARCHAR(500) NOT NULL,
+                normalized_value VARCHAR(500) NOT NULL,
+                source VARCHAR(100) NOT NULL,
+                source_reference TEXT,
+                evidence JSONB,
+                confidence FLOAT NOT NULL,
+                review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                reviewed_by VARCHAR(255),
+                reviewed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (identifier_type, normalized_value)
+            )
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_company_identifiers_company
+            ON company_identifiers (company_id)
+        """))
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS drug_aliases (
+                id BIGSERIAL PRIMARY KEY,
+                drug_id INTEGER NOT NULL REFERENCES drugs(id) ON DELETE CASCADE,
+                alias_type VARCHAR(50) NOT NULL,
+                alias_value VARCHAR(1000) NOT NULL,
+                normalized_value VARCHAR(1000) NOT NULL,
+                source VARCHAR(100) NOT NULL,
+                source_reference TEXT,
+                evidence JSONB,
+                confidence FLOAT NOT NULL,
+                review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                reviewed_by VARCHAR(255),
+                reviewed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (drug_id, alias_type, normalized_value)
+            )
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_drug_alias_normalized
+            ON drug_aliases (normalized_value)
+        """))
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS drug_identifiers (
+                id BIGSERIAL PRIMARY KEY,
+                drug_id INTEGER NOT NULL REFERENCES drugs(id) ON DELETE CASCADE,
+                identifier_type VARCHAR(50) NOT NULL,
+                identifier_value VARCHAR(500) NOT NULL,
+                normalized_value VARCHAR(500) NOT NULL,
+                source VARCHAR(100) NOT NULL,
+                source_reference TEXT,
+                evidence JSONB,
+                confidence FLOAT NOT NULL,
+                review_status VARCHAR(30) NOT NULL DEFAULT 'unreviewed',
+                reviewed_by VARCHAR(255),
+                reviewed_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (identifier_type, normalized_value)
+            )
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_drug_identifiers_drug
+            ON drug_identifiers (drug_id)
+        """))
 
     def seed_drug_alias_records(self) -> dict:
         """Index source display names and conservative primary-name candidates."""

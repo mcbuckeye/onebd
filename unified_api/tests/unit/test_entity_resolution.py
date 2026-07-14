@@ -10,6 +10,8 @@ Key validations:
 - No false positives on important companies
 - Coverage metrics
 """
+from contextlib import contextmanager
+
 import pytest
 from sqlalchemy import text
 
@@ -19,6 +21,7 @@ from unified_api.services.entity_resolution import (
     classify_name_match,
     normalize_identifier_value,
 )
+from unified_api.services import entity_resolution
 
 # Known company mappings for validation (ground truth)
 KNOWN_MAPPINGS = [
@@ -84,6 +87,34 @@ def test_simple_drug_display_name_is_not_given_a_speculative_alias():
     assert candidate_drug_aliases("enterololin") == [
         ("display_name", "enterololin", 1.0)
     ]
+
+
+def test_identity_schema_ddl_is_serialized_and_cached_per_process(monkeypatch):
+    statements = []
+    sessions_opened = 0
+
+    class Session:
+        def execute(self, statement, params=None):
+            statements.append((str(statement), params))
+
+    @contextmanager
+    def fake_session():
+        nonlocal sessions_opened
+        sessions_opened += 1
+        yield Session()
+
+    monkeypatch.setattr(entity_resolution, "_identity_schema_ready", False)
+    monkeypatch.setattr(entity_resolution, "get_cortellis_session", fake_session)
+    service = EntityResolutionService()
+
+    service.ensure_identity_schema()
+    service.ensure_identity_schema()
+
+    assert sessions_opened == 1
+    assert "pg_advisory_xact_lock" in statements[0][0]
+    assert statements[0][1] == {
+        "lock_key": entity_resolution.IDENTITY_SCHEMA_ADVISORY_LOCK,
+    }
 
 
 @pytest.mark.cortellis
