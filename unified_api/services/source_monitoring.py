@@ -55,6 +55,16 @@ SOURCE_POLICIES = {
         settings.edgar_freshness_warn_hours,
         settings.edgar_freshness_critical_hours,
     ),
+    "clinicaltrials_recent": SourcePolicy(
+        "ClinicalTrials.gov Recent Sync",
+        36,
+        72,
+    ),
+    "clinicaltrials_backfill": SourcePolicy(
+        "ClinicalTrials.gov Historical Backfill",
+        2,
+        6,
+    ),
     "neo4j": SourcePolicy(
         "Neo4j Graph Sync",
         settings.graph_freshness_warn_hours,
@@ -156,6 +166,14 @@ def _source_counts(source_key: str, result: Mapping[str, Any]) -> dict[str, int 
             "records_processed": result.get("processed"),
             "records_updated": result.get("completed"),
             "documents_created": result.get("sources_observed"),
+        })
+    elif source_key.startswith("clinicaltrials_"):
+        counts.update({
+            "records_seen": result.get("studies_seen"),
+            "records_processed": result.get("studies_seen"),
+            "records_created": result.get("studies_created"),
+            "records_updated": result.get("studies_updated"),
+            "relationships_processed": result.get("relationships_created"),
         })
     elif source_key == "neo4j":
         companies = int(result.get("cortellis_companies") or 0) + int(

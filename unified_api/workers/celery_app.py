@@ -49,6 +49,16 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.edgar.backfill_filings",
             "schedule": crontab(hour="*/2", minute=15),
         },
+        # Current trial changes run after the documented weekday source refresh.
+        "sync-clinicaltrials-recent": {
+            "task": "unified_api.workers.tasks.clinicaltrials.recent",
+            "schedule": crontab(hour=15, minute=30, day_of_week="1-5"),
+        },
+        # Advance the complete historical registry in bounded, resumable windows.
+        "backfill-clinicaltrials": {
+            "task": "unified_api.workers.tasks.clinicaltrials.backfill",
+            "schedule": crontab(minute="7,22,37,52"),
+        },
         # Sync Cortellis deals daily at 6:30 AM
         "sync-cortellis-deals": {
             "task": "unified_api.workers.tasks.cortellis.sync_deals",
@@ -225,6 +235,36 @@ def backfill_edgar_filings():
             "edgar_backfill",
             {"status": "failed", "lane": "backfill", "error": str(e)},
         )
+
+
+def _sync_clinicaltrials_lane(lane: str):
+    source_key = f"clinicaltrials_{lane}"
+    logger.info("Starting ClinicalTrials.gov sync", lane=lane)
+    _start_source_job(source_key)
+    try:
+        from unified_api.services.clinical_trials import sync_clinical_trials
+
+        result = sync_clinical_trials(lane)
+        logger.info("ClinicalTrials.gov sync complete", **result)
+        return _finish_source_job(source_key, result)
+    except Exception as exc:
+        logger.error("ClinicalTrials.gov sync failed", lane=lane, error=str(exc))
+        return _finish_source_job(
+            source_key,
+            {"status": "failed", "lane": lane, "error": str(exc)},
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.clinicaltrials.recent")
+def sync_clinicaltrials_recent():
+    """Refresh the latest published ClinicalTrials.gov changes."""
+    return _sync_clinicaltrials_lane("recent")
+
+
+@celery_app.task(name="unified_api.workers.tasks.clinicaltrials.backfill")
+def backfill_clinicaltrials():
+    """Advance the historical ClinicalTrials.gov cursor."""
+    return _sync_clinicaltrials_lane("backfill")
 
 
 @celery_app.task(name="unified_api.workers.tasks.enrichment.extract_financial_terms")

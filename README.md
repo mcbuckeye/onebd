@@ -13,6 +13,7 @@ A unified strategic intelligence platform for pharmaceutical business developmen
 | **Contracts** | 26,115 | Full-text indexed contract documents |
 | **Contract Chunks** | 903,650 | Embedded chunks for semantic search (RAG) |
 | **EDGAR Chunks** | 3,354,626 | Embedded SEC filing chunks |
+| **Clinical Trials** | Scheduled | Lossless official API-v2 current and historical registry sync |
 | **Graph Nodes** | 55,000+ companies | Neo4j with 289K+ relationships |
 | **Entity Links** | 692 | Companies linked across Cortellis/EDGAR via CIK |
 
@@ -110,6 +111,15 @@ This starts 9 services and 10 containers (the processing worker has two replicas
 | `/api/search/autocomplete/indications` | GET | Indication typeahead |
 | `/api/search/autocomplete/drugs` | GET | Drug name typeahead |
 | `/api/search/history` | GET/POST/DELETE | Search history tracking |
+
+### ClinicalTrials.gov
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/clinical-trials/status` | GET | Registry coverage, durable cursors, and entity-link counts |
+| `/api/clinical-trials` | GET | Filter trials by status, phase, condition, linked drug/company, results, or date |
+| `/api/clinical-trials/catalysts` | GET | Upcoming primary completions, stopped programs, and observed status changes |
+| `/api/clinical-trials/{nct_id}` | GET | Lossless source record, response/status history, and exact entity links |
 
 ### Company & Drug Profiles
 
