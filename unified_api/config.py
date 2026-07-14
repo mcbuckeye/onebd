@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     )
     europe_pmc_request_interval_seconds: float = 0.25
     europe_pmc_page_size: int = 100
+    gleif_base_url: str = "https://api.gleif.org"
+    gleif_request_interval_seconds: float = 0.2
+    gleif_refresh_days: int = 30
 
     # CORS
     allowed_origins: str = "*"

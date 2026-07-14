@@ -60,6 +60,16 @@ SOURCE_POLICIES = {
         36,
         72,
     ),
+    "gleif_company_identity": SourcePolicy(
+        "GLEIF Company Identity Enrichment",
+        2,
+        6,
+    ),
+    "gleif_company_ownership": SourcePolicy(
+        "GLEIF Company Ownership Enrichment",
+        2,
+        6,
+    ),
     "clinicaltrials_recent": SourcePolicy(
         "ClinicalTrials.gov Recent Sync",
         36,
