@@ -36,7 +36,10 @@ def test_hanchor_portfolio_rights_and_program_manufacturing_are_evidence_bounded
     deals = [
         _deal(
             id=438561,
-            title="HanchorBio exclusively out-licenses HCB-101 to Henlius",
+            title=(
+                "HanchorBio signed an exclusive out-licensing agreement for "
+                "HCB-101 with Henlius"
+            ),
             agreement_type="Development/Commercialization License",
             transaction_type="Out-licensing",
             participants=[
@@ -105,7 +108,7 @@ def test_dotbio_worldwide_option_and_usa_named_partner_do_not_overstate_rights_o
             id=306435,
             title="DotBio and CStone collaborate with option and license",
             agreement_type="Development/Commercialization License",
-            transaction_type="Out-licensing",
+            transaction_type="Collaboration (Shared responsibilities)",
             is_optional=True,
             participants=[
                 {"id": 1186341, "name": "DotBio Pte Ltd", "role": "Principal"},

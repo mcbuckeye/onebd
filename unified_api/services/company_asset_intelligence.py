@@ -316,7 +316,7 @@ def _rights(
         exclusive_language = "exclusive" in combined
         explicit_out_license = any(
             term in combined
-            for term in ("out-license", "out-licence", "outlicens")
+            for term in ("out-licens", "out-licenc", "outlicens")
         )
         if explicit_out_license:
             out_license_status = "explicitly_observed_in_deal_text"
