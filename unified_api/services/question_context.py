@@ -6,6 +6,7 @@ from typing import Callable, List, Optional
 import structlog
 
 from unified_api.services.entity_resolution import get_entity_resolution_service
+from unified_api.services.entity_resolution import normalize_identifier_value
 
 logger = structlog.get_logger(__name__)
 
@@ -127,4 +128,117 @@ def resolve_company_mentions(
                 ],
             })
 
+    return resolutions
+
+
+def _search_drugs_in_question(question: str, limit: int) -> List[dict]:
+    """Find source aliases/identifiers occurring verbatim in a question."""
+    from sqlalchemy import text
+
+    from unified_api.services.database import get_cortellis_session
+
+    service = get_entity_resolution_service()
+    service.ensure_identity_schema()
+    normalized_question = normalize_identifier_value("drug_alias", question)
+    with get_cortellis_session() as session:
+        rows = session.execute(text("""
+            WITH identities AS (
+                SELECT drug.id AS drug_id, drug.name_display,
+                       LOWER(REGEXP_REPLACE(TRIM(drug.name_display),
+                             '\\s+', ' ', 'g')) AS normalized_value,
+                       drug.name_display AS matched_alias,
+                       'cortellis_display_name' AS match_source
+                FROM drugs drug
+                UNION ALL
+                SELECT alias.drug_id, drug.name_display,
+                       alias.normalized_value, alias.alias_value,
+                       alias.source
+                FROM drug_aliases alias
+                JOIN drugs drug ON drug.id = alias.drug_id
+                UNION ALL
+                SELECT identifier.drug_id, drug.name_display,
+                       LOWER(identifier.normalized_value),
+                       identifier.identifier_value, identifier.source
+                FROM drug_identifiers identifier
+                JOIN drugs drug ON drug.id = identifier.drug_id
+                WHERE identifier.identifier_type IN ('chembl_id', 'pubchem_cid')
+            )
+            SELECT DISTINCT drug_id, name_display, normalized_value,
+                   matched_alias, match_source,
+                   LENGTH(normalized_value) AS match_length
+            FROM identities
+            WHERE LENGTH(normalized_value) >= 4
+              AND STRPOS(:question, normalized_value) > 0
+            ORDER BY LENGTH(normalized_value) DESC, drug_id
+            LIMIT :limit
+        """), {
+            "question": normalized_question,
+            "limit": max(10, limit * 5),
+        }).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def resolve_drug_mentions(
+    question: str,
+    search: Optional[Callable[[str, int], List[dict]]] = None,
+) -> List[dict]:
+    """Resolve only exact source-backed drug aliases present in the question."""
+    search = search or _search_drugs_in_question
+    try:
+        candidates = search(question, 5)
+    except Exception as exc:
+        logger.warning("Drug mention resolution failed", error=str(exc))
+        return []
+
+    normalized_question = normalize_identifier_value("drug_alias", question)
+    by_alias: dict[str, list[dict]] = {}
+    for candidate in candidates:
+        normalized_alias = normalize_identifier_value(
+            "drug_alias",
+            candidate.get("matched_alias") or candidate.get("name_display") or "",
+        )
+        if len(normalized_alias) < 4:
+            continue
+        if not re.search(
+            rf"(?<!\w){re.escape(normalized_alias)}(?!\w)",
+            normalized_question,
+        ):
+            continue
+        by_alias.setdefault(normalized_alias, []).append(candidate)
+
+    resolutions = []
+    resolved_drug_ids: set[int] = set()
+    for normalized_alias in sorted(by_alias, key=len, reverse=True):
+        choices_by_id = {
+            int(candidate["drug_id"]): candidate
+            for candidate in by_alias[normalized_alias]
+        }
+        choices = list(choices_by_id.values())
+        if len(choices) == 1:
+            candidate = choices[0]
+            drug_id = int(candidate["drug_id"])
+            if drug_id in resolved_drug_ids:
+                continue
+            resolved_drug_ids.add(drug_id)
+            resolutions.append({
+                "entity_type": "drug",
+                "mention": candidate.get("matched_alias") or normalized_alias,
+                "status": "resolved",
+                "drug_id": drug_id,
+                "canonical_name": candidate["name_display"],
+                "match_source": candidate.get("match_source"),
+            })
+        elif choices:
+            resolutions.append({
+                "entity_type": "drug",
+                "mention": choices[0].get("matched_alias") or normalized_alias,
+                "status": "ambiguous",
+                "candidates": [
+                    {
+                        "drug_id": int(candidate["drug_id"]),
+                        "canonical_name": candidate["name_display"],
+                    }
+                    for candidate in choices[:3]
+                ],
+            })
     return resolutions

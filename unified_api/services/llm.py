@@ -62,6 +62,21 @@ Available tables and key columns:
 - deal_timeline_events: deal_id, event_date, event_type, stage, summary
 - cortellis_deal_sources: deal_id, source_id, source_type, is_current
 - contract_chunks: id, deal_id, contract_id, content
+- clinical_trials: nct_id, brief_title, overall_status, phases (JSONB),
+  primary_completion_date, lead_sponsor_name, source_url
+- clinical_trial_drugs: nct_id, drug_id, intervention_name, matched_alias,
+  match_method, confidence (exact source-backed links only)
+- drug_identifiers: drug_id, identifier_type, identifier_value, source,
+  source_reference, confidence, review_status
+- public_drug_profiles: drug_id, chembl_id, name, description, drug_type,
+  maximum_clinical_stage, source, source_version, source_url
+- public_targets: ensembl_id, approved_symbol, approved_name, biotype,
+  protein_ids, source, source_version
+- public_drug_target_links: drug_id, chembl_id, ensembl_id,
+  mechanism_of_action, action_type, source, source_version
+- public_diseases: disease_id, name, source, source_version
+- public_drug_disease_links: drug_id, chembl_id, disease_id,
+  maximum_clinical_stage, source, source_version
 
 Important notes:
 - Use ILIKE for case-insensitive text matching
@@ -80,6 +95,9 @@ Important notes:
 - Never treat total_projected_current_amount as an upfront, milestone, royalty, or
   acquisition-premium value. If the requested metric has no governed column, do
   not substitute a different financial field.
+- Never infer a drug, trial, target, or disease link from text. Use only the exact
+  clinical_trial_drugs, public_drug_target_links, and public_drug_disease_links
+  relationships, and return their identifiers/source fields as evidence.
 
 Resolved entities (JSON):
 {resolved_entities}
@@ -104,6 +122,9 @@ IMPORTANT FORMATTING RULES:
 5. Format amounts as numbers (e.g., 500.0 not "500 million")
 6. Add a brief summary sentence above the table
 7. If empty results, say "No results found" clearly
+8. For clinical-trial rows, lead with nct_id, title, status, phase, and source_url
+9. For biology rows, lead with drug_id/chembl_id and Ensembl or disease IDs,
+   mechanism/stage, source, and source_version; do not present them as deal rows
 
 Example table format:
 | id | title | date_start | amount ($M) |

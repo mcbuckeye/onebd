@@ -1,7 +1,7 @@
 """
 SQL database tool for querying Cortellis and Edgar databases.
 """
-from typing import Any, Callable, Optional, Generator
+from typing import Callable, Optional
 from sqlalchemy import text
 import structlog
 
@@ -56,6 +56,26 @@ class SQLTool(BaseTool):
       source_type: character varying (citation/source category)
       is_current: boolean (true for the latest source response)
 
+    Exact public evidence tables:
+    - clinical_trials: nct_id, brief_title, overall_status, phases,
+      primary_completion_date, lead_sponsor_name, source_url
+    - clinical_trial_drugs: nct_id, drug_id, matched_alias, match_method,
+      confidence
+    - drug_identifiers: drug_id, identifier_type, identifier_value, source,
+      source_reference, confidence, review_status
+    - public_drug_profiles: drug_id, chembl_id, name, drug_type,
+      maximum_clinical_stage, source, source_version, source_url
+    - public_targets: ensembl_id, approved_symbol, approved_name, biotype,
+      protein_ids, source, source_version
+    - public_drug_target_links: drug_id, chembl_id, ensembl_id,
+      mechanism_of_action, action_type, source, source_version
+    - public_diseases: disease_id, name, source, source_version
+    - public_drug_disease_links: drug_id, chembl_id, disease_id,
+      maximum_clinical_stage, source, source_version
+
+    Use only these exact link tables for drug/trial/target/disease claims. Never
+    infer links from titles, descriptions, or free text.
+
     PostgreSQL Syntax Rules:
     - Use ILIKE for case-insensitive search: title ILIKE '%oncology%'
     - Boolean checks: is_merger_acquisition = true
@@ -98,9 +118,6 @@ class SQLTool(BaseTool):
             try:
                 session = self.session_factory()
                 result = session.execute(text(query))
-
-                # Get column names from result keys
-                columns = result.keys() if hasattr(result, 'keys') else []
 
                 # Fetch all rows
                 rows = result.mappings().all()

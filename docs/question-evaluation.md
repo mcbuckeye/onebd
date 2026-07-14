@@ -405,5 +405,7 @@ Evaluation rules:
     Exact PubChem InChIKey → ChEMBL → Open Targets mappings now add canonical
     Ensembl targets, mechanisms, public drug profiles, and disease-stage links.
     The primary drug-profile UI now combines those records with exact linked
-    trials and the existing Cortellis deal/rights view; complete the production
-    enrichment backfill and integrate the evidence into governed chat.
+    trials and the existing Cortellis deal/rights view. Governed chat resolves
+    exact source-backed drug aliases and supports asset-to-trial, asset-to-target,
+    asset-to-disease, and target-to-asset queries with record-level citations;
+    complete the production enrichment backfill and broader screening workflows.

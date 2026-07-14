@@ -117,7 +117,10 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
-    from unified_api.services.question_context import resolve_company_mentions
+    from unified_api.services.question_context import (
+        resolve_company_mentions,
+        resolve_drug_mentions,
+    )
     from unified_api.services.governed_metrics import build_citations
 
     metric_limitation = _structured_metric_limitation(message)
@@ -129,19 +132,21 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
         )
 
     resolved_entities = resolve_company_mentions(message)
+    resolved_entities.extend(resolve_drug_mentions(message))
     ambiguous = [
         entity for entity in resolved_entities if entity.get("status") == "ambiguous"
     ]
     if ambiguous:
         choices = "; ".join(
             f"{entity['mention']}: " + ", ".join(
-                f"{candidate['canonical_name']} (ID {candidate['company_id']})"
+                f"{candidate['canonical_name']} (ID "
+                f"{candidate.get('company_id') or candidate.get('drug_id')})"
                 for candidate in entity.get("candidates", [])
             )
             for entity in ambiguous
         )
         return ChatResponse(
-            response=f"The company name is ambiguous. Please choose one of: {choices}",
+            response=f"The entity name is ambiguous. Please choose one of: {choices}",
             mode_used="sql",
             data=[],
             resolved_entities=resolved_entities,
@@ -160,8 +165,8 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
     if missing_ids:
         return ChatResponse(
             response=(
-                "The generated query did not preserve the resolved company identity, "
-                "so it was not executed. Please retry or select the company explicitly."
+                "The generated query did not preserve the resolved entity identity, "
+                "so it was not executed. Please retry or select the entity explicitly."
             ),
             mode_used="sql",
             sql_query=sql_query,
@@ -180,6 +185,18 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
 
     # Execute query
     try:
+        if "clinical_trial" in sql_lower:
+            from unified_api.services.clinical_trials import (
+                ensure_clinical_trials_schema,
+            )
+
+            ensure_clinical_trials_schema()
+        if "public_" in sql_lower or "drug_identifiers" in sql_lower:
+            from unified_api.services.public_drug_enrichment import (
+                ensure_public_drug_schema,
+            )
+
+            ensure_public_drug_schema()
         with get_cortellis_session() as session:
             result = session.execute(text(sql_query))
             rows = result.fetchall()
@@ -226,14 +243,17 @@ def _structured_metric_limitation(message: str) -> Optional[str]:
 
 
 def _missing_resolved_entity_ids(sql_query: str, resolved_entities: List[dict]) -> List[int]:
-    """Require generated SQL to bind every unambiguous company to its canonical ID."""
+    """Require generated SQL to bind every unambiguous entity to its canonical ID."""
     missing = []
     for entity in resolved_entities:
         if entity.get("status") != "resolved":
             continue
-        company_id = int(entity["company_id"])
-        if not re.search(rf"(?<!\d){company_id}(?!\d)", sql_query):
-            missing.append(company_id)
+        entity_id = entity.get("company_id") or entity.get("drug_id")
+        if entity_id is None:
+            continue
+        entity_id = int(entity_id)
+        if not re.search(rf"(?<!\d){entity_id}(?!\d)", sql_query):
+            missing.append(entity_id)
     return missing
 
 
@@ -246,10 +266,81 @@ def _is_deal_pattern_query(message: str) -> bool:
 def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional[str]:
     """Build deterministic SQL for supported, high-value question patterns."""
     resolved = [
-        entity for entity in resolved_entities if entity.get("status") == "resolved"
+        entity for entity in resolved_entities
+        if entity.get("status") == "resolved" and entity.get("company_id")
+    ]
+    resolved_drugs = [
+        entity for entity in resolved_entities
+        if entity.get("status") == "resolved" and entity.get("drug_id")
     ]
     year_match = re.search(r"\b(19|20)\d{2}\b", message)
     normalized = message.lower()
+
+    if len(resolved_drugs) == 1:
+        drug_id = int(resolved_drugs[0]["drug_id"])
+        if "trial" in normalized:
+            return (
+                "SELECT trial.nct_id, trial.brief_title, trial.overall_status, "
+                "trial.phases, trial.primary_completion_date, "
+                "trial.lead_sponsor_name, trial.source_url, "
+                "link.match_method, link.confidence, "
+                "'clinicaltrials.gov_api_v2' AS source "
+                "FROM clinical_trial_drugs link "
+                "JOIN clinical_trials trial ON trial.nct_id = link.nct_id "
+                f"WHERE link.drug_id = {drug_id} "
+                "ORDER BY trial.primary_completion_date NULLS LAST, trial.nct_id "
+                "LIMIT 20"
+            )
+        if any(term in normalized for term in ("target", "mechanism")):
+            return (
+                "SELECT drug.id AS drug_id, drug.name_display AS drug_name, "
+                "link.chembl_id, target.ensembl_id, "
+                "target.approved_symbol AS target_symbol, "
+                "target.approved_name AS target_name, "
+                "link.mechanism_of_action, link.action_type, "
+                "link.source, link.source_version "
+                "FROM public_drug_target_links link "
+                "JOIN public_targets target ON target.ensembl_id = link.ensembl_id "
+                "JOIN drugs drug ON drug.id = link.drug_id "
+                f"WHERE link.drug_id = {drug_id} "
+                "ORDER BY target.approved_symbol, link.chembl_id "
+                "LIMIT 20"
+            )
+        if any(term in normalized for term in ("indication", "disease")):
+            return (
+                "SELECT drug.id AS drug_id, drug.name_display AS drug_name, "
+                "link.chembl_id, disease.disease_id, disease.name AS disease_name, "
+                "link.maximum_clinical_stage, link.source, link.source_version "
+                "FROM public_drug_disease_links link "
+                "JOIN public_diseases disease ON disease.disease_id = link.disease_id "
+                "JOIN drugs drug ON drug.id = link.drug_id "
+                f"WHERE link.drug_id = {drug_id} "
+                "ORDER BY disease.name, link.chembl_id "
+                "LIMIT 20"
+            )
+
+    target_match = re.search(
+        r"\b(?:target(?:ing|s)?|inhibit(?:ing|s)?|against)\s+"
+        r"([A-Za-z0-9-]{2,20})\b",
+        message,
+        re.IGNORECASE,
+    )
+    if target_match and any(term in normalized for term in ("drug", "asset")):
+        target_symbol = target_match.group(1).upper()
+        return (
+            "SELECT target.ensembl_id, target.approved_symbol AS target_symbol, "
+            "target.approved_name AS target_name, drug.id AS drug_id, "
+            "drug.name_display AS drug_name, link.chembl_id, "
+            "link.mechanism_of_action, link.action_type, "
+            "link.source, link.source_version "
+            "FROM public_targets target "
+            "JOIN public_drug_target_links link "
+            "ON link.ensembl_id = target.ensembl_id "
+            "JOIN drugs drug ON drug.id = link.drug_id "
+            f"WHERE UPPER(target.approved_symbol) = '{target_symbol}' "
+            "ORDER BY drug.name_display, link.chembl_id "
+            "LIMIT 20"
+        )
 
     if "top 5" in normalized and "active acquirer" in normalized and "this year" in normalized:
         return (

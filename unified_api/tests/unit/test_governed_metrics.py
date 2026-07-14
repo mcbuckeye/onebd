@@ -32,3 +32,37 @@ def test_record_results_receive_stable_source_ids():
     assert citations[0]["id"] == "C1"
     assert citations[0]["record_id"] == 7
     assert "[C1]" in append_citation_section("Answer", citations)
+
+
+def test_clinical_trial_rows_receive_registry_citations():
+    citations = build_citations("sql", [{
+        "nct_id": "NCT01234567",
+        "brief_title": "Example exact-linked study",
+    }])
+
+    assert citations[0]["source"] == "ClinicalTrials.gov"
+    assert citations[0]["record_type"] == "clinical_trial"
+    assert citations[0]["record_id"] == "NCT01234567"
+
+
+def test_target_and_disease_rows_receive_open_targets_citations():
+    citations = build_citations("sql", [
+        {
+            "drug_id": 42,
+            "drug_name": "Examplemab",
+            "chembl_id": "CHEMBL42",
+            "ensembl_id": "ENSG00000146648",
+            "target_symbol": "EGFR",
+        },
+        {
+            "drug_id": 42,
+            "drug_name": "Examplemab",
+            "chembl_id": "CHEMBL42",
+            "disease_id": "EFO_0000270",
+            "disease_name": "asthma",
+        },
+    ])
+
+    assert citations[0]["source"] == "Open Targets"
+    assert citations[0]["record_type"] == "drug_target"
+    assert citations[1]["record_type"] == "drug_indication"
