@@ -136,7 +136,7 @@ This starts 9 services and 10 containers (the processing worker has two replicas
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/company/{id}/profile` | GET | Full company intelligence profile |
-| `/api/drug/{id}/profile` | GET | Drug/asset profile with deal history |
+| `/api/drug/{id}/profile` | GET | Drug/asset profile with deal history; the UI combines it with exact trials and public biology |
 | `/api/entities/companies` | GET | Browse companies |
 | `/api/entities/drugs` | GET | Browse drugs |
 | `/api/entities/indications` | GET | Browse indications |
