@@ -12,6 +12,7 @@ from unified_api.services.llm import LLMService
 from unified_api.services.question_context import (
     extract_company_phrases,
     resolve_company_mentions,
+    resolve_drug_mentions,
 )
 
 
@@ -116,6 +117,62 @@ def test_resolution_preserves_reviewable_parent_relationship():
     assert result[0]["relationship_type"] == "subsidiary"
 
 
+def test_resolves_exact_source_backed_drug_alias():
+    def search(question, limit):
+        assert question == "What targets does Adenoscan have?"
+        assert limit == 5
+        return [{
+            "drug_id": 2428,
+            "name_display": "Adenoscan",
+            "matched_alias": "Adenoscan",
+            "match_source": "cortellis",
+        }]
+
+    assert resolve_drug_mentions(
+        "What targets does Adenoscan have?",
+        search=search,
+    ) == [{
+        "entity_type": "drug",
+        "mention": "Adenoscan",
+        "status": "resolved",
+        "drug_id": 2428,
+        "canonical_name": "Adenoscan",
+        "match_source": "cortellis",
+    }]
+
+
+def test_shared_drug_alias_requires_disambiguation():
+    def search(_question, _limit):
+        return [
+            {
+                "drug_id": 11,
+                "name_display": "Asset formulation A",
+                "matched_alias": "Examplemab",
+            },
+            {
+                "drug_id": 12,
+                "name_display": "Asset formulation B",
+                "matched_alias": "Examplemab",
+            },
+        ]
+
+    result = resolve_drug_mentions("Trials for Examplemab", search=search)
+
+    assert result[0]["status"] == "ambiguous"
+    assert [item["drug_id"] for item in result[0]["candidates"]] == [11, 12]
+
+
+def test_drug_alias_must_have_word_boundaries():
+    def search(_question, _limit):
+        return [{
+            "drug_id": 2428,
+            "name_display": "Adenoscan",
+            "matched_alias": "Adenoscan",
+        }]
+
+    assert resolve_drug_mentions("Adenoscanlike target", search=search) == []
+
+
 def test_milestone_analytics_does_not_substitute_total_value():
     limitation = _structured_metric_limitation(
         "What is the median milestone payment for Phase 3 license deals?"
@@ -136,6 +193,50 @@ def test_generated_sql_must_use_resolved_company_id():
         "SELECT COUNT(*) FROM companies WHERE name ILIKE 'Pfizer'",
         entities,
     ) == [18767]
+
+
+def test_generated_sql_must_use_resolved_drug_id():
+    entities = [{"status": "resolved", "drug_id": 2428}]
+
+    assert _missing_resolved_entity_ids(
+        "SELECT * FROM public_drug_target_links WHERE drug_id = 2428",
+        entities,
+    ) == []
+    assert _missing_resolved_entity_ids(
+        "SELECT * FROM public_drug_target_links",
+        entities,
+    ) == [2428]
+
+
+@pytest.mark.parametrize(
+    ("question", "required_sql"),
+    [
+        ("What trials are linked to Adenoscan?", "trial.nct_id"),
+        ("What targets does Adenoscan have?", "target.ensembl_id"),
+        ("What diseases are linked to Adenoscan?", "disease.disease_id"),
+    ],
+)
+def test_drug_public_evidence_questions_use_exact_governed_links(
+    question,
+    required_sql,
+):
+    sql = _build_governed_sql(question, [{
+        "entity_type": "drug",
+        "status": "resolved",
+        "drug_id": 2428,
+    }])
+
+    assert required_sql in sql
+    assert "2428" in sql
+    assert "LIMIT 20" in sql
+
+
+def test_target_to_drug_question_uses_exact_symbol_and_link_table():
+    sql = _build_governed_sql("Which drugs target EGFR?", [])
+
+    assert "public_drug_target_links" in sql
+    assert "UPPER(target.approved_symbol) = 'EGFR'" in sql
+    assert "drug.id AS drug_id" in sql
 
 
 def test_company_year_deal_count_uses_governed_sql():

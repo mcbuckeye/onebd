@@ -120,12 +120,10 @@ and fast retrieval before adding more external data volume.
          identifiers; external identifier population remains pending.
    - [x] Add conservative, resumable exact-name PubChem enrichment for CID,
          InChIKey, connectivity SMILES, and source-verified public titles.
-   - [ ] Complete and validate PubChem coverage across every available Cortellis
-         alias. The 2026-07-13 audit found 1,632 matches and 2,791 first-alias
-         misses, but a miss incorrectly stopped alternate-name attempts. A
-         per-alias state migration, integrity endpoint, retry handling, and
-         globally serialized two-minute policy-compliant schedule now support
-         the continuing catch-up without duplicate API requests.
+   - [x] Complete and validate PubChem coverage across every available Cortellis
+         alias. Production reached 100% terminal coverage over 33,648 eligible
+         drugs and 48,358 attempted aliases: 5,055 exact source matches, 28,571
+         exhausted drugs, 22 bounded failures, and no pending records.
    - [ ] Normalize INN/development codes and add ChEMBL/UniProt/Open Targets IDs.
          Exact PubChem InChIKeys now establish ChEMBL IDs, which in turn establish
          Open Targets drug profiles and Ensembl target/disease relationships;

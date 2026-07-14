@@ -100,6 +100,61 @@ def build_citations(mode: str, data: list[dict], query: Optional[str] = None) ->
     seen = set()
     source = "Cortellis" if mode in {"sql", "rag"} else "Neo4j"
     for row in data:
+        if row.get("nct_id"):
+            record_id = row["nct_id"]
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            citations.append({
+                "id": f"C{len(citations) + 1}",
+                "source": "ClinicalTrials.gov",
+                "record_type": "clinical_trial",
+                "record_id": record_id,
+                "label": row.get("brief_title") or record_id,
+            })
+            if len(citations) == 10:
+                break
+            continue
+        if row.get("ensembl_id"):
+            record_id = "|".join(str(value) for value in (
+                row.get("chembl_id"), row.get("ensembl_id"), row.get("drug_id")
+            ) if value is not None)
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            citations.append({
+                "id": f"C{len(citations) + 1}",
+                "source": "Open Targets",
+                "record_type": "drug_target",
+                "record_id": record_id,
+                "label": (
+                    f"{row.get('drug_name') or row.get('chembl_id')} → "
+                    f"{row.get('target_symbol') or row.get('ensembl_id')}"
+                ),
+            })
+            if len(citations) == 10:
+                break
+            continue
+        if row.get("disease_id"):
+            record_id = "|".join(str(value) for value in (
+                row.get("chembl_id"), row.get("disease_id"), row.get("drug_id")
+            ) if value is not None)
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            citations.append({
+                "id": f"C{len(citations) + 1}",
+                "source": "Open Targets",
+                "record_type": "drug_indication",
+                "record_id": record_id,
+                "label": (
+                    f"{row.get('drug_name') or row.get('chembl_id')} → "
+                    f"{row.get('disease_name') or row.get('disease_id')}"
+                ),
+            })
+            if len(citations) == 10:
+                break
+            continue
         deal_id = row.get("deal_id") or row.get("id")
         contract_id = row.get("contract_id")
         if not deal_id or deal_id in seen:
