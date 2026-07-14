@@ -120,7 +120,7 @@ celery_app.conf.update(
         # ceiling while advancing the corpus in bounded resumable batches.
         "enrich-pubchem-identifiers": {
             "task": "unified_api.workers.tasks.enrichment.pubchem_identifiers",
-            "schedule": crontab(minute="5,20,35,50"),
+            "schedule": crontab(minute="*/2"),
         },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {

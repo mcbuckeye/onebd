@@ -12,7 +12,10 @@ from urllib.request import Request, urlopen
 
 from sqlalchemy import text
 
-from unified_api.services.database import get_cortellis_session
+from unified_api.services.database import (
+    get_cortellis_engine,
+    get_cortellis_session,
+)
 from unified_api.services.entity_resolution import (
     EntityResolutionService,
     normalize_identifier_value,
@@ -199,7 +202,38 @@ def _candidates(batch_size: int) -> list[dict]:
 def enrich_pubchem_batch(
     *, batch_size: int = 100, client: PubChemClient | None = None
 ) -> dict:
+    """Run one globally serialized, policy-rate-limited enrichment batch."""
     ensure_pubchem_schema()
+    lock_connection = get_cortellis_engine().connect()
+    acquired = bool(lock_connection.execute(text(
+        "SELECT pg_try_advisory_lock(hashtext('onebd_pubchem_enrichment'))"
+    )).scalar())
+    if not acquired:
+        lock_connection.close()
+        return {
+            "status": "busy",
+            "reason": "PubChem enrichment already running",
+            "processed": 0,
+            "matched": 0,
+            "not_found": 0,
+            "failed": 0,
+        }
+
+    try:
+        return _enrich_pubchem_candidates(batch_size=batch_size, client=client)
+    finally:
+        try:
+            lock_connection.execute(text(
+                "SELECT pg_advisory_unlock(hashtext('onebd_pubchem_enrichment'))"
+            ))
+        finally:
+            lock_connection.close()
+
+
+def _enrich_pubchem_candidates(
+    *, batch_size: int, client: PubChemClient | None
+) -> dict:
+    """Process candidates while the caller holds the global batch lock."""
     client = client or PubChemClient()
     candidates = _candidates(batch_size)
     matched = 0
