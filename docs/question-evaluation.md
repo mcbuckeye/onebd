@@ -1,15 +1,15 @@
 # BD Intelligence Platform — Question & Analysis Evaluation
 
-**Reviewed:** 2026-07-14
+**Reviewed:** 2026-07-15
 
 **Assessment baseline:** `onebd.pchomelab.com`, production database snapshot
 2026-07-14
 
 **Verified remediation:** through the current change set, checked against the
-2026-07-14 production database
+2026-07-15 production database
 
 **Status:** All 65 questions are versioned, executable, and have deterministic
-pass/fail oracles. Seven are blocking production regressions. Seventeen cases
+pass/fail oracles. Eight are blocking production regressions. Eighteen cases
 compare the deployed response with direct, read-only database truth; 54 use
 scored grounding/provenance rubrics (six cases use both).
 
@@ -232,8 +232,8 @@ limitation, not a confidence score to hide.
 |---|---|---:|---|
 | 1 | How many deals did Pfizer do in 2024? | ✅ | Production returns 26 through deterministic company/year SQL using canonical Pfizer ID 18767. |
 | 2 | What was the biggest pharma deal ever? | 🟡 | Deterministic over disclosed totals, but “pharma,” currency/amount semantics, and disclosure scope need explicit handling. |
-| 3 | Who are the top 5 most active acquirers this year? | ✅ | Dedicated analytics endpoint provides a bounded, reproducible query. |
-| 4 | How many ADC deals have been done? | 🟡 | Queryable, but ADC synonym/technology normalization and end-to-end chat accuracy are unverified. |
+| 3 | Who are the top 5 most active acquirers this year? | ✅ | Governed SQL counts `Partner` companies only on M&A agreements started in the current year, with a bounded reproducible ranking. |
+| 4 | What are the largest ADC deals in oncology? | ✅ | Governed SQL maps oncology to the `Cancer` therapy area, normalizes ADC technology synonyms, ranks unique deals by disclosed USD/Million total value, and reports disclosure coverage. |
 | 5 | What is BeiGene's total deal count? | 🟡 | Queryable after resolving BeiGene/BeOne and duplicate company entities. |
 | 6 | When was the last oncology M&A deal over $1B? | 🟡 | Queryable, but generated multi-table SQL and financial units need golden-answer validation. |
 | 7 | Is there a deal between Pfizer and Seagen? | 🔧 | The graph chat path does not yet bind both canonical IDs deterministically. |
@@ -241,7 +241,7 @@ limitation, not a confidence score to hide.
 | 9 | How many deals closed last week? | 🟡 | Relative dates, timezone, and closed-vs-announced field selection are not deterministic. |
 | 10 | What is the average deal size in oncology? | ✅ | Analytics can calculate it with a disclosure caveat; null and unit handling must remain explicit. |
 
-**Catalog rating: 3 Strong, 6 Partial, 1 Needs Work**
+**Catalog rating: 4 Strong, 5 Partial, 1 Needs Work**
 
 ---
 
@@ -360,16 +360,16 @@ This score is generated from the ratings in the executable 65-case catalog.
 
 | Category | Strong ✅ | Partial 🟡 | Needs Work 🔧 | Cannot ❌ | Total |
 |---|---:|---:|---:|---:|---:|
-| Quick Factual | 3 | 6 | 1 | 0 | 10 |
+| Quick Factual | 4 | 5 | 1 | 0 | 10 |
 | Analytical | 7 | 3 | 0 | 0 | 10 |
 | Strategic | 1 | 7 | 1 | 1 | 10 |
 | Competitive Intelligence | 1 | 6 | 2 | 1 | 10 |
 | Due Diligence | 1 | 6 | 2 | 1 | 10 |
 | Market Landscape | 3 | 6 | 0 | 1 | 10 |
 | SEC Filings | 0 | 5 | 0 | 0 | 5 |
-| **Total** | **16** | **39** | **6** | **4** | **65** |
+| **Total** | **17** | **38** | **6** | **4** | **65** |
 
-**Measured catalog rating: 16/65 Strong (24.6%); 55/65 at least Partial
+**Measured catalog rating: 17/65 Strong (26.2%); 55/65 at least Partial
 (84.6%).** This corrects arithmetic drift in the previous hand-maintained
 scorecard and should be regenerated from YAML after future rating changes.
 
@@ -379,7 +379,7 @@ the limiting factors.
 ## Executable Evaluation Specification
 
 All 65 questions are versioned in `unified_api/evals/question_cases.yaml`. The
-seven regression-tier cases have deterministic production assertions. Seventeen
+eight regression-tier cases have deterministic production assertions. Eighteen
 cases compare response fields to read-only SQL truth, while 54 cases have weighted
 evidence rubrics; six cases use both. Exact truth should continue to replace
 narrative rubrics as governed query shapes are added. A completed truth case must
