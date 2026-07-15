@@ -1,12 +1,16 @@
 """
 Search endpoints for deals, companies, and documents.
 """
+from datetime import date
 from typing import Optional, List
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, model_validator
+from sqlalchemy import text
 import structlog
 
 from unified_api.config import settings
+from unified_api.routers.auth import get_current_user
+from unified_api.services.auth import TokenData
 
 logger = structlog.get_logger(__name__)
 
@@ -29,18 +33,32 @@ class DealSummary(BaseModel):
 
 class SearchFilters(BaseModel):
     """Filters for deal search."""
+    model_config = ConfigDict(extra="forbid")
+
     therapy_area: Optional[str] = None
     indication: Optional[List[str]] = None
     technology: Optional[List[str]] = None
     company: Optional[str] = None
     deal_type: Optional[List[str]] = None
     phase: Optional[List[str]] = None
-    date_from: Optional[str] = None
-    date_to: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
     value_min: Optional[float] = None
     value_max: Optional[float] = None
     disclosed_only: bool = False
     status: Optional[List[str]] = None
+
+    @model_validator(mode="after")
+    def validate_ranges(self):
+        if self.date_from and self.date_to and self.date_from > self.date_to:
+            raise ValueError("date_from must be on or before date_to")
+        if (
+            self.value_min is not None
+            and self.value_max is not None
+            and self.value_min > self.value_max
+        ):
+            raise ValueError("value_min must be less than or equal to value_max")
+        return self
 
 
 class SearchResponse(BaseModel):
@@ -197,6 +215,8 @@ async def search_deals(
              WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner_id
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         {join_clause}
         WHERE {where_clause}
         ORDER BY {sort_col} {sort_order.upper()} NULLS LAST
@@ -204,15 +224,23 @@ async def search_deals(
     """
 
     count_query = f"""
-        SELECT COUNT(DISTINCT d.id) FROM deals d
+        SELECT COUNT(*) FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         {join_clause}
         WHERE {where_clause}
     """
 
     with get_cortellis_session() as session:
-        # Get total count
-        total = session.execute(text(count_query), params).scalar()
+        # The unfiltered landing page uses the durable exact-count snapshot so
+        # opening Search does not repeatedly scan the full joined population.
+        if not conditions and not joins:
+            from unified_api.services.entity_counts import get_entity_counts
+
+            total = get_entity_counts(session)["deals"]
+        else:
+            total = session.execute(text(count_query), params).scalar()
 
         # Get results
         result = session.execute(text(query), params)
@@ -317,6 +345,16 @@ class ContractSearchResult(BaseModel):
     partner_company: Optional[str] = None
     principal_company_id: Optional[int] = None
     partner_company_id: Optional[int] = None
+    match_mode: str = "semantic"
+    semantic_score: Optional[float] = None
+    fulltext_score: Optional[float] = None
+
+
+def _contract_excerpt(content: str, limit: int = 700) -> str:
+    from unified_api.services.html_cleaner import clean_contract_html
+
+    cleaned = clean_contract_html(content)
+    return cleaned[:limit] + "…" if len(cleaned) > limit else cleaned
 
 
 @router.get("/search/contracts")
@@ -344,7 +382,11 @@ async def search_contracts(
         limit=limit,
     )
 
-    results = []
+    semantic_results: list[ContractSearchResult] = []
+    fulltext_results: list[ContractSearchResult] = []
+    candidate_limit = min(max(limit * 20, 100), 2000)
+    semantic_error: Optional[str] = None
+    run_fulltext = mode in ["fulltext", "hybrid"]
 
     with get_cortellis_session() as session:
         if mode in ["semantic", "hybrid"]:
@@ -355,16 +397,33 @@ async def search_contracts(
 
                 # Convert to PostgreSQL array format
                 embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+                session.execute(text("SET LOCAL ivfflat.probes = 40"))
 
                 # Semantic search using pgvector
                 # Note: Use CAST() instead of :: to avoid SQLAlchemy parameter binding conflict
                 semantic_result = session.execute(text("""
+                    WITH nearest AS MATERIALIZED (
                     SELECT
                         cc.id as chunk_id,
                         cc.deal_id,
                         cc.contract_id,
                         cc.content,
-                        1 - (cc.embedding <=> CAST(:embedding AS vector)) as similarity,
+                        cc.embedding <=> CAST(:embedding AS vector) as distance
+                    FROM contract_chunks cc
+                    WHERE cc.embedding IS NOT NULL
+                    ORDER BY cc.embedding <=> CAST(:embedding AS vector)
+                    LIMIT :candidate_limit
+                    ), diverse AS (
+                        SELECT nearest.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY nearest.deal_id
+                                   ORDER BY nearest.distance, nearest.chunk_id
+                               ) AS deal_rank
+                        FROM nearest
+                    )
+                    SELECT
+                        cc.chunk_id, cc.deal_id, cc.contract_id, cc.content,
+                        1 - cc.distance as similarity,
                         d.title as deal_title,
                         (SELECT c.name FROM deal_companies dc
                          JOIN companies c ON c.id = dc.company_id
@@ -378,21 +437,27 @@ async def search_contracts(
                         (SELECT c.id FROM deal_companies dc
                          JOIN companies c ON c.id = dc.company_id
                          WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
-                    FROM contract_chunks cc
+                    FROM diverse cc
                     JOIN deals d ON d.id = cc.deal_id
-                    WHERE cc.embedding IS NOT NULL
-                    ORDER BY cc.embedding <=> CAST(:embedding AS vector)
+                    WHERE cc.deal_rank = 1
+                    ORDER BY cc.distance, cc.chunk_id
                     LIMIT :limit
-                """), {"embedding": embedding_str, "limit": limit})
+                """), {
+                    "embedding": embedding_str,
+                    "candidate_limit": candidate_limit,
+                    "limit": limit,
+                })
 
                 for row in semantic_result:
-                    results.append(ContractSearchResult(
+                    semantic_results.append(ContractSearchResult(
                         chunk_id=row.chunk_id,
                         deal_id=row.deal_id,
                         deal_title=row.deal_title,
                         contract_id=row.contract_id,
-                        content=row.content[:500] + "..." if len(row.content) > 500 else row.content,
+                        content=_contract_excerpt(row.content),
                         score=float(row.similarity),
+                        semantic_score=float(row.similarity),
+                        match_mode="semantic",
                         principal_company=row.principal,
                         partner_company=row.partner,
                         principal_company_id=row.principal_id,
@@ -401,19 +466,36 @@ async def search_contracts(
 
             except Exception as e:
                 logger.error("Semantic search failed", error=str(e))
-                # Fall back to fulltext if semantic fails
+                semantic_error = str(e)
                 if mode == "semantic":
-                    return {"query": query, "mode": mode, "results": [], "error": str(e)}
+                    run_fulltext = True
 
-        if mode in ["fulltext", "hybrid"] and (mode == "fulltext" or not results):
+        if run_fulltext:
             # Fulltext search using PostgreSQL
             fulltext_result = session.execute(text("""
+                WITH matched AS MATERIALIZED (
                 SELECT
                     cc.id as chunk_id,
                     cc.deal_id,
                     cc.contract_id,
                     cc.content,
-                    ts_rank(to_tsvector('english', cc.content), plainto_tsquery('english', :query)) as rank,
+                    ts_rank_cd(to_tsvector('english', cc.content),
+                               plainto_tsquery('english', :query)) as rank
+                FROM contract_chunks cc
+                WHERE to_tsvector('english', cc.content) @@
+                      plainto_tsquery('english', :query)
+                ORDER BY rank DESC, cc.id
+                LIMIT :candidate_limit
+                ), diverse AS (
+                    SELECT matched.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY matched.deal_id
+                               ORDER BY matched.rank DESC, matched.chunk_id
+                           ) AS deal_rank
+                    FROM matched
+                )
+                SELECT
+                    cc.chunk_id, cc.deal_id, cc.contract_id, cc.content, cc.rank,
                     d.title as deal_title,
                     (SELECT c.name FROM deal_companies dc
                      JOIN companies c ON c.id = dc.company_id
@@ -427,31 +509,89 @@ async def search_contracts(
                     (SELECT c.id FROM deal_companies dc
                      JOIN companies c ON c.id = dc.company_id
                      WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
-                FROM contract_chunks cc
+                FROM diverse cc
                 JOIN deals d ON d.id = cc.deal_id
-                WHERE to_tsvector('english', cc.content) @@ plainto_tsquery('english', :query)
-                ORDER BY rank DESC
+                WHERE cc.deal_rank = 1
+                ORDER BY cc.rank DESC, cc.chunk_id
                 LIMIT :limit
-            """), {"query": query, "limit": limit})
+            """), {
+                "query": query,
+                "candidate_limit": candidate_limit,
+                "limit": limit,
+            })
 
             for row in fulltext_result:
-                results.append(ContractSearchResult(
+                fulltext_results.append(ContractSearchResult(
                     chunk_id=row.chunk_id,
                     deal_id=row.deal_id,
                     deal_title=row.deal_title,
                     contract_id=row.contract_id,
-                    content=row.content[:500] + "..." if len(row.content) > 500 else row.content,
+                    content=_contract_excerpt(row.content),
                     score=float(row.rank),
-                principal_company=row.principal,
+                    fulltext_score=float(row.rank),
+                    match_mode="fulltext",
+                    principal_company=row.principal,
                     partner_company=row.partner,
                     principal_company_id=row.principal_id,
                     partner_company_id=row.partner_id,
                 ))
 
+    effective_mode = mode
+    if mode == "semantic" and semantic_error:
+        results = fulltext_results
+        effective_mode = "fulltext_fallback"
+    elif mode == "semantic":
+        results = semantic_results
+    elif mode == "fulltext":
+        results = fulltext_results
+    else:
+        # Reciprocal-rank fusion avoids comparing cosine similarity with the
+        # unrelated PostgreSQL ts_rank scale. Keep one best excerpt per deal.
+        fused: dict[int, dict] = {}
+        for source, source_results in (
+            ("semantic", semantic_results),
+            ("fulltext", fulltext_results),
+        ):
+            for rank, result in enumerate(source_results, start=1):
+                item = fused.setdefault(result.deal_id, {
+                    "result": result,
+                    "rrf": 0.0,
+                    "modes": set(),
+                })
+                item["rrf"] += 1.0 / (60 + rank)
+                item["modes"].add(source)
+                if source == "fulltext":
+                    # Prefer the exact lexical excerpt when both modes hit.
+                    item["result"].content = result.content
+                    item["result"].fulltext_score = result.fulltext_score
+                else:
+                    item["result"].semantic_score = result.semantic_score
+        ranked_fused = sorted(
+            fused.values(),
+            key=lambda item: (-item["rrf"], item["result"].deal_id),
+        )[:limit]
+        results = []
+        for item in ranked_fused:
+            result = item["result"]
+            result.score = round(item["rrf"], 8)
+            result.match_mode = "+".join(sorted(item["modes"]))
+            results.append(result)
+
     return {
         "query": query,
-        "mode": mode,
+        "mode": effective_mode,
+        "requested_mode": mode,
         "total": len(results),
+        "result_scope": "One highest-ranked excerpt per deal",
+        "score_kind": (
+            "cosine_similarity" if effective_mode == "semantic"
+            else "fulltext_rank" if effective_mode in {"fulltext", "fulltext_fallback"}
+            else "reciprocal_rank_fusion"
+        ),
+        "warning": (
+            "Semantic search was unavailable; full-text results are shown."
+            if semantic_error and mode == "semantic" else None
+        ),
         "results": [r.model_dump() for r in results],
     }
 
@@ -579,7 +719,10 @@ async def unified_search(
                                 c.id AS chunk_id,
                                 c.document_id,
                                 c.text AS content,
-                                to_tsvector('english', c.text) AS search_vector,
+                                ts_rank_cd(
+                                    to_tsvector('english', c.text),
+                                    plainto_tsquery('english', :query)
+                                ) AS score,
                                 COALESCE(d.subtype, d.doc_type) AS doc_type,
                                 d.accession_no,
                                 r.filing_date,
@@ -591,14 +734,22 @@ async def unified_search(
                             JOIN companies e ON r.company_id = e.id
                             WHERE to_tsvector('english', c.text) @@
                                   plainto_tsquery('english', :query)
+                            ORDER BY score DESC, c.id
                             LIMIT :candidate_limit
+                        ), diverse AS (
+                            SELECT candidates.*,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY document_id
+                                       ORDER BY score DESC, chunk_id
+                                   ) AS document_rank
+                            FROM candidates
                         )
                         SELECT
-                            chunk_id, document_id, content,
-                            ts_rank(search_vector, plainto_tsquery('english', :query)) AS score,
+                            chunk_id, document_id, content, score,
                             doc_type, accession_no, filing_date, company_name, ticker
-                        FROM candidates
-                        ORDER BY score DESC
+                        FROM diverse
+                        WHERE document_rank = 1
+                        ORDER BY score DESC, chunk_id
                         LIMIT :limit
                     """), {
                         "query": query,
@@ -788,12 +939,30 @@ async def autocomplete_drugs(
 # Search History
 # ============================================
 
+
+def migrate_search_history_schema(session) -> None:
+    """Install authenticated search history during deployment migration."""
+    session.execute(text("""
+        CREATE TABLE IF NOT EXISTS search_history (
+            id SERIAL PRIMARY KEY,
+            user_id VARCHAR(100) NOT NULL,
+            query TEXT NOT NULL,
+            search_type VARCHAR(50) NOT NULL DEFAULT 'deals',
+            result_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    session.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_search_history_user_created
+        ON search_history (user_id, created_at DESC)
+    """))
+
 @router.post("/search/history")
 async def record_search(
-    query: str = Query(..., description="Search query text"),
-    search_type: str = Query("deals", description="Type of search"),
+    query: str = Query(..., min_length=1, max_length=2000, description="Search summary"),
+    search_type: str = Query("deals", min_length=1, max_length=50),
     result_count: int = Query(0, ge=0),
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Record a search in history.
@@ -803,23 +972,11 @@ async def record_search(
     from unified_api.services.database import get_cortellis_session
 
     with get_cortellis_session() as session:
-        # Ensure table exists
-        session.execute(text("""
-            CREATE TABLE IF NOT EXISTS search_history (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(100) NOT NULL DEFAULT 'default',
-                query TEXT NOT NULL,
-                search_type VARCHAR(50) NOT NULL DEFAULT 'deals',
-                result_count INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """))
-
         session.execute(text("""
             INSERT INTO search_history (user_id, query, search_type, result_count)
             VALUES (:user_id, :query, :search_type, :result_count)
         """), {
-            "user_id": user_id,
+            "user_id": str(user.user_id),
             "query": query,
             "search_type": search_type,
             "result_count": result_count,
@@ -831,8 +988,8 @@ async def record_search(
 
 @router.get("/search/history")
 async def get_search_history(
-    user_id: str = Query("default", description="User ID"),
     limit: int = Query(20, ge=1, le=100),
+    user: TokenData = Depends(get_current_user),
 ):
     """
     Get recent search history for a user.
@@ -844,28 +1001,19 @@ async def get_search_history(
     from unified_api.services.database import get_cortellis_session
 
     with get_cortellis_session() as session:
-        # Check if table exists
-        exists = session.execute(text("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables
-                WHERE table_name = 'search_history'
-            )
-        """)).scalar()
-
-        if not exists:
-            return {"history": [], "total": 0}
-
         result = session.execute(text("""
-            SELECT DISTINCT ON (query, search_type)
-                id, query, search_type, result_count, created_at::text
-            FROM search_history
-            WHERE user_id = :user_id
-            ORDER BY query, search_type, created_at DESC
-        """), {"user_id": user_id})
-
-        # Re-sort by created_at after dedup
-        history = sorted(
-            [
+            SELECT id, query, search_type, result_count, created_at::text
+            FROM (
+                SELECT DISTINCT ON (query, search_type)
+                    id, query, search_type, result_count, created_at
+                FROM search_history
+                WHERE user_id = :user_id
+                ORDER BY query, search_type, created_at DESC
+            ) latest
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """), {"user_id": str(user.user_id), "limit": limit})
+        history = [
                 {
                     "id": row.id,
                     "query": row.query,
@@ -874,36 +1022,30 @@ async def get_search_history(
                     "created_at": row.created_at,
                 }
                 for row in result
-            ],
-            key=lambda x: x["created_at"] or "",
-            reverse=True,
-        )[:limit]
+        ]
+        total = session.execute(text("""
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM search_history
+                WHERE user_id = :user_id
+                GROUP BY query, search_type
+            ) unique_searches
+        """), {"user_id": str(user.user_id)}).scalar()
 
-    return {"history": history, "total": len(history)}
+    return {"history": history, "total": int(total or 0), "limit": limit}
 
 
 @router.delete("/search/history")
 async def clear_search_history(
-    user_id: str = Query("default", description="User ID"),
+    user: TokenData = Depends(get_current_user),
 ):
     """Clear search history for a user."""
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
 
     with get_cortellis_session() as session:
-        exists = session.execute(text("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables
-                WHERE table_name = 'search_history'
-            )
-        """)).scalar()
-
-        if not exists:
-            return {"success": True, "deleted": 0}
-
         result = session.execute(text("""
             DELETE FROM search_history WHERE user_id = :user_id
-        """), {"user_id": user_id})
+        """), {"user_id": str(user.user_id)})
         session.commit()
 
-    return {"success": True}
+    return {"success": True, "deleted": int(result.rowcount or 0)}

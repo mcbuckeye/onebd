@@ -58,7 +58,9 @@ Available tables and key columns:
 - deal_indications: deal_id, indication_id
 - technologies: id, name
 - deal_technologies: deal_id, technology_id
-- deal_finance_summary: deal_id, total_projected_current_amount, total_paid_amount (in millions USD)
+- deal_finance_summary: deal_id, total_projected_current_amount,
+  total_projected_current_currency, total_projected_current_unit,
+  total_paid_amount, total_paid_currency, total_paid_unit
 - deal_timeline_events: deal_id, event_date, event_type, stage, summary
 - cortellis_deal_sources: deal_id, source_id, source_type, is_current
 - contract_chunks: id, deal_id, contract_id, content
@@ -95,10 +97,14 @@ Important notes:
 - Use ILIKE for case-insensitive text matching
 - Always include reasonable LIMIT (default 20)
 - Join through deal_* junction tables
-- total_projected_current_amount is in millions USD
+- Financial amount columns carry separate currency and unit columns. Never assume
+  a currency or unit from the numeric amount alone.
 - Use date_start for filtering by date
 - CRITICAL: Only ~27% of deals have disclosed financial amounts
-- When searching for "largest" or deals with amounts, add: WHERE f.total_projected_current_amount IS NOT NULL
+- For comparable USD-million projected totals, require all three predicates:
+  f.total_projected_current_amount IS NOT NULL,
+  f.total_projected_current_currency = 'USD', and
+  f.total_projected_current_unit = 'Million'.
 - Use LEFT JOIN for deal_finance_summary since not all deals have financial data
 - Use NULLS LAST when ordering by amounts: ORDER BY amount DESC NULLS LAST
 - Resolved entities below are authoritative. For status=resolved, filter on the
@@ -165,7 +171,11 @@ FORMAT RULES:
 - Lead with the insight, not the methodology
 - If data is limited (< 5 results or < 50% disclosed), say so explicitly
 - Be specific with numbers — don't round unnecessarily
-- When showing financial data, always note if values are in millions USD
+- When showing financial data, state the currency and unit established by the
+  query predicates or returned currency/unit columns.
+- Never call the result complete, comprehensive, exhaustive, or "all" records unless the retrieved data proves that scope
+- Distinguish the returned row limit from the underlying eligible sample size
+- Do not infer absence from an empty result; say only that the attempted query returned no supporting rows
 
 User question: {question}
 

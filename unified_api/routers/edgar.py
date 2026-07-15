@@ -368,7 +368,10 @@ async def search_edgar_filings(
                         c.document_id,
                         c.section,
                         c.text,
-                        to_tsvector('english', c.text) AS search_vector,
+                        ts_rank_cd(
+                            to_tsvector('english', c.text),
+                            plainto_tsquery('english', :query)
+                        ) AS score,
                         COALESCE(d.subtype, d.doc_type) AS doc_type,
                         d.accession_no,
                         r.filing_date,
@@ -379,14 +382,22 @@ async def search_edgar_filings(
                     JOIN raw_documents r ON d.raw_document_id = r.id
                     JOIN companies e ON r.company_id = e.id
                     WHERE {where_clause}
+                    ORDER BY score DESC, c.id
                     LIMIT :candidate_limit
+                ), diverse AS (
+                    SELECT candidates.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY document_id
+                               ORDER BY score DESC, chunk_id
+                           ) AS document_rank
+                    FROM candidates
                 )
                 SELECT
-                    chunk_id, document_id, section, text,
-                    ts_rank(search_vector, plainto_tsquery('english', :query)) AS score,
+                    chunk_id, document_id, section, text, score,
                     doc_type, accession_no, filing_date, company_name, ticker
-                FROM candidates
-                ORDER BY score DESC
+                FROM diverse
+                WHERE document_rank = 1
+                ORDER BY score DESC, chunk_id
                 LIMIT :limit
             """), params)
 
@@ -415,7 +426,11 @@ async def search_edgar_filings(
                 session.execute(text("SET LOCAL ivfflat.probes = 40"))
 
                 conditions = ["c.vector IS NOT NULL"]
-                params = {"embedding": embedding_str, "limit": limit}
+                params = {
+                    "embedding": embedding_str,
+                    "limit": limit,
+                    "candidate_limit": min(max(limit * 20, 100), 2000),
+                }
 
                 if doc_type:
                     conditions.append("COALESCE(d.subtype, d.doc_type) = :doc_type")
@@ -429,12 +444,13 @@ async def search_edgar_filings(
 
                 # Query source database tables (has the vector index)
                 result = session.execute(text(f"""
+                    WITH nearest AS MATERIALIZED (
                     SELECT
                         c.id as chunk_id,
                         c.document_id,
                         c.section,
                         c.text,
-                        1 - (c.vector <=> CAST(:embedding AS vector)) as score,
+                        c.vector <=> CAST(:embedding AS vector) as distance,
                         COALESCE(d.subtype, d.doc_type) AS doc_type,
                         d.accession_no,
                         r.filing_date,
@@ -446,6 +462,21 @@ async def search_edgar_filings(
                     JOIN companies e ON r.company_id = e.id
                     WHERE {where_clause}
                     ORDER BY c.vector <=> CAST(:embedding AS vector)
+                    LIMIT :candidate_limit
+                    ), diverse AS (
+                        SELECT nearest.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY document_id
+                                   ORDER BY distance, chunk_id
+                               ) AS document_rank
+                        FROM nearest
+                    )
+                    SELECT chunk_id, document_id, section, text,
+                           1 - distance AS score, doc_type, accession_no,
+                           filing_date, company_name, ticker
+                    FROM diverse
+                    WHERE document_rank = 1
+                    ORDER BY distance, chunk_id
                     LIMIT :limit
                 """), params)
 
@@ -540,10 +571,10 @@ async def list_edgar_deals(
             terms = [
                 {
                     "term_type": t.term_type,
-                    "amount_usd": float(t.amount_usd) if t.amount_usd else None,
+                    "amount_usd": float(t.amount_usd) if t.amount_usd is not None else None,
                     "currency": t.currency,
-                    "min_rate": float(t.min_rate) if t.min_rate else None,
-                    "max_rate": float(t.max_rate) if t.max_rate else None,
+                    "min_rate": float(t.min_rate) if t.min_rate is not None else None,
+                    "max_rate": float(t.max_rate) if t.max_rate is not None else None,
                     "notes": t.notes,
                 }
                 for t in terms_result
@@ -607,11 +638,11 @@ async def get_edgar_deal_detail(deal_id: int):
             {
                 "id": t.id,
                 "term_type": t.term_type,
-                "amount_native": float(t.amount_native) if t.amount_native else None,
-                "amount_usd": float(t.amount_usd) if t.amount_usd else None,
+                "amount_native": float(t.amount_native) if t.amount_native is not None else None,
+                "amount_usd": float(t.amount_usd) if t.amount_usd is not None else None,
                 "currency": t.currency,
-                "min_rate": float(t.min_rate) if t.min_rate else None,
-                "max_rate": float(t.max_rate) if t.max_rate else None,
+                "min_rate": float(t.min_rate) if t.min_rate is not None else None,
+                "max_rate": float(t.max_rate) if t.max_rate is not None else None,
                 "notes": t.notes,
             }
             for t in terms_result
@@ -945,6 +976,8 @@ async def get_filing_related_deals(filing_id: int):
                     FROM deal_companies dc
                     JOIN deals d ON d.id = dc.deal_id
                     LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+                      AND f.total_projected_current_currency = 'USD'
+                      AND f.total_projected_current_unit = 'Million'
                     WHERE dc.company_id = :company_id
                       AND d.date_start BETWEEN :date_from AND :date_to
                     ORDER BY d.date_start DESC
@@ -963,7 +996,7 @@ async def get_filing_related_deals(filing_id: int):
                         "agreement_type": row.agreement_type,
                         "status": row.status,
                         "date_start": row.date_start,
-                        "total_value": float(row.total_value) if row.total_value else None,
+                        "total_value": float(row.total_value) if row.total_value is not None else None,
                     }
                     for row in deals
                 ]

@@ -5,6 +5,7 @@ Returns pre-aggregated data for the landing page.
 from fastapi import APIRouter
 from sqlalchemy import text
 import structlog
+from datetime import datetime, timezone
 
 from unified_api.services.database import get_cortellis_session
 from unified_api.services.cache import cache_get, cache_set, cache_key
@@ -43,6 +44,8 @@ async def get_executive_dashboard():
             JOIN deal_finance_summary f ON f.deal_id = d.id
             WHERE d.date_start >= CURRENT_DATE - INTERVAL '30 days'
               AND f.total_projected_current_amount IS NOT NULL
+              AND f.total_projected_current_currency = 'USD'
+              AND f.total_projected_current_unit = 'Million'
         """)).fetchone()
 
         # Top therapy areas (last 90 days)
@@ -52,6 +55,7 @@ async def get_executive_dashboard():
             JOIN therapy_areas ta ON ta.id = d.therapy_area_id
             WHERE d.date_start >= CURRENT_DATE - INTERVAL '90 days'
               AND ta.name IS NOT NULL
+              AND ta.name NOT IN ('Unknown', 'Not Applicable')
             GROUP BY ta.name
             ORDER BY count DESC
             LIMIT 5
@@ -77,6 +81,8 @@ async def get_executive_dashboard():
                  WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner_id
             FROM deals d
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+              AND f.total_projected_current_currency = 'USD'
+              AND f.total_projected_current_unit = 'Million'
             WHERE d.date_start >= CURRENT_DATE - INTERVAL '60 days'
             ORDER BY f.total_projected_current_amount DESC NULLS LAST
             LIMIT 10
@@ -98,8 +104,9 @@ async def get_executive_dashboard():
         "market_pulse": {
             "deal_count_30d": pulse.count_30d if pulse else 0,
             "deal_count_prev_30d": pulse.count_prev_30d if pulse else 0,
-            "avg_value_30d": float(avg_val.avg_value) if avg_val and avg_val.avg_value else None,
+            "avg_value_30d": float(avg_val.avg_value) if avg_val and avg_val.avg_value is not None else None,
             "disclosed_count_30d": avg_val.disclosed_count if avg_val else 0,
+            "value_definition": "Current projected total, disclosed USD millions",
             "top_therapy_areas": [{"name": r.name, "count": r.count} for r in therapy_areas],
             "monthly_trend": [{"month": r.month, "count": r.count} for r in monthly_trend],
         },
@@ -110,7 +117,7 @@ async def get_executive_dashboard():
                 "agreement_type": r.agreement_type,
                 "status": r.status,
                 "date_start": r.date_start,
-                "total_value": float(r.total_value) if r.total_value else None,
+                "total_value": float(r.total_value) if r.total_value is not None else None,
                 "principal_company": r.principal,
                 "partner_company": r.partner,
                 "principal_company_id": r.principal_id,
@@ -118,6 +125,8 @@ async def get_executive_dashboard():
             }
             for r in notable
         ],
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "cache_ttl_seconds": 1800,
     }
 
     cache_set(key, result, ttl=1800)  # 30 min

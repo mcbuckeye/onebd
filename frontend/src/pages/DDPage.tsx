@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, AlertTriangle, CheckCircle, Info, Building2, Pill, Users, DollarSign, Shield, FileDown, FileText, FileCheck2, MapPinned, Scale } from 'lucide-react';
 import api from '../lib/api';
+import { Link } from 'react-router-dom';
 
 function formatValue(v: number | null): string {
   if (v === null || v === undefined) return 'N/A';
@@ -292,7 +293,7 @@ export default function DDPage() {
                           <div className="space-y-2 mt-3">{section.content.map((contract: any) => (
                             <div key={contract.contract_id} className="rounded-lg bg-slate-800/70 p-3">
                               <div className="flex items-start justify-between gap-3">
-                                <div><a href={`/deals/${contract.deal_id}`} className="text-sm text-slate-200 hover:text-blue-400">{contract.deal_title}</a><div className="mt-1 text-xs text-slate-500">{contract.contract_types || 'Contract'} · {shortDate(contract.date_contract || contract.date_filing)} · {contract.word_count.toLocaleString()} words</div></div>
+                                <div><Link to={`/deals/${contract.deal_id}`} className="text-sm text-slate-200 hover:text-blue-400">{contract.deal_title}</Link><div className="mt-1 text-xs text-slate-500">{contract.contract_types || 'Contract'} · {shortDate(contract.date_contract || contract.date_filing)} · {contract.word_count.toLocaleString()} words</div></div>
                                 <div className="flex gap-1 text-[11px]"><span className={`rounded px-1.5 py-0.5 ${contract.has_text ? 'bg-green-500/10 text-green-400' : 'bg-slate-700 text-slate-500'}`}>{contract.has_text ? 'Text' : 'Metadata only'}</span>{contract.is_redacted && <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-yellow-400">Redacted</span>}</div>
                               </div>
                               {contract.key_financial_clauses?.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{contract.key_financial_clauses.map((clause: any) => <span key={clause.id} title={clause.source_excerpt} className={`rounded px-2 py-1 text-[11px] ${clause.review_status === 'accepted' ? 'bg-green-500/10 text-green-300' : 'bg-blue-500/10 text-blue-300'}`}>{clause.clause_type.replace(/_/g, ' ')} · {clause.review_status}</span>)}</div>}
@@ -302,15 +303,30 @@ export default function DDPage() {
                       ) : section.type === 'territory_rights' && Array.isArray(section.content) ? (
                         section.content.length > 0 ? (
                           <table className="w-full text-sm mt-3"><thead><tr className="text-left text-slate-500"><th className="pb-2">Territory</th><th className="pb-2">Scope</th><th className="pb-2">Company role</th><th className="pb-2">Deal / assets</th><th className="pb-2">Date</th></tr></thead><tbody>{section.content.map((right: any, index: number) => (
-                            <tr key={`${right.deal_id}-${right.territory_id}-${right.scope_type}-${index}`} className="border-t border-slate-800/50"><td className="py-2 text-slate-300">{right.territory}</td><td className="py-2"><span className={`rounded px-2 py-0.5 text-xs ${String(right.scope_type).toLowerCase().includes('exclu') ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{right.scope_type}</span></td><td className="py-2 text-slate-400">{right.company_role}</td><td className="py-2 pr-3"><a href={`/deals/${right.deal_id}`} className="text-slate-300 hover:text-blue-400">{right.deal_title}</a>{right.assets?.length > 0 && <div className="text-xs text-slate-500">{right.assets.join(', ')}</div>}</td><td className="py-2 text-xs text-slate-500 whitespace-nowrap">{shortDate(right.date_start)}</td></tr>
+                            <tr key={`${right.deal_id}-${right.territory_id}-${right.scope_type}-${index}`} className="border-t border-slate-800/50"><td className="py-2 text-slate-300">{right.territory}</td><td className="py-2"><span className={`rounded px-2 py-0.5 text-xs ${String(right.scope_type).toLowerCase().includes('exclu') ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}>{right.scope_type}</span></td><td className="py-2 text-slate-400">{right.company_role}</td><td className="py-2 pr-3"><Link to={`/deals/${right.deal_id}`} className="text-slate-300 hover:text-blue-400">{right.deal_title}</Link>{right.assets?.length > 0 && <div className="text-xs text-slate-500">{right.assets.join(', ')}</div>}</td><td className="py-2 text-xs text-slate-500 whitespace-nowrap">{shortDate(right.date_start)}</td></tr>
                           ))}</tbody></table>
                         ) : <div className="mt-3 text-sm text-slate-500">No deal territory scope is available.</div>
                       ) : section.type === 'comparable_transactions' && Array.isArray(section.content) ? (
                         section.content.length > 0 ? (
                           <table className="w-full text-sm mt-3"><thead><tr className="text-left text-slate-500"><th className="pb-2">Comparable deal</th><th className="pb-2">Match</th><th className="pb-2">Phase</th><th className="pb-2">Value</th><th className="pb-2">Date</th></tr></thead><tbody>{section.content.map((comp: any) => (
-                            <tr key={comp.id} className="border-t border-slate-800/50"><td className="py-2 pr-3"><a href={`/deals/${comp.id}`} className="text-slate-300 hover:text-blue-400">{comp.title}</a><div className="text-xs text-slate-500">{[comp.principal, comp.partner].filter(Boolean).join(' → ')}</div></td><td className="py-2"><div className="text-xs font-medium text-blue-400">{comp.similarity_score}/9</div><div className="text-[11px] text-slate-500">{comp.match_reasons.join(', ')}</div></td><td className="py-2 text-slate-400">{comp.phase_at_signing || '—'}</td><td className="py-2 text-slate-300">{formatReportedAmount(comp.total_value, comp.currency, comp.unit)}</td><td className="py-2 text-xs text-slate-500 whitespace-nowrap">{shortDate(comp.date_start)}</td></tr>
+                            <tr key={comp.id} className="border-t border-slate-800/50"><td className="py-2 pr-3"><Link to={`/deals/${comp.id}`} className="text-slate-300 hover:text-blue-400">{comp.title}</Link><div className="text-xs text-slate-500">{[comp.principal, comp.partner].filter(Boolean).join(' → ')}</div></td><td className="py-2"><div className="text-xs font-medium text-blue-400">{comp.similarity_score}/9</div><div className="text-[11px] text-slate-500">{comp.match_reasons.join(', ')}</div></td><td className="py-2 text-slate-400">{comp.phase_at_signing || '—'}</td><td className="py-2 text-slate-300">{formatReportedAmount(comp.total_value, comp.currency, comp.unit)}</td><td className="py-2 text-xs text-slate-500 whitespace-nowrap">{shortDate(comp.date_start)}</td></tr>
                           ))}</tbody></table>
                         ) : <div className="mt-3 text-sm text-slate-500">No comparable transactions were found.</div>
+                      ) : section.type === 'risk_assessment' && Array.isArray(section.content) ? (
+                        section.content.length > 0 ? (
+                          <div className="space-y-2 mt-3">
+                            {section.content.map((flag: any, index: number) => (
+                              <div key={`${flag.category || 'risk'}-${index}`} className={`rounded-lg border px-3 py-2 ${
+                                flag.severity === 'high' ? 'border-red-500/30 bg-red-500/10 text-red-300' :
+                                flag.severity === 'medium' ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300' :
+                                'border-slate-700 bg-slate-800 text-slate-300'
+                              }`}>
+                                <div className="text-sm">{flag.flag}</div>
+                                {flag.category && <div className="text-[11px] opacity-70 mt-1">{String(flag.category).replace(/_/g, ' ')}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : <div className="mt-3 text-sm text-slate-500">No risk flags were identified from the available records. This is not evidence that no risks exist.</div>
                       ) : section.type === 'company_overview' && section.content ? (
                         <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
                           {Object.entries(section.content).filter(([k]) => k !== 'id').map(([key, val]) => (

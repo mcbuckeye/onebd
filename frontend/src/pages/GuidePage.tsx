@@ -26,7 +26,7 @@ export default function GuidePage() {
             <a href="#company-profiles" className="text-blue-400 hover:text-blue-300">Company Profiles</a>
             <a href="#drug-profiles" className="text-blue-400 hover:text-blue-300">Drug Profiles</a>
             <a href="#due-diligence" className="text-blue-400 hover:text-blue-300">Due Diligence</a>
-            <a href="#territory-rights" className="text-blue-400 hover:text-blue-300">Territory Rights</a>
+            <a href="#territory-rights" className="text-blue-400 hover:text-blue-300">Deal Territory Scope</a>
             <a href="#briefings" className="text-blue-400 hover:text-blue-300">Briefings</a>
             <a href="#partnership-network" className="text-blue-400 hover:text-blue-300">Partnership Network</a>
             <a href="#competitor-tracking" className="text-blue-400 hover:text-blue-300">Competitor Tracking</a>
@@ -99,7 +99,7 @@ export default function GuidePage() {
 
         {/* Search */}
         <Section id="search" icon={Search} title="Search">
-          <p className="text-slate-300 mb-4">Advanced multi-criteria search across 145K pharmaceutical deals from Cortellis.</p>
+          <p className="text-slate-300 mb-4">Advanced multi-criteria search across the currently synchronized Cortellis deal corpus.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Multi-Criteria Filters</h3>
           <p className="text-slate-400 mb-2">Filter deals by:</p>
@@ -113,7 +113,7 @@ export default function GuidePage() {
           </ul>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Disclosed-Only Toggle</h3>
-          <p className="text-slate-400 mb-4">Enable this to see only deals with disclosed financial terms (27% of all deals). This is critical for accurate valuation benchmarking.</p>
+          <p className="text-slate-400 mb-4">Enable this to restrict results to deals with a disclosed value. Always use the displayed eligible and disclosed N when interpreting valuation statistics.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Company Search</h3>
           <p className="text-slate-400 mb-4">Search by licensor, licensee, or both. Autocomplete helps you find companies quickly.</p>
@@ -138,7 +138,7 @@ export default function GuidePage() {
             <ul className="list-disc list-inside text-slate-400 space-y-1 ml-4">
               <li><span className="font-medium text-slate-300">N =</span> number of deals in the dataset for that filter</li>
               <li><span className="font-medium text-slate-300">Disclosure rate:</span> percentage of those N deals with disclosed financials</li>
-              <li>Overall platform disclosure rate is 27% (39,150 disclosed out of 145,000 total)</li>
+              <li>Disclosure varies by cohort and changes as synchronization and normalization progress; use the live N shown in the result.</li>
             </ul>
           </div>
           
@@ -224,20 +224,20 @@ export default function GuidePage() {
 
         {/* Drug Profiles */}
         <Section id="drug-profiles" icon={Pill} title="Drug Profiles">
-          <p className="text-slate-300 mb-4">Comprehensive drug/asset pages track deal history and current territory rights.</p>
+          <p className="text-slate-300 mb-4">Drug/asset pages summarize linked deal history and the latest territory-scope evidence found in deal records.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Deal History</h3>
-          <p className="text-slate-400 mb-4">See all deals involving this asset chronologically. Track value appreciation across development stages.</p>
+          <p className="text-slate-400 mb-4">See the bounded linked deal history returned for this asset. Disclosed total values are not equivalent to realized payments.</p>
           
-          <h3 className="text-lg font-semibold text-slate-200 mb-2">Territory Rights</h3>
-          <p className="text-slate-400 mb-4">View which territories are committed, terminated, or available for licensing. Critical for out-licensing strategy.</p>
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Deal Territory Scope</h3>
+          <p className="text-slate-400 mb-4">View territory and scope labels attached to sourced deals. These records do not establish current ownership, retained rights, termination, or availability without reviewing the underlying agreement and later events.</p>
           
           <ProTip>Look for assets with multiple deals at different stages to understand value inflection points.</ProTip>
         </Section>
 
         {/* Due Diligence */}
         <Section id="due-diligence" icon={Shield} title="Due Diligence">
-          <p className="text-slate-300 mb-4">Generate comprehensive due diligence packages for target companies or assets.</p>
+          <p className="text-slate-300 mb-4">Generate a sourced due-diligence starting package for target companies or assets. It is not a substitute for legal, regulatory, financial, or scientific diligence.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">How to Generate a DD Package</h3>
           <ol className="list-decimal list-inside text-slate-400 space-y-2 ml-4 mb-4">
@@ -267,32 +267,26 @@ export default function GuidePage() {
             </div>
           </div>
           
-          <ProTip>DD packages auto-update as new data arrives. Schedule weekly refreshes for active targets.</ProTip>
+          <ProTip>Regenerate a package after data updates and verify every material conclusion against its linked evidence.</ProTip>
         </Section>
 
         {/* Territory Rights */}
-        <Section id="territory-rights" icon={MapPin} title="Territory Rights">
-          <p className="text-slate-300 mb-4">Search and analyze territory rights across all assets in the database.</p>
+        <Section id="territory-rights" icon={MapPin} title="Deal Territory Scope">
+          <p className="text-slate-300 mb-4">Search territory and scope labels attached to deal records for an asset.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Searching by Drug</h3>
-          <p className="text-slate-400 mb-4">Enter a drug/asset name to see all territory commitments. Visualized on a world map with color-coding.</p>
+          <p className="text-slate-400 mb-4">Enter a drug/asset name to see linked deal-scope evidence, participants, dates, and statuses.</p>
           
-          <h3 className="text-lg font-semibold text-slate-200 mb-2">Understanding Rights Status</h3>
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Interpreting the Evidence</h3>
           <div className="bg-slate-800 rounded-lg p-4 mb-4">
             <ul className="space-y-2">
-              <li className="text-slate-400">
-                <span className="font-medium text-blue-400">Committed:</span> Territory is licensed to a partner under active agreement
-              </li>
-              <li className="text-slate-400">
-                <span className="font-medium text-red-400">Terminated:</span> Prior license was terminated or deal fell through
-              </li>
-              <li className="text-slate-400">
-                <span className="font-medium text-green-400">Available:</span> Territory is open for licensing (inferred from lack of commitment)
-              </li>
+              <li className="text-slate-400"><span className="font-medium text-blue-400">Territory:</span> Geographic label recorded for the cited deal.</li>
+              <li className="text-slate-400"><span className="font-medium text-purple-400">Scope:</span> Direction or scope label supplied by the source record when available.</li>
+              <li className="text-slate-400"><span className="font-medium text-amber-400">Status:</span> Status of that deal record, not a legal conclusion about present rights.</li>
             </ul>
           </div>
           
-          <ProTip>Terminated territories may signal regulatory issues or failed trials. Investigate before pursuing.</ProTip>
+          <ProTip>Do not infer availability from a missing record. Confirm current rights through contracts, amendments, and direct diligence.</ProTip>
         </Section>
 
         {/* Briefings */}
@@ -300,7 +294,7 @@ export default function GuidePage() {
           <p className="text-slate-300 mb-4">Generate executive briefings on therapeutic areas, companies, or market trends.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">On-Demand Briefings</h3>
-          <p className="text-slate-400 mb-4">Request a briefing on any topic. The system synthesizes deals, filings, and market data into a concise executive summary.</p>
+          <p className="text-slate-400 mb-4">Request a briefing topic. The current briefing is a deterministic summary of matching deal records and states its method and match count.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Topic Suggestions</h3>
           <p className="text-slate-400 mb-2">Not sure what to brief on? Try these:</p>
@@ -311,7 +305,7 @@ export default function GuidePage() {
             <li>"Preclinical asset valuations in rare disease"</li>
           </ul>
           
-          <ProTip>Briefings are shareable via URL. Great for board prep or investor presentations.</ProTip>
+          <ProTip>Copy a generated briefing into your governed work product; saved briefing persistence is not currently enabled.</ProTip>
         </Section>
 
         {/* Partnership Network */}
@@ -322,7 +316,7 @@ export default function GuidePage() {
           <p className="text-slate-400 mb-4">Enter a company to see its partnership network. Node size represents deal count, edge thickness represents total value.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Industry Overview</h3>
-          <p className="text-slate-400 mb-4">View the entire pharma partnership network. Filter by therapeutic area or deal type to see sub-ecosystems.</p>
+          <p className="text-slate-400 mb-4">View a bounded graph of normalized partnership relationships. Large graph views intentionally limit nodes and edges for performance.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Understanding Connections</h3>
           <p className="text-slate-400 mb-4">Direct connections = deals between two companies. Indirect = shared partners. Hover on edges to see deal details.</p>
@@ -351,7 +345,7 @@ export default function GuidePage() {
           <p className="text-slate-400 mb-4">Star individual deals from search results to add to your watchlist. Great for tracking specific transactions you're analyzing.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Saved Searches</h3>
-          <p className="text-slate-400 mb-4">Save complex filter combinations for quick re-running. Searches auto-refresh to include new deals matching criteria.</p>
+          <p className="text-slate-400 mb-4">Save complex filter combinations for quick re-running against the data available at execution time.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Search History</h3>
           <p className="text-slate-400 mb-4">Last 30 days of search activity. Click any to re-run or refine.</p>
@@ -364,7 +358,7 @@ export default function GuidePage() {
 
         {/* Contracts & Filings */}
         <Section id="contracts-filings" icon={ScrollText} title="Contracts & Filings">
-          <p className="text-slate-300 mb-4">Search across 314K EDGAR filings and 4.2M contract/filing chunks for specific language and clauses.</p>
+          <p className="text-slate-300 mb-4">Search the currently indexed EDGAR filings and Cortellis contract excerpts for specific language and clauses.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Semantic vs Full-Text Search</h3>
           <div className="bg-slate-800 rounded-lg p-4 mb-4">
@@ -374,25 +368,26 @@ export default function GuidePage() {
             <p className="text-slate-400">Exact phrase matching. Faster for known terms like "change of control"</p>
           </div>
           
-          <h3 className="text-lg font-semibold text-slate-200 mb-2">Searching Across 4.2M Chunks</h3>
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Searching Indexed Excerpts</h3>
           <p className="text-slate-400 mb-4">Each filing is split into semantic chunks. Search results show relevant chunks with context. Click to view full document.</p>
           
-          <ProTip>Use semantic for concept searches, full-text for specific clause hunting. Combine both for comprehensive analysis.</ProTip>
+          <ProTip>Use hybrid for a ranked blend, semantic for concepts, and full-text for known terms. Results are bounded excerpts, not proof that every relevant clause was found.</ProTip>
         </Section>
 
         {/* Data Notes */}
         <Section id="data-notes" icon={Lightbulb} title="Data Notes">
           <p className="text-slate-300 mb-4">Important context about the platform's data sources and limitations.</p>
           
-          <h3 className="text-lg font-semibold text-slate-200 mb-2">27% Financial Disclosure Rate</h3>
-          <p className="text-slate-400 mb-4">Only ~27% of pharmaceutical deals publicly disclose financial terms (39,150 out of 145,000 total in Cortellis). This is industry-standard. Most deals are announced without upfront/milestone details. When you see "N=..." in analytics, note the disclosure rate to assess statistical confidence.</p>
+          <h3 className="text-lg font-semibold text-slate-200 mb-2">Financial Disclosure Is Incomplete</h3>
+          <p className="text-slate-400 mb-4">Many pharmaceutical deals do not disclose financial terms. The live disclosed N and eligible N are the relevant denominators for each filter; do not generalize a platform-wide percentage to a specific cohort.</p>
           
           <h3 className="text-lg font-semibold text-slate-200 mb-2">Data Sources</h3>
           <div className="bg-slate-800 rounded-lg p-4 mb-4">
             <ul className="space-y-2 text-slate-400">
-              <li><span className="font-medium text-slate-300">Cortellis:</span> 145,000 pharmaceutical deals (1990-present) including licensing, collaborations, acquisitions</li>
-              <li><span className="font-medium text-slate-300">EDGAR:</span> 314,000 material agreement filings (8-K, 10-K exhibits) with full contract text</li>
-              <li><span className="font-medium text-slate-300">Coverage:</span> Global deals, all therapeutic areas, all development stages</li>
+              <li><span className="font-medium text-slate-300">Cortellis:</span> Licensed deal records and the companies, assets, indications, technologies, territories, and available contract material linked to them under the configured credential.</li>
+              <li><span className="font-medium text-slate-300">SEC EDGAR:</span> Public filings and indexed filing text for matched issuers.</li>
+              <li><span className="font-medium text-slate-300">Public enrichment:</span> ClinicalTrials.gov and selected public biology and identity sources where exact links are available.</li>
+              <li><span className="font-medium text-slate-300">Coverage:</span> Missing records and unresolved links are possible; zero results do not prove absence.</li>
             </ul>
           </div>
           
@@ -403,15 +398,13 @@ export default function GuidePage() {
           
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
             <p className="text-blue-300 font-medium mb-2">Data Freshness</p>
-            <p className="text-slate-400">Cortellis data updates weekly. EDGAR filings are processed within 24 hours of SEC posting. Last platform update shown in footer.</p>
+            <p className="text-slate-400">Open the dashboard health details for each source's last successful run, last data-changing run, source-data timestamp, lag, failures, and retry state. A successful no-op run does not mean the underlying data changed.</p>
           </div>
         </Section>
 
         {/* Footer */}
         <div className="mt-12 pt-6 border-t border-slate-800 text-center">
-          <p className="text-slate-500 text-sm">
-            Need help? Contact support at <a href="mailto:support@bdintel.com" className="text-blue-400 hover:text-blue-300">support@bdintel.com</a>
-          </p>
+          <p className="text-slate-500 text-sm">For access or data questions, contact your OneBD administrator.</p>
         </div>
       </div>
     </div>

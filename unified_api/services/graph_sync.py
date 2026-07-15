@@ -153,7 +153,7 @@ class GraphSyncService:
             title: Deal title
             announced_at: Announcement date (ISO format)
             status: Deal status
-            total_value: Total deal value in USD millions
+            total_value: Current projected total in USD millions, when disclosed
         """
         driver = self._get_driver()
 
@@ -546,6 +546,8 @@ class GraphSyncService:
                         f.total_projected_current_amount as total_value
                     FROM deals d
                     LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+                      AND f.total_projected_current_currency = 'USD'
+                      AND f.total_projected_current_unit = 'Million'
                     ORDER BY d.id
                     LIMIT :limit OFFSET :offset
                 """), {"limit": batch_size, "offset": offset})

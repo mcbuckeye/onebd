@@ -4,6 +4,7 @@ import { Send, Sparkles, Database, ChevronRight, Loader2, MessageSquare, Plus, T
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import api from '../lib/api';
+import { useToast } from '../contexts/ToastContext';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -13,6 +14,7 @@ interface Message {
   followUps?: string[];
   actions?: Array<{ label: string; type: string; params: any }>;
   sqlQuery?: string;
+  data?: Array<Record<string, unknown>>;
 }
 
 interface ConversationSummary {
@@ -24,6 +26,7 @@ interface ConversationSummary {
 }
 
 export default function ChatPage() {
+  const toast = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -108,91 +111,95 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      // Save user message (fire-and-forget, non-blocking)
-      api.post('/conversations/message', {
-        conversation_id: conversationId,
-        role: 'user',
-        content: msg,
-      }).then(saveRes => {
-        const convId = saveRes.data.conversation_id;
-        if (!conversationId) {
-          setConversationId(convId);
-          loadConversationList(); // Refresh list to show new conversation
-        }
+      let convId = conversationId;
+      try {
+        const saveRes = await api.post('/conversations/message', {
+          conversation_id: conversationId,
+          role: 'user',
+          content: msg,
+        });
+        convId = saveRes.data.conversation_id;
+        if (!conversationId) setConversationId(convId);
+      } catch (saveError) {
+        console.error('Failed to save user message:', saveError);
+      }
 
-        // Get AI response
-        api.post('/chat/v2', {
-          message: msg,
-          history: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
-        }).then(res => {
-          const assistantMsg: Message = {
-            role: 'assistant',
-            content: res.data.answer,
-            intent: res.data.intent,
-            confidence: res.data.confidence,
-            followUps: res.data.follow_ups,
-            actions: res.data.actions,
-            sqlQuery: res.data.sql_query,
-          };
-          setMessages(prev => [...prev, assistantMsg]);
+      const res = await api.post('/chat/v2', {
+        message: msg,
+        history: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+      });
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: res.data.answer,
+        intent: res.data.intent,
+        confidence: res.data.confidence,
+        followUps: res.data.follow_ups,
+        actions: res.data.actions,
+        sqlQuery: res.data.sql_query,
+        data: res.data.data,
+      };
+      setMessages(prev => [...prev, assistantMsg]);
 
-          // Save assistant message (fire-and-forget)
-          api.post('/conversations/message', {
+      if (convId) {
+        try {
+          await api.post('/conversations/message', {
             conversation_id: convId,
             role: 'assistant',
             content: res.data.answer,
             intent: res.data.intent,
-          }).catch(() => {});
-
-          loadConversationList(); // Refresh to update message count
-        }).catch((err: any) => {
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: `Error: ${err.response?.data?.detail || err.message || 'Request failed'}`,
-          }]);
-        }).finally(() => {
-          setLoading(false);
-          inputRef.current?.focus();
-        });
-      }).catch(() => {
-        // If save fails, still try to get response
-        api.post('/chat/v2', {
-          message: msg,
-          history: messages.slice(-10).map(m => ({ role: m.role, content: m.content })),
-        }).then(res => {
-          const assistantMsg: Message = {
-            role: 'assistant',
-            content: res.data.answer,
-            intent: res.data.intent,
-            confidence: res.data.confidence,
-            followUps: res.data.follow_ups,
-            actions: res.data.actions,
-            sqlQuery: res.data.sql_query,
-          };
-          setMessages(prev => [...prev, assistantMsg]);
-        }).catch((err: any) => {
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: `Error: ${err.response?.data?.detail || err.message || 'Request failed'}`,
-          }]);
-        }).finally(() => {
-          setLoading(false);
-          inputRef.current?.focus();
-        });
-      });
+          });
+        } catch (saveError) {
+          console.error('Failed to save assistant message:', saveError);
+        }
+      }
+      await loadConversationList();
     } catch (err: any) {
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: `Error: ${err.response?.data?.detail || err.message || 'Request failed'}`,
       }]);
+    } finally {
       setLoading(false);
       inputRef.current?.focus();
     }
   };
 
-  const handleAction = (action: { label: string; type: string; params: any }) => {
+  const handleAction = async (action: { label: string; type: string; params: any }, message: Message) => {
     if (action.type === 'navigate') {
       navigate(action.params.path);
+      return;
+    }
+    if (action.type === 'save_search') {
+      try {
+        const query = String(action.params?.query || '').trim();
+        await api.post('/saved-searches', {
+          name: query.slice(0, 100) || 'Ask search',
+          description: 'Saved from Ask',
+          criteria: { query },
+          is_alert: false,
+        });
+        toast.success('Search saved');
+      } catch (error) {
+        console.error('Save search failed:', error);
+        toast.error('Failed to save search');
+      }
+      return;
+    }
+    if (action.type === 'export' && message.data?.length) {
+      const columns = Array.from(new Set(message.data.flatMap(row => Object.keys(row))));
+      const escapeCell = (value: unknown) => {
+        let text = value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
+        if (/^[=+\-@]/.test(text)) text = `'${text}`;
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+      const csv = [columns.map(escapeCell).join(','), ...message.data.map(row => columns.map(column => escapeCell(row[column])).join(','))].join('\n');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'onebd-ask-results.csv';
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success('CSV exported');
     }
   };
 
@@ -224,6 +231,7 @@ export default function ChatPage() {
                 </div>
                 <button
                   onClick={(e) => deleteConversation(conv.id, e)}
+                  aria-label={`Delete conversation ${conv.title}`}
                   className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400"
                 >
                   <Trash2 className="w-3 h-3" />
@@ -262,7 +270,7 @@ export default function ChatPage() {
               <Sparkles className="w-12 h-12 text-blue-500/50 mx-auto mb-4" />
               <h2 className="text-xl font-semibold text-slate-300 mb-2">Ask anything about pharma deals</h2>
               <p className="text-sm text-slate-500 mb-6 max-w-md mx-auto">
-                Get synthesized answers with supporting data from 145K+ deals, 314K+ SEC filings, and 26K contracts.
+                Get evidence-aware answers from governed deals, SEC filings, contracts, trials, and public biology data.
               </p>
               <div className="flex flex-wrap gap-2 justify-center max-w-lg mx-auto">
                 {[
@@ -340,7 +348,7 @@ export default function ChatPage() {
                         {msg.actions.map(a => (
                           <button
                             key={a.label}
-                            onClick={() => handleAction(a)}
+                            onClick={() => handleAction(a, msg)}
                             className="px-3 py-1.5 bg-blue-600/10 border border-blue-500/30 rounded-lg text-xs text-blue-400 hover:bg-blue-600/20"
                           >
                             {a.label}
@@ -378,6 +386,7 @@ export default function ChatPage() {
             />
             <button
               type="submit"
+              aria-label="Send question"
               disabled={loading || !input.trim()}
               className="px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl transition-colors"
             >

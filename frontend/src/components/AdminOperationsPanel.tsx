@@ -35,6 +35,11 @@ interface RequestSummary {
   dropped_sql_spans: number;
   principals: number;
   error_rate: number;
+  server_errors: number;
+  server_error_rate: number;
+  client_rejections: number;
+  client_rejection_rate: number;
+  non_sql_time_ms: number | null;
 }
 
 interface OperationsSummary {
@@ -327,8 +332,8 @@ export default function AdminOperationsPanel() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard label="Requests" value={number(summary.requests.requests)} detail={`${number(summary.requests.principals)} active principals`} />
             <MetricCard label="p95 latency" value={duration(summary.requests.p95_ms)} detail={`p50 ${duration(summary.requests.p50_ms)} · p99 ${duration(summary.requests.p99_ms)}`} warning={Number(summary.requests.p95_ms) >= summary.slow_request_ms} />
-            <MetricCard label="Errors" value={`${(summary.requests.error_rate * 100).toFixed(2)}%`} detail={`${number(summary.requests.errors)} failed · ${number(summary.requests.slow_requests)} slow`} warning={summary.requests.errors > 0} />
-            <MetricCard label="SQL" value={number(summary.requests.sql_calls)} detail={`${duration(summary.requests.sql_time_ms)} database time · ${number(summary.requests.dropped_sql_spans)} dropped`} warning={summary.requests.dropped_sql_spans > 0} />
+            <MetricCard label="Server errors" value={`${(summary.requests.server_error_rate * 100).toFixed(2)}%`} detail={`${number(summary.requests.server_errors)} 5xx/exceptions · ${number(summary.requests.client_rejections)} expected 4xx`} warning={summary.requests.server_errors > 0} />
+            <MetricCard label="Execution time" value={duration(summary.requests.non_sql_time_ms)} detail={`${duration(summary.requests.sql_time_ms)} SQL · ${number(summary.requests.sql_calls)} statements`} warning={summary.requests.dropped_sql_spans > 0} />
           </div>
           <div className="grid gap-5 xl:grid-cols-2">
             <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
@@ -336,7 +341,7 @@ export default function AdminOperationsPanel() {
               <div className="mt-3 space-y-2">
                 {summary.by_channel.map((item) => (
                   <div key={item.channel} className="grid grid-cols-[1fr_auto_auto_auto] gap-4 rounded-lg bg-slate-900/70 px-3 py-2 text-xs">
-                    <span className="font-medium text-slate-300">{item.channel}</span><span className="text-slate-500">{number(item.requests)} calls</span><span className="text-slate-500">p95 {duration(item.p95_ms)}</span><span className={item.errors ? 'text-amber-300' : 'text-slate-600'}>{number(item.errors)} errors</span>
+                    <span className="font-medium text-slate-300">{item.channel}</span><span className="text-slate-500">{number(item.requests)} calls</span><span className="text-slate-500">p95 {duration(item.p95_ms)}</span><span className={item.server_errors ? 'text-red-300' : 'text-slate-600'}>{number(item.server_errors)} server / {number(item.client_rejections)} client</span>
                   </div>
                 ))}
                 {!summary.by_channel.length && <Empty>No request telemetry yet.</Empty>}
@@ -348,15 +353,15 @@ export default function AdminOperationsPanel() {
                 {summary.slow_routes.slice(0, 8).map((item) => (
                   <div key={`${item.method}-${item.route}`} className="rounded-lg bg-slate-900/70 px-3 py-2 text-xs">
                     <div className="flex justify-between gap-3"><code className="truncate text-cyan-300">{item.method} {item.route}</code><span className="whitespace-nowrap text-amber-300">{duration(item.p95_ms)}</span></div>
-                    <div className="mt-1 text-slate-600">{number(item.calls)} calls · {duration(item.sql_time_ms)} SQL · {number(item.errors)} errors</div>
+                    <div className="mt-1 text-slate-600">{number(item.calls)} calls · {duration(item.sql_time_ms)} SQL · {duration(item.non_sql_time_ms)} non-SQL · {number(item.errors)} HTTP errors</div>
                   </div>
                 ))}
               </div>
             </section>
           </div>
           {summary.recent_errors.length > 0 && (
-            <section className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
-              <h3 className="text-sm font-semibold text-red-200">Recent errors</h3>
+            <section className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+              <h3 className="text-sm font-semibold text-amber-200">Recent non-success responses</h3>
               <div className="mt-3 overflow-x-auto"><table className="w-full text-xs"><thead className="text-left text-slate-600"><tr><th className="py-2">Time</th><th>Channel</th><th>Request</th><th>Status</th><th>Duration</th></tr></thead><tbody className="divide-y divide-slate-800">{summary.recent_errors.map((item) => <tr key={item.request_id}><td className="py-2 text-slate-500">{date(item.started_at)}</td><td>{item.channel}</td><td><button className="font-mono text-cyan-300" onClick={() => openRequest(item.request_id)}>{item.method} {item.path}</button></td><td className="text-red-300">{item.status_code}</td><td>{duration(item.duration_ms)}</td></tr>)}</tbody></table></div>
             </section>
           )}
@@ -369,7 +374,7 @@ export default function AdminOperationsPanel() {
             <input value={requestFilters.path} onChange={(e) => setRequestFilters({ ...requestFilters, path: e.target.value })} placeholder="Path contains…" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs" />
             <input value={requestFilters.principal} onChange={(e) => setRequestFilters({ ...requestFilters, principal: e.target.value })} placeholder="User or API key…" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs" />
             <select value={requestFilters.channel} onChange={(e) => setRequestFilters({ ...requestFilters, channel: e.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs"><option value="">All channels</option><option value="api">API/UI</option><option value="mcp">MCP</option><option value="http">HTTP</option></select>
-            <select value={requestFilters.status} onChange={(e) => setRequestFilters({ ...requestFilters, status: e.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs"><option value="">All statuses</option><option value="success">Success</option><option value="errors">Errors</option></select>
+            <select value={requestFilters.status} onChange={(e) => setRequestFilters({ ...requestFilters, status: e.target.value })} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs"><option value="">All statuses</option><option value="success">Success</option><option value="server_errors">Server errors (5xx/exceptions)</option><option value="client_rejections">Client rejections (4xx)</option><option value="errors">All non-success</option></select>
             <input type="number" value={requestFilters.minDuration} onChange={(e) => setRequestFilters({ ...requestFilters, minDuration: e.target.value })} placeholder="Minimum ms" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs" />
             <button onClick={() => requestOffset ? setRequestOffset(0) : load('requests')} className="inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-medium hover:bg-cyan-500"><Search className="h-4 w-4" /> Apply ({number(requestTotal)})</button>
           </div>
@@ -405,7 +410,7 @@ export default function AdminOperationsPanel() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{databases.databases.map((database: any) => <button key={database.name} onClick={() => setSelectedDatabase(database.name)} className={`rounded-lg border px-4 py-2 text-xs ${selectedDatabase === database.name ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300' : 'border-slate-700 text-slate-500'}`}>{database.name}</button>)}</div><button onClick={snapshot} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300"><Clock3 className="h-4 w-4" /> Capture schema snapshot</button></div>
           {activeDatabase?.error ? <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-300">{activeDatabase.name}: {activeDatabase.error}</div> : activeDatabase && <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><MetricCard label="Database size" value={bytes(activeDatabase.overview.database_bytes)} /><MetricCard label="Connections" value={number(activeDatabase.connections.total)} detail={`${number(activeDatabase.connections.active)} active · ${number(activeDatabase.connections.waiting)} waiting`} warning={activeDatabase.connections.waiting > 0} /><MetricCard label="Cache hit" value={`${(Number(activeDatabase.overview.cache_hit_ratio || 0) * 100).toFixed(2)}%`} /><MetricCard label="Deadlocks" value={number(activeDatabase.overview.deadlocks)} warning={activeDatabase.overview.deadlocks > 0} /><MetricCard label="pg_stat_statements" value={activeDatabase.pg_stat_statements.available ? 'Active' : 'Unavailable'} detail={activeDatabase.settings.track_io_timing === 'on' ? 'I/O timing active' : 'I/O timing disabled'} warning={!activeDatabase.pg_stat_statements.available} /></div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><MetricCard label="Database size" value={bytes(activeDatabase.overview.database_bytes)} /><MetricCard label="Connections" value={number(activeDatabase.connections.total)} detail={`${number(activeDatabase.connections.active)} active · ${number(activeDatabase.connections.waiting)} waiting`} warning={activeDatabase.connections.waiting > 0} /><MetricCard label="Cache hit since reset" value={`${(Number(activeDatabase.overview.cache_hit_ratio || 0) * 100).toFixed(2)}%`} detail={`Stats reset ${date(activeDatabase.overview.stats_reset)}`} /><MetricCard label="Deadlocks since reset" value={number(activeDatabase.overview.deadlocks)} detail={`Stats reset ${date(activeDatabase.overview.stats_reset)}`} warning={activeDatabase.overview.deadlocks > 0} /><MetricCard label="pg_stat_statements" value={activeDatabase.pg_stat_statements.available ? 'Active' : 'Unavailable'} detail={activeDatabase.settings.track_io_timing === 'on' ? 'I/O timing active' : 'I/O timing disabled'} warning={!activeDatabase.pg_stat_statements.available} /></div>
             {activeDatabase.recommendations?.length > 0 && <section className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"><h3 className="text-sm font-semibold text-amber-200">Review opportunities</h3><div className="mt-3 grid gap-2 md:grid-cols-2">{activeDatabase.recommendations.slice(0, 12).map((item: any, index: number) => <div key={`${item.object}-${index}`} className="rounded-lg bg-slate-950/60 p-3 text-xs"><div className="font-mono text-amber-300">{item.object}</div><div className="mt-1 text-slate-500">{item.detail}</div></div>)}</div></section>}
             <section className="rounded-xl border border-slate-800"><div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold text-slate-200">Largest tables and scan behavior</div><div className="max-h-[520px] overflow-auto"><table className="w-full min-w-[1000px] text-xs"><thead className="sticky top-0 bg-slate-900 text-left text-slate-600"><tr><th className="px-3 py-2">Table</th><th>Size</th><th>Live / dead rows</th><th>Sequential scans</th><th>Index scans</th><th>Last analyze</th></tr></thead><tbody className="divide-y divide-slate-800">{activeDatabase.tables.map((item: any) => <tr key={`${item.schema_name}.${item.table_name}`}><td className="px-3 py-2 font-mono text-cyan-300">{item.schema_name}.{item.table_name}</td><td>{bytes(item.total_bytes)} <span className="text-slate-700">({bytes(item.index_bytes)} idx)</span></td><td>{number(item.n_live_tup)} / <span className={item.n_dead_tup > item.n_live_tup * .2 ? 'text-amber-300' : 'text-slate-600'}>{number(item.n_dead_tup)}</span></td><td>{number(item.seq_scan)} · {number(item.seq_tup_read)} rows</td><td>{number(item.idx_scan)}</td><td className="text-slate-600">{date(item.last_autoanalyze || item.last_analyze)}</td></tr>)}</tbody></table></div></section>
             {activeDatabase.active_queries?.length > 0 && <section className="rounded-xl border border-slate-800"><div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold text-slate-200">Active database work</div><div className="max-h-[320px] overflow-auto"><table className="w-full min-w-[1000px] text-xs"><thead className="sticky top-0 bg-slate-900 text-left text-slate-600"><tr><th className="px-3 py-2">Runtime</th><th>User / application</th><th>State / wait</th><th>Query shape</th></tr></thead><tbody className="divide-y divide-slate-800">{activeDatabase.active_queries.map((item: any) => <tr key={item.pid}><td className="px-3 py-2 text-amber-300">{duration(item.duration_ms)}</td><td><div>{item.usename}</div><div className="text-slate-600">{item.application_name || '—'}</div></td><td><div>{item.state}</div><div className="text-slate-600">{item.wait_event_type || '—'} {item.wait_event || ''}</div></td><td className="max-w-[620px]"><code className="line-clamp-3 text-cyan-300">{item.normalized_sql}</code></td></tr>)}</tbody></table></div></section>}

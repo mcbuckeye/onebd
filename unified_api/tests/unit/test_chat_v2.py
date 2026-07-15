@@ -62,6 +62,40 @@ def test_common_governed_questions_bypass_llm_intent_classification():
     assert not _is_governed_sql_query("Search contract indemnification language")
 
 
+def test_bare_company_name_gets_governed_overview_query():
+    from unified_api.routers.chat import _build_governed_sql
+
+    sql = _build_governed_sql("Hanchor Bio", [{
+        "status": "resolved",
+        "company_id": 42,
+        "mention": "Hanchor Bio",
+        "canonical_name": "Hanchor Bio Inc",
+    }])
+
+    assert "company.id = 42" in sql
+    assert "disclosed_deal_count" in sql
+    assert "company_name" in sql
+
+
+def test_adc_ranking_uses_deterministic_evidence_aware_synthesis():
+    from unified_api.routers.chat import _governed_synthesis
+
+    synthesis = _governed_synthesis("largest oncology ADC deals", [{
+        "id": 7,
+        "title": "Example ADC license",
+        "status": "Active",
+        "date_start": "2025-01-02",
+        "adc_technologies": "Antibody-drug conjugate",
+        "total_value_usd_millions": 900,
+        "eligible_deal_count": 10,
+        "disclosed_deal_count": 4,
+    }])
+
+    assert "Example ADC license" in synthesis["answer"]
+    assert "4 of 10" in synthesis["answer"]
+    assert synthesis["confidence"]["disclosure_rate"] == 40.0
+
+
 async def test_chat_v2_governed_sql_uses_only_final_synthesis(monkeypatch):
     from unified_api.routers import chat
 

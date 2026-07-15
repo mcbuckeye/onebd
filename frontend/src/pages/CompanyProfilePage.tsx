@@ -22,6 +22,14 @@ function formatValue(v: number | null): string {
   return `$${v.toFixed(0)}M`;
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const parsed = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value,
+  );
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+}
+
 export default function CompanyProfilePage() {
   const { companyId } = useParams();
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
@@ -96,15 +104,16 @@ export default function CompanyProfilePage() {
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         {[
-          { label: 'Total Deals', value: deal_summary.total_deals?.toString() || '0' },
-          { label: 'As Principal', value: deal_summary.as_principal?.toString() || '0' },
-          { label: 'As Partner', value: deal_summary.as_partner?.toString() || '0' },
-          { label: 'Avg Deal Value', value: formatValue(deal_summary.avg_deal_value) },
-          { label: 'Total Value', value: formatValue(deal_summary.total_deal_value) },
+          { label: 'Unique Deals', value: deal_summary.total_deals?.toString() || '0' },
+          { label: 'Principal Role', value: deal_summary.as_principal?.toString() || '0' },
+          { label: 'Partner Role', value: deal_summary.as_partner?.toString() || '0' },
+          { label: 'Avg Disclosed Total', value: formatValue(deal_summary.avg_deal_value), detail: `${profile.deals_with_disclosed_value} disclosed deals` },
+          { label: 'Sum Disclosed Totals', value: formatValue(deal_summary.total_deal_value), detail: profile.financial_value_unit },
         ].map(kpi => (
           <div key={kpi.label} className="bg-slate-900 border border-slate-800 rounded-lg p-3">
             <div className="text-xs text-slate-500">{kpi.label}</div>
             <div className="text-lg font-bold text-slate-200 mt-1">{kpi.value}</div>
+            {kpi.detail && <div className="mt-1 text-[10px] text-slate-600">{kpi.detail}</div>}
           </div>
         ))}
       </div>
@@ -203,7 +212,7 @@ export default function CompanyProfilePage() {
                   <Link to={`/filings/${f.id}`} className="text-slate-300 hover:text-blue-400">
                     {f.doc_type || 'Filing'}
                   </Link>
-                  <span className="text-slate-500 text-xs">{f.filing_date}</span>
+                  <span className="text-slate-500 text-xs">{formatDate(f.filing_date)}</span>
                 </div>
               ))}
             </div>
@@ -372,10 +381,10 @@ export default function CompanyProfilePage() {
           <tbody>
             {recent_deals?.map((d: any) => (
               <tr key={d.id} className="border-t border-slate-800/50">
-                <td className="py-2 text-slate-200">{d.title}</td>
+                <td className="py-2"><Link to={`/deals/${d.id}`} className="text-slate-200 hover:text-blue-400">{d.title}</Link></td>
                 <td className="py-2 text-slate-400 text-xs">{d.deal_type || d.agreement_type || '—'}</td>
                 <td className="py-2 text-slate-300">{formatValue(d.total_value)}</td>
-                <td className="py-2 text-slate-500 text-xs">{d.date_start || '—'}</td>
+                <td className="py-2 text-slate-500 text-xs">{formatDate(d.date_start)}</td>
               </tr>
             ))}
           </tbody>

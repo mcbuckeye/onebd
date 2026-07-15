@@ -95,6 +95,7 @@ export interface CompanyProfile {
   avg_deal_value: number | null;
   total_deal_value: number | null;
   deals_with_disclosed_value: number;
+  financial_value_unit: string;
   deals_by_year: Array<{
     year: number;
     deal_count: number;
@@ -231,6 +232,10 @@ export interface DrugProfile {
   }>;
   rights_holders: Array<{
     territory: string;
+    scope_type?: string | null;
+    deal_status?: string | null;
+    deal_participants?: string[];
+    evidence_note?: string;
     rights_holder: string | null;
     rights_holder_id: number | null;
     deal_id: number | null;

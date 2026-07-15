@@ -29,6 +29,7 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(false);
   const [companySearch, setCompanySearch] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [error, setError] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -36,17 +37,22 @@ export default function GraphPage() {
   // Company autocomplete
   useEffect(() => {
     if (companySearch.length < 2) { setSuggestions([]); return; }
+    let active = true;
     const timer = setTimeout(() => {
       api.get(`/search/autocomplete/companies?q=${encodeURIComponent(companySearch)}&limit=8`)
-        .then(r => setSuggestions(r.data.suggestions || []))
-        .catch(() => {});
+        .then(r => { if (active) setSuggestions(r.data.suggestions || []); })
+        .catch(() => { if (active) setSuggestions([]); });
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [companySearch]);
 
   // Load network for company
   const loadCompanyNetwork = async (companyId: number) => {
     setLoading(true);
+    setError('');
     try {
       const resp = await api.get(`/graph/partnership-network/${companyId}`);
       const data = resp.data;
@@ -56,7 +62,7 @@ export default function GraphPage() {
         id: String(n.id),
         name: n.name || n.label,
         val: Math.max(3, Math.sqrt(n.deal_count || n.size || 1) * 3),
-        color: n.id === companyId ? '#3b82f6' : '#6366f1',
+        color: String(n.id) === String(companyId) ? '#3b82f6' : '#6366f1',
         company_type: n.company_type,
       }));
 
@@ -68,8 +74,11 @@ export default function GraphPage() {
       }));
 
       setGraphData({ nodes, links });
-    } catch (e) {
+      if (nodes.length === 0) setError('No partnership network was found for this company.');
+    } catch (e: any) {
       console.error(e);
+      setGraphData(null);
+      setError(e.response?.data?.detail || 'The company network could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -78,6 +87,7 @@ export default function GraphPage() {
   // Load industry-wide network
   const loadIndustryNetwork = async () => {
     setLoading(true);
+    setError('');
     try {
       const resp = await api.get('/graph/industry-network?limit=50');
       const data = resp.data;
@@ -98,8 +108,11 @@ export default function GraphPage() {
       }));
 
       setGraphData({ nodes, links });
-    } catch (e) {
+      if (nodes.length === 0) setError('No industry network data is currently available.');
+    } catch (e: any) {
       console.error(e);
+      setGraphData(null);
+      setError(e.response?.data?.detail || 'The industry network could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -114,11 +127,18 @@ export default function GraphPage() {
         </div>
         <button
           onClick={loadIndustryNetwork}
-          className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300 hover:bg-slate-700"
+          disabled={loading}
+          className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50"
         >
           Industry Overview
         </button>
       </div>
+
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
 
       {/* Company search */}
       <div className="relative mb-6 max-w-md">
@@ -216,7 +236,7 @@ export default function GraphPage() {
               <div>
                 <span className="text-slate-500">Top connections:</span>
                 <div className="mt-2 space-y-1">
-                  {graphData.links
+                  {[...graphData.links]
                     .sort((a, b) => b.deal_count - a.deal_count)
                     .slice(0, 10)
                     .map((link, i) => {

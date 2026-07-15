@@ -173,6 +173,8 @@ async def get_market_trends(
             COUNT(f.total_projected_current_amount) as disclosed_count
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
           AND d.date_start >= CURRENT_DATE - INTERVAL ':years years'
         GROUP BY {order_expr}
@@ -189,8 +191,8 @@ async def get_market_trends(
             TrendDataPoint(
                 period=str(row.period),
                 deal_count=row.deal_count,
-                total_value=float(row.total_value) if row.total_value else None,
-                avg_value=float(row.avg_value) if row.avg_value else None,
+                total_value=float(row.total_value) if row.total_value is not None else None,
+                avg_value=float(row.avg_value) if row.avg_value is not None else None,
                 disclosed_count=row.disclosed_count,
             )
             for row in result
@@ -256,9 +258,10 @@ async def get_valuations_by_phase(
             PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY f.total_projected_current_amount) as q3_value
         FROM deal_phases dp
         JOIN deals d ON d.id = dp.deal_id
-        JOIN deal_finance_summary f ON f.deal_id = d.id
-        WHERE f.total_projected_current_amount IS NOT NULL
-          AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
+        LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
+        WHERE d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY dp.stage
         ORDER BY
             CASE dp.stage
@@ -282,12 +285,12 @@ async def get_valuations_by_phase(
                 category=row.phase,
                 deal_count=row.deal_count,
                 disclosed_count=row.disclosed_count,
-                min_value=float(row.min_value) if row.min_value else None,
-                max_value=float(row.max_value) if row.max_value else None,
-                avg_value=float(row.avg_value) if row.avg_value else None,
-                median_value=float(row.median_value) if row.median_value else None,
-                q1_value=float(row.q1_value) if row.q1_value else None,
-                q3_value=float(row.q3_value) if row.q3_value else None,
+                min_value=float(row.min_value) if row.min_value is not None else None,
+                max_value=float(row.max_value) if row.max_value is not None else None,
+                avg_value=float(row.avg_value) if row.avg_value is not None else None,
+                median_value=float(row.median_value) if row.median_value is not None else None,
+                q1_value=float(row.q1_value) if row.q1_value is not None else None,
+                q3_value=float(row.q3_value) if row.q3_value is not None else None,
             )
             for row in result
         ]
@@ -329,9 +332,10 @@ async def get_valuations_by_indication(
         FROM deal_indications di
         JOIN deals d ON d.id = di.deal_id
         JOIN indications i ON i.id = di.indication_id
-        JOIN deal_finance_summary f ON f.deal_id = d.id
-        WHERE f.total_projected_current_amount IS NOT NULL
-          AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
+        LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
+        WHERE d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY i.name
         HAVING COUNT(*) >= :min_deals
         ORDER BY deal_count DESC
@@ -346,12 +350,12 @@ async def get_valuations_by_indication(
                 category=row.indication,
                 deal_count=row.deal_count,
                 disclosed_count=row.disclosed_count,
-                min_value=float(row.min_value) if row.min_value else None,
-                max_value=float(row.max_value) if row.max_value else None,
-                avg_value=float(row.avg_value) if row.avg_value else None,
-                median_value=float(row.median_value) if row.median_value else None,
-                q1_value=float(row.q1_value) if row.q1_value else None,
-                q3_value=float(row.q3_value) if row.q3_value else None,
+                min_value=float(row.min_value) if row.min_value is not None else None,
+                max_value=float(row.max_value) if row.max_value is not None else None,
+                avg_value=float(row.avg_value) if row.avg_value is not None else None,
+                median_value=float(row.median_value) if row.median_value is not None else None,
+                q1_value=float(row.q1_value) if row.q1_value is not None else None,
+                q3_value=float(row.q3_value) if row.q3_value is not None else None,
             )
             for row in result
         ]
@@ -389,9 +393,10 @@ async def get_valuations_by_deal_type(
             PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY f.total_projected_current_amount) as q1_value,
             PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY f.total_projected_current_amount) as q3_value
         FROM deals d
-        JOIN deal_finance_summary f ON f.deal_id = d.id
-        WHERE f.total_projected_current_amount IS NOT NULL
-          AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
+        LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
+        WHERE d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY COALESCE(NULLIF(d.deal_type, ''), 'Unspecified')
         ORDER BY deal_count DESC
     """
@@ -404,12 +409,12 @@ async def get_valuations_by_deal_type(
                 category=row.deal_type,
                 deal_count=row.deal_count,
                 disclosed_count=row.disclosed_count,
-                min_value=float(row.min_value) if row.min_value else None,
-                max_value=float(row.max_value) if row.max_value else None,
-                avg_value=float(row.avg_value) if row.avg_value else None,
-                median_value=float(row.median_value) if row.median_value else None,
-                q1_value=float(row.q1_value) if row.q1_value else None,
-                q3_value=float(row.q3_value) if row.q3_value else None,
+                min_value=float(row.min_value) if row.min_value is not None else None,
+                max_value=float(row.max_value) if row.max_value is not None else None,
+                avg_value=float(row.avg_value) if row.avg_value is not None else None,
+                median_value=float(row.median_value) if row.median_value is not None else None,
+                q1_value=float(row.q1_value) if row.q1_value is not None else None,
+                q3_value=float(row.q3_value) if row.q3_value is not None else None,
             )
             for row in result
         ]
@@ -486,6 +491,8 @@ async def get_top_deals(
              WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner
         FROM deals d
         JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         ORDER BY f.total_projected_current_amount DESC
         LIMIT :limit
@@ -578,6 +585,8 @@ async def get_top_acquirers(
         JOIN companies c ON c.id = dc.company_id
         JOIN deals d ON d.id = dc.deal_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         GROUP BY c.id, c.name, c.company_type
         ORDER BY deal_count DESC
@@ -593,8 +602,8 @@ async def get_top_acquirers(
                 "name": row.name,
                 "company_type": row.company_type,
                 "deal_count": row.deal_count,
-                "total_value": float(row.total_value) if row.total_value else None,
-                "avg_value": float(row.avg_value) if row.avg_value else None,
+                "total_value": float(row.total_value) if row.total_value is not None else None,
+                "avg_value": float(row.avg_value) if row.avg_value is not None else None,
                 "disclosed_count": row.disclosed_count,
             }
             for row in result
@@ -634,6 +643,8 @@ async def get_deal_activity_summary():
         disclosed_deals = session.execute(text("""
             SELECT COUNT(*) FROM deal_finance_summary
             WHERE total_projected_current_amount IS NOT NULL
+              AND total_projected_current_currency = 'USD'
+              AND total_projected_current_unit = 'Million'
         """)).scalar()
 
         # Total companies
@@ -737,6 +748,8 @@ async def get_geographic_distribution(
         JOIN deals d ON d.id = dt.deal_id
         LEFT JOIN therapy_areas ta ON ta.id = d.therapy_area_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         GROUP BY t.id, t.name
         ORDER BY deal_count DESC
@@ -751,8 +764,8 @@ async def get_geographic_distribution(
                 "territory_code": row.territory_code,
                 "territory_name": row.territory_name,
                 "deal_count": row.deal_count,
-                "total_value": float(row.total_value) if row.total_value else None,
-                "avg_value": float(row.avg_value) if row.avg_value else None,
+                "total_value": float(row.total_value) if row.total_value is not None else None,
+                "avg_value": float(row.avg_value) if row.avg_value is not None else None,
                 "disclosed_count": row.disclosed_count,
             }
             for row in result
@@ -805,6 +818,8 @@ async def get_agreement_type_distribution(
         FROM deals d
         LEFT JOIN therapy_areas ta ON ta.id = d.therapy_area_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         GROUP BY d.agreement_type
         ORDER BY deal_count DESC
@@ -820,8 +835,8 @@ async def get_agreement_type_distribution(
                 "agreement_type": row.agreement_type,
                 "category": row.category,
                 "deal_count": row.deal_count,
-                "total_value": float(row.total_value) if row.total_value else None,
-                "avg_value": float(row.avg_value) if row.avg_value else None,
+                "total_value": float(row.total_value) if row.total_value is not None else None,
+                "avg_value": float(row.avg_value) if row.avg_value is not None else None,
                 "disclosed_count": row.disclosed_count,
             }
             types.append(entry)
@@ -830,7 +845,7 @@ async def get_agreement_type_distribution(
             if cat not in categories:
                 categories[cat] = {"deal_count": 0, "total_value": 0}
             categories[cat]["deal_count"] += row.deal_count
-            if row.total_value:
+            if row.total_value is not None:
                 categories[cat]["total_value"] += float(row.total_value)
 
     return {
@@ -878,6 +893,8 @@ async def get_deal_status_funnel(
             COUNT(f.total_projected_current_amount) as disclosed_count
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         GROUP BY d.status
         ORDER BY
@@ -907,7 +924,7 @@ async def get_deal_status_funnel(
             {
                 "status": row.status or "Unknown",
                 "deal_count": row.deal_count,
-                "total_value": float(row.total_value) if row.total_value else None,
+                "total_value": float(row.total_value) if row.total_value is not None else None,
                 "disclosed_count": row.disclosed_count,
             }
             for row in status_result
@@ -961,6 +978,8 @@ async def get_therapy_area_heatmap(
         FROM deals d
         JOIN therapy_areas ta ON ta.id = d.therapy_area_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
           AND ta.name NOT IN ('Not Applicable', 'Unknown')
         GROUP BY ta.name, EXTRACT(YEAR FROM d.date_start)::int
@@ -1047,6 +1066,8 @@ async def get_ma_analytics(
             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY f.total_projected_current_amount) as median_value
         FROM deals d
         JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE d.agreement_type = 'Company - M&A (in whole or part)'
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
           AND f.total_projected_current_amount IS NOT NULL
@@ -1076,6 +1097,8 @@ async def get_ma_analytics(
         FROM deals d
         JOIN deal_ma_summary ma ON ma.deal_id = d.id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE d.agreement_type = 'Company - M&A (in whole or part)'
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
           AND (ma.price_per_share IS NOT NULL OR f.total_projected_current_amount IS NOT NULL)
@@ -1093,6 +1116,8 @@ async def get_ma_analytics(
             COUNT(f.total_projected_current_amount) as disclosed_count
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE d.agreement_type = 'Company - M&A (in whole or part)'
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY EXTRACT(YEAR FROM d.date_start)::int
@@ -1108,6 +1133,8 @@ async def get_ma_analytics(
         FROM deals d
         JOIN deal_ma_summary ma ON ma.deal_id = d.id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE d.agreement_type = 'Company - M&A (in whole or part)'
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY COALESCE(ma.attitude, 'Not Specified')
@@ -1124,10 +1151,10 @@ async def get_ma_analytics(
                 "id": row.id,
                 "title": row.title,
                 "date_start": row.date_start,
-                "deal_value": float(row.deal_value) if row.deal_value else None,
+                "deal_value": float(row.deal_value) if row.deal_value is not None else None,
                 "target": row.target,
                 "acquirer": row.acquirer,
-                "price_per_share": float(row.price_per_share) if row.price_per_share else None,
+                "price_per_share": float(row.price_per_share) if row.price_per_share is not None else None,
                 "attitude": row.attitude,
                 "ownership": row.ownership,
             }
@@ -1151,8 +1178,8 @@ async def get_ma_analytics(
             {
                 "year": row.year,
                 "deal_count": row.deal_count,
-                "total_value": float(row.total_value) if row.total_value else None,
-                "avg_value": float(row.avg_value) if row.avg_value else None,
+                "total_value": float(row.total_value) if row.total_value is not None else None,
+                "avg_value": float(row.avg_value) if row.avg_value is not None else None,
                 "disclosed_count": row.disclosed_count,
             }
             for row in yearly_result
@@ -1163,7 +1190,7 @@ async def get_ma_analytics(
             {
                 "attitude": row.attitude,
                 "deal_count": row.deal_count,
-                "avg_value": float(row.avg_value) if row.avg_value else None,
+                "avg_value": float(row.avg_value) if row.avg_value is not None else None,
             }
             for row in attitude_result
         ]
@@ -1172,9 +1199,9 @@ async def get_ma_analytics(
         "summary": {
             "total_ma_deals": stats.total_ma_deals if stats else 0,
             "disclosed_count": stats.disclosed_count if stats else 0,
-            "total_value": float(stats.total_value) if stats and stats.total_value else None,
-            "avg_value": float(stats.avg_value) if stats and stats.avg_value else None,
-            "median_value": float(stats.median_value) if stats and stats.median_value else None,
+            "total_value": float(stats.total_value) if stats and stats.total_value is not None else None,
+            "avg_value": float(stats.avg_value) if stats and stats.avg_value is not None else None,
+            "median_value": float(stats.median_value) if stats and stats.median_value is not None else None,
         },
         "top_deals": top_deals,
         "by_year": yearly,
@@ -1222,6 +1249,8 @@ async def get_company_comparison(
         JOIN companies c ON c.id = dc.company_id
         JOIN deals d ON d.id = dc.deal_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE c.id = ANY(:ids)
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY c.id, c.name, c.company_type, dc.role
@@ -1267,6 +1296,8 @@ async def get_company_comparison(
         FROM deal_companies dc
         JOIN deals d ON d.id = dc.deal_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE dc.company_id = ANY(:ids)
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY dc.company_id, EXTRACT(YEAR FROM d.date_start)::int
@@ -1292,12 +1323,12 @@ async def get_company_comparison(
                 }
             companies[cid]["by_role"][row.role] = {
                 "deal_count": row.deal_count,
-                "total_value": float(row.total_value) if row.total_value else None,
-                "avg_value": float(row.avg_value) if row.avg_value else None,
+                "total_value": float(row.total_value) if row.total_value is not None else None,
+                "avg_value": float(row.avg_value) if row.avg_value is not None else None,
                 "disclosed_count": row.disclosed_count,
             }
             companies[cid]["total_deals"] += row.deal_count
-            if row.total_value:
+            if row.total_value is not None:
                 companies[cid]["total_value"] += float(row.total_value)
 
         # Indications
@@ -1329,7 +1360,7 @@ async def get_company_comparison(
                 companies[cid]["yearly_trend"].append({
                     "year": row.year,
                     "deal_count": row.deal_count,
-                    "total_value": float(row.total_value) if row.total_value else None,
+                    "total_value": float(row.total_value) if row.total_value is not None else None,
                 })
 
     return {"companies": list(companies.values())}
@@ -1377,6 +1408,8 @@ async def get_yoy_growth(
         FROM deals d
         LEFT JOIN therapy_areas ta ON ta.id = d.therapy_area_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+          AND f.total_projected_current_currency = 'USD'
+          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         GROUP BY EXTRACT(YEAR FROM d.date_start)::int
         ORDER BY year ASC
@@ -1393,8 +1426,8 @@ async def get_yoy_growth(
         entry = {
             "year": row.year,
             "deal_count": row.deal_count,
-            "total_value": float(row.total_value) if row.total_value else None,
-            "avg_value": float(row.avg_value) if row.avg_value else None,
+            "total_value": float(row.total_value) if row.total_value is not None else None,
+            "avg_value": float(row.avg_value) if row.avg_value is not None else None,
             "disclosed_count": row.disclosed_count,
         }
 

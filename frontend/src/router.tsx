@@ -23,6 +23,7 @@ const ChatPage = lazy(() => import('./pages/ChatPage'));
 const AgenticRagPage = lazy(() => import('./pages/AgenticRagPage'));
 const CompanyProfilePage = lazy(() => import('./pages/CompanyProfilePage'));
 const DrugProfilePage = lazy(() => import('./pages/DrugProfilePage'));
+const DealPage = lazy(() => import('./pages/DealPage'));
 const CompBuilderPage = lazy(() => import('./pages/CompBuilderPage'));
 const DDPage = lazy(() => import('./pages/DDPage'));
 const TerritoryPage = lazy(() => import('./pages/TerritoryPage'));
@@ -76,6 +77,7 @@ export const router = createBrowserRouter([
       { path: 'agentic-rag', element: withErrorBoundary(AgenticRagPage) },
       { path: 'company/:companyId', element: withErrorBoundary(CompanyProfilePage) },
       { path: 'drug/:drugId', element: withErrorBoundary(DrugProfilePage) },
+      { path: 'deals/:dealId', element: withErrorBoundary(DealPage) },
       { path: 'guide', element: withErrorBoundary(GuidePage) },
       { path: 'admin', element: withErrorBoundary(AdminPage) },
       { path: 'settings', element: withErrorBoundary(SettingsPage) },

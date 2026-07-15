@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Scale, Save, Info, TrendingUp, FileDown } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '../lib/api';
 import EmptyState from '../components/EmptyState';
@@ -11,6 +12,12 @@ function formatValue(v: number | null): string {
   return `$${v.toFixed(0)}M`;
 }
 
+function formatDate(value: string | null): string {
+  if (!value) return '—';
+  const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
+  return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleDateString();
+}
+
 export default function CompBuilderPage() {
   const toast = useToast();
   const [criteria, setCriteria] = useState({
@@ -20,6 +27,7 @@ export default function CompBuilderPage() {
     deal_type: '',
     date_from: '',
     date_to: '',
+    include_terminated: false,
   });
   const [results, setResults] = useState<any>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -28,6 +36,11 @@ export default function CompBuilderPage() {
   const [showSave, setShowSave] = useState(false);
 
   const search = async () => {
+    const hasCriterion = Object.entries(criteria).some(([key, value]) => key !== 'include_terminated' && Boolean(value));
+    if (!hasCriterion) {
+      toast.error('Add at least one comparison criterion');
+      return;
+    }
     setLoading(true);
     try {
       const body: any = { limit: 30 };
@@ -37,12 +50,14 @@ export default function CompBuilderPage() {
       if (criteria.deal_type) body.deal_type = criteria.deal_type;
       if (criteria.date_from) body.date_from = criteria.date_from;
       if (criteria.date_to) body.date_to = criteria.date_to;
+      body.include_terminated = criteria.include_terminated;
 
       const resp = await api.post('/comps/build', body);
       setResults(resp.data);
       setSelected(new Set());
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      toast.error(e?.response?.data?.detail?.[0]?.msg || 'Failed to find comparable deals');
     } finally {
       setLoading(false);
     }
@@ -60,8 +75,8 @@ export default function CompBuilderPage() {
   const selectedStats = selectedDeals.length > 0
     ? {
         count: selectedDeals.length,
-        disclosed: selectedDeals.filter((d: any) => d.total_value).length,
-        values: selectedDeals.filter((d: any) => d.total_value).map((d: any) => d.total_value),
+        disclosed: selectedDeals.filter((d: any) => d.total_value !== null && d.total_value !== undefined).length,
+        values: selectedDeals.filter((d: any) => d.total_value !== null && d.total_value !== undefined).map((d: any) => d.total_value),
       }
     : null;
 
@@ -175,6 +190,15 @@ export default function CompBuilderPage() {
           </div>
         </div>
         <div className="mt-4">
+          <label className="mb-3 flex items-center gap-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              checked={criteria.include_terminated}
+              onChange={(e) => setCriteria(c => ({ ...c, include_terminated: e.target.checked }))}
+              className="rounded border-slate-600"
+            />
+            Include terminated, withdrawn, cancelled, or failed deals
+          </label>
           <button onClick={search} disabled={loading}
             className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
           >
@@ -218,10 +242,13 @@ export default function CompBuilderPage() {
             <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
               <div className="text-xs text-slate-500">Range</div>
               <div className="text-lg font-bold text-slate-200">
-                {results.stats.min ? `${formatValue(results.stats.min)} – ${formatValue(results.stats.max)}` : '—'}
+                {results.stats.min !== null && results.stats.min !== undefined ? `${formatValue(results.stats.min)} – ${formatValue(results.stats.max)}` : '—'}
               </div>
             </div>
           </div>
+          <p className="mb-4 text-xs text-slate-500">
+            Values are disclosed current projected totals in USD millions, not realized payments.
+          </p>
 
           {/* Actions */}
           <div className="flex items-center gap-3 mb-4">
@@ -274,6 +301,7 @@ export default function CompBuilderPage() {
                     <th className="px-4 py-3">Deal</th>
                     <th className="px-4 py-3">Principal</th>
                     <th className="px-4 py-3">Partner</th>
+                    <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Phase</th>
                     <th className="px-4 py-3">Value</th>
                     <th className="px-4 py-3">Date</th>
@@ -300,12 +328,21 @@ export default function CompBuilderPage() {
                           <span className="text-xs text-slate-500">{(deal.match_score * 100).toFixed(0)}%</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-200 max-w-xs truncate">{deal.title}</td>
+                      <td className="px-4 py-3 text-slate-200 max-w-xs truncate">
+                        <Link
+                          to={`/deals/${deal.id}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="hover:text-blue-400 hover:underline"
+                        >
+                          {deal.title || `Deal ${deal.id}`}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3 text-slate-400">{deal.principal_company || '—'}</td>
                       <td className="px-4 py-3 text-slate-400">{deal.partner_company || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{deal.status || 'Unknown'}</td>
                       <td className="px-4 py-3 text-slate-500 text-xs">{deal.phase || '—'}</td>
                       <td className="px-4 py-3 text-slate-300 font-medium">{formatValue(deal.total_value)}</td>
-                      <td className="px-4 py-3 text-slate-500 text-xs">{deal.date_start || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{formatDate(deal.date_start)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -323,7 +360,7 @@ export default function CompBuilderPage() {
                 </span>
               </h2>
               <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={selectedDeals.filter((d: any) => d.total_value).map((d: any) => ({
+                <BarChart data={selectedDeals.filter((d: any) => d.total_value !== null && d.total_value !== undefined).map((d: any) => ({
                   name: d.title?.slice(0, 30) || `Deal ${d.id}`,
                   value: d.total_value,
                 }))}>

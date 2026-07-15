@@ -110,11 +110,4 @@ def detect_risk_flags(data: Dict[str, Any]) -> List[Dict[str, Any]]:
             "category": "track_record",
         })
 
-    if total > 0 and terminated == 0:
-        flags.append({
-            "flag": "No terminated deals on record (positive indicator)",
-            "severity": "low",
-            "category": "deal_stability",
-        })
-
     return flags
