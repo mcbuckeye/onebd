@@ -271,6 +271,62 @@ def test_company_oncology_strategy_uses_governed_deal_pattern_sql():
 
 
 @pytest.mark.parametrize(
+    "question",
+    [
+        "What are the largest ADC deals in oncology?",
+        "Show the biggest antibody-drug conjugate deals in cancer",
+        "Top ADC transactions for solid tumors",
+    ],
+)
+def test_ranked_oncology_adc_deals_use_governed_schema_semantics(question):
+    sql = _build_governed_sql(question, [])
+
+    assert sql is not None
+    assert "therapy.name = 'Cancer'" in sql
+    assert "technology.name ILIKE '%antibody%drug%conjugate%'" in sql
+    assert "finance.total_projected_current_currency = 'USD'" in sql
+    assert "finance.total_projected_current_unit = 'Million'" in sql
+    assert "eligible_deal_count" in sql
+    assert "disclosed_deal_count" in sql
+    assert "STRING_AGG(DISTINCT technology.name" in sql
+    assert "JOIN indications" not in sql
+    assert "LIMIT 20" in sql
+
+
+def test_typical_phase_two_oncology_values_use_governed_schema_semantics():
+    sql = _build_governed_sql("Typical Phase 2 oncology deal values?", [])
+
+    assert "therapy.name = 'Cancer'" in sql
+    assert "deal.phase_highest_start = 'Phase 2 Clinical'" in sql
+    assert "deal_finance_summary" in sql
+    assert "total_projected_current_currency = 'USD'" in sql
+    assert "total_projected_current_unit = 'Million'" in sql
+    assert "median_value_usd_millions" in sql
+    assert "eligible_deal_count" in sql
+    assert "deal_therapy_areas" not in sql
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_limit"),
+    [
+        ("Who are the top 5 most active acquirers this year?", "LIMIT 5"),
+        ("Who are the most active acquirers this year?", "LIMIT 20"),
+    ],
+)
+def test_active_acquirer_wording_variants_use_governed_sql(
+    question,
+    expected_limit,
+):
+    sql = _build_governed_sql(question, [])
+
+    assert "dc.role = 'Partner'" in sql
+    assert "d.agreement_type = 'Company - M&A (in whole or part)'" in sql
+    assert "DATE_TRUNC('year', CURRENT_DATE)" in sql
+    assert "d.deal_type" not in sql
+    assert expected_limit in sql
+
+
+@pytest.mark.parametrize(
     ("question", "required_sql"),
     [
         ("Who are the top 5 most active acquirers this year?", "dc.role = 'Partner'"),
@@ -383,6 +439,23 @@ def test_aggregate_financial_disclosure_uses_underlying_deal_counts():
         "disclosed_deal_count": 14,
         "eligible_deal_count": 22,
     }]) == (63.6, 14)
+
+
+def test_listing_financial_disclosure_uses_embedded_coverage_counts():
+    assert _financial_disclosure_summary([
+        {
+            "id": 1,
+            "total_value_usd_millions": 250.0,
+            "disclosed_deal_count": 20,
+            "eligible_deal_count": 80,
+        },
+        {
+            "id": 2,
+            "total_value_usd_millions": 100.0,
+            "disclosed_deal_count": 20,
+            "eligible_deal_count": 80,
+        },
+    ]) == (25.0, 20)
 
 
 def test_financial_listing_disclosure_counts_populated_term_rows():

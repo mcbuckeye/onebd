@@ -439,6 +439,67 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
     year_match = re.search(r"\b(19|20)\d{2}\b", message)
     normalized = message.lower()
 
+    asks_for_ranked_adc_deals = (
+        bool(re.search(r"\b(?:largest|biggest|top)\b", normalized))
+        and any(term in normalized for term in ("deal", "transaction"))
+        and (
+            bool(re.search(r"\badcs?\b", normalized))
+            or "antibody drug conjugate" in normalized
+            or "antibody-drug conjugate" in normalized
+        )
+        and any(term in normalized for term in ("oncology", "cancer", "tumor"))
+    )
+    if asks_for_ranked_adc_deals:
+        return (
+            "WITH eligible_deals AS ("
+            "SELECT DISTINCT deal.id "
+            "FROM deals deal "
+            "JOIN therapy_areas therapy ON therapy.id = deal.therapy_area_id "
+            "JOIN deal_technologies deal_technology "
+            "ON deal_technology.deal_id = deal.id "
+            "JOIN technologies technology "
+            "ON technology.id = deal_technology.technology_id "
+            "WHERE therapy.name = 'Cancer' "
+            "AND (technology.name ILIKE '%antibody%drug%conjugate%' "
+            "OR LOWER(technology.name) ~ '(^|[^a-z])adc([^a-z]|$)')"
+            "), coverage AS ("
+            "SELECT COUNT(*)::int AS eligible_deal_count, "
+            "COUNT(*) FILTER (WHERE finance.total_projected_current_amount "
+            "IS NOT NULL "
+            "AND finance.total_projected_current_currency = 'USD' "
+            "AND finance.total_projected_current_unit = 'Million')::int "
+            "AS disclosed_deal_count "
+            "FROM eligible_deals eligible "
+            "LEFT JOIN deal_finance_summary finance "
+            "ON finance.deal_id = eligible.id"
+            "), ranked AS ("
+            "SELECT deal.id, deal.title, deal.status, deal.agreement_type, "
+            "deal.date_start, "
+            "STRING_AGG(DISTINCT technology.name, ', ' "
+            "ORDER BY technology.name) AS adc_technologies, "
+            "finance.total_projected_current_amount "
+            "AS total_value_usd_millions "
+            "FROM eligible_deals eligible "
+            "JOIN deals deal ON deal.id = eligible.id "
+            "JOIN deal_technologies deal_technology "
+            "ON deal_technology.deal_id = deal.id "
+            "JOIN technologies technology "
+            "ON technology.id = deal_technology.technology_id "
+            "JOIN deal_finance_summary finance ON finance.deal_id = deal.id "
+            "WHERE (technology.name ILIKE '%antibody%drug%conjugate%' "
+            "OR LOWER(technology.name) ~ '(^|[^a-z])adc([^a-z]|$)') "
+            "AND finance.total_projected_current_amount IS NOT NULL "
+            "AND finance.total_projected_current_currency = 'USD' "
+            "AND finance.total_projected_current_unit = 'Million' "
+            "GROUP BY deal.id, deal.title, deal.status, deal.agreement_type, "
+            "deal.date_start, finance.total_projected_current_amount"
+            ") SELECT ranked.*, coverage.eligible_deal_count, "
+            "coverage.disclosed_deal_count "
+            "FROM ranked CROSS JOIN coverage "
+            "ORDER BY ranked.total_value_usd_millions DESC, ranked.id "
+            "LIMIT 20"
+        )
+
     if len(resolved_drugs) == 1:
         drug_id = int(resolved_drugs[0]["drug_id"])
         if "trial" in normalized:
@@ -505,16 +566,54 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
             "LIMIT 20"
         )
 
-    if "top 5" in normalized and "active acquirer" in normalized and "this year" in normalized:
+    if "active acquirer" in normalized and "this year" in normalized:
+        limit = 5 if re.search(r"\btop\s+5\b", normalized) else 20
         return (
             "SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count "
             "FROM deals d "
             "JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner' "
             "JOIN companies c ON c.id = dc.company_id "
-            "WHERE d.date_start >= DATE_TRUNC('year', CURRENT_DATE) "
+            "WHERE d.agreement_type = 'Company - M&A (in whole or part)' "
+            "AND d.date_start >= DATE_TRUNC('year', CURRENT_DATE) "
             "GROUP BY c.id, c.name "
             "ORDER BY deal_count DESC, c.id "
-            "LIMIT 5"
+            f"LIMIT {limit}"
+        )
+
+    if (
+        "phase 2" in normalized
+        and any(term in normalized for term in ("oncology", "cancer", "tumor"))
+        and any(term in normalized for term in ("deal value", "deal size"))
+        and any(term in normalized for term in ("typical", "median", "range", "benchmark"))
+    ):
+        return (
+            "WITH eligible_deals AS ("
+            "SELECT deal.id "
+            "FROM deals deal "
+            "JOIN therapy_areas therapy ON therapy.id = deal.therapy_area_id "
+            "WHERE therapy.name = 'Cancer' "
+            "AND deal.phase_highest_start = 'Phase 2 Clinical'"
+            "), disclosed_values AS ("
+            "SELECT finance.total_projected_current_amount "
+            "AS total_value_usd_millions "
+            "FROM eligible_deals eligible "
+            "JOIN deal_finance_summary finance ON finance.deal_id = eligible.id "
+            "WHERE finance.total_projected_current_amount IS NOT NULL "
+            "AND finance.total_projected_current_currency = 'USD' "
+            "AND finance.total_projected_current_unit = 'Million'"
+            ") SELECT "
+            "PERCENTILE_CONT(0.25) WITHIN GROUP "
+            "(ORDER BY total_value_usd_millions) AS p25_value_usd_millions, "
+            "PERCENTILE_CONT(0.5) WITHIN GROUP "
+            "(ORDER BY total_value_usd_millions) AS median_value_usd_millions, "
+            "PERCENTILE_CONT(0.75) WITHIN GROUP "
+            "(ORDER BY total_value_usd_millions) AS p75_value_usd_millions, "
+            "AVG(total_value_usd_millions) AS average_value_usd_millions, "
+            "COUNT(*)::int AS disclosed_deal_count, "
+            "(SELECT COUNT(*)::int FROM eligible_deals) AS eligible_deal_count, "
+            "'projected current total, USD millions' AS metric_definition, "
+            "'Cortellis deal finance summary' AS source "
+            "FROM disclosed_values"
         )
 
     if "average deal size" in normalized and "oncology" in normalized:

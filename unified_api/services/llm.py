@@ -334,7 +334,7 @@ def _financial_disclosure_summary(
     """Return source disclosure coverage without confusing rows with deals."""
     if not data:
         return None, None
-    if len(data) == 1 and isinstance(data[0], dict):
+    if isinstance(data[0], dict):
         disclosed = data[0].get("disclosed_deal_count")
         eligible = data[0].get("eligible_deal_count")
         if isinstance(disclosed, (int, float)) and isinstance(

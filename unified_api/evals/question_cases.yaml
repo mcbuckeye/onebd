@@ -13,7 +13,8 @@ truth_queries:
     FROM deals d
     JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner'
     JOIN companies c ON c.id = dc.company_id
-    WHERE d.date_start >= DATE_TRUNC('year', CURRENT_DATE)
+    WHERE d.agreement_type = 'Company - M&A (in whole or part)'
+      AND d.date_start >= DATE_TRUNC('year', CURRENT_DATE)
     GROUP BY c.id, c.name
     ORDER BY deal_count DESC, c.id
     LIMIT 5
@@ -93,6 +94,54 @@ truth_queries:
       AND f.total_projected_current_currency = 'USD'
       AND f.total_projected_current_unit = 'Million'
     ORDER BY f.total_projected_current_amount DESC, d.id
+    LIMIT 20
+  largest_oncology_adc_deals: &largest_oncology_adc_deals |
+    WITH eligible_deals AS (
+      SELECT DISTINCT deal.id
+      FROM deals deal
+      JOIN therapy_areas therapy ON therapy.id = deal.therapy_area_id
+      JOIN deal_technologies deal_technology
+        ON deal_technology.deal_id = deal.id
+      JOIN technologies technology
+        ON technology.id = deal_technology.technology_id
+      WHERE therapy.name = 'Cancer'
+        AND (technology.name ILIKE '%antibody%drug%conjugate%'
+             OR LOWER(technology.name) ~ '(^|[^a-z])adc([^a-z]|$)')
+    ), coverage AS (
+      SELECT COUNT(*)::int AS eligible_deal_count,
+             COUNT(*) FILTER (
+               WHERE finance.total_projected_current_amount IS NOT NULL
+                 AND finance.total_projected_current_currency = 'USD'
+                 AND finance.total_projected_current_unit = 'Million'
+             )::int AS disclosed_deal_count
+      FROM eligible_deals eligible
+      LEFT JOIN deal_finance_summary finance ON finance.deal_id = eligible.id
+    ), ranked AS (
+      SELECT deal.id, deal.title, deal.status, deal.agreement_type,
+             deal.date_start,
+             STRING_AGG(DISTINCT technology.name, ', '
+                        ORDER BY technology.name) AS adc_technologies,
+             finance.total_projected_current_amount
+               AS total_value_usd_millions
+      FROM eligible_deals eligible
+      JOIN deals deal ON deal.id = eligible.id
+      JOIN deal_technologies deal_technology
+        ON deal_technology.deal_id = deal.id
+      JOIN technologies technology
+        ON technology.id = deal_technology.technology_id
+      JOIN deal_finance_summary finance ON finance.deal_id = deal.id
+      WHERE (technology.name ILIKE '%antibody%drug%conjugate%'
+             OR LOWER(technology.name) ~ '(^|[^a-z])adc([^a-z]|$)')
+        AND finance.total_projected_current_amount IS NOT NULL
+        AND finance.total_projected_current_currency = 'USD'
+        AND finance.total_projected_current_unit = 'Million'
+      GROUP BY deal.id, deal.title, deal.status, deal.agreement_type,
+               deal.date_start, finance.total_projected_current_amount
+    )
+    SELECT ranked.*, coverage.eligible_deal_count,
+           coverage.disclosed_deal_count
+    FROM ranked CROSS JOIN coverage
+    ORDER BY ranked.total_value_usd_millions DESC, ranked.id
     LIMIT 20
   therapy_area_activity: &therapy_area_activity |
     SELECT ta.name AS therapy_area, COUNT(DISTINCT d.id) AS deal_count
@@ -515,23 +564,46 @@ cases:
           fields: [id, name, deal_count]
 
   - id: 4
-    tier: catalog
-    rating: partial
-    question: 'How many ADC deals have been done?'
+    tier: regression
+    rating: strong
+    question: 'What are the largest ADC deals in oncology?'
     rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
       json:
-        message: 'How many ADC deals have been done?'
+        message: 'What are the largest ADC deals in oncology?'
         mode: auto
     assertions:
       - type: min_length
-        path: answer
+        path: data
         value: 1
-      - type: excludes
-        path: answer
-        value: encountered an error
+      - type: contains
+        path: sql_query
+        value: "therapy.name = 'Cancer'"
+      - type: contains
+        path: sql_query
+        value: "technology.name ILIKE '%antibody%drug%conjugate%'"
+      - type: equals
+        path: confidence.evidence_status
+        value: grounded
+    truth:
+      source: cortellis
+      query: *largest_oncology_adc_deals
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields:
+            - id
+            - title
+            - status
+            - agreement_type
+            - date_start
+            - adc_technologies
+            - total_value_usd_millions
+            - eligible_deal_count
+            - disclosed_deal_count
 
   - id: 5
     tier: catalog
