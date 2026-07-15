@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     edgar_freshness_warn_hours: int = 48
     edgar_freshness_critical_hours: int = 96
     edgar_fulltext_candidate_limit: int = 500
+    # Common SEC terms can match more than a million chunks.  Bound the first
+    # stage of broad searches, then rank and de-duplicate that recent sample.
+    # Selective company/form searches continue to use the exact indexed plan.
+    edgar_fulltext_sample_limit: int = 1000
+    edgar_fulltext_exact_document_threshold: int = 10000
 
     # Per-process SQLAlchemy pools. Compose sets role-specific bounds so API
     # and Celery process counts cannot exhaust PostgreSQL's connection limit.
