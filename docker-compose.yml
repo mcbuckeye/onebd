@@ -145,7 +145,7 @@ services:
       - CORTELLIS_DB_URL=postgresql://${CORTELLIS_USER:-cortellis}:${CORTELLIS_PASSWORD:-changeme}@onebd-db-cortellis:5432/${CORTELLIS_DB:-cortellis}
       - EDGAR_SOURCE_DB_URL=postgresql://postgres:postgres@onebd-db-edgar:5432/deals
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-onebd-schema-migration-only}
-      - DB_POOL_SIZE=1
+      - DB_POOL_SIZE=2
       - DB_MAX_OVERFLOW=0
       - DB_POOL_TIMEOUT_SECONDS=30
     command: ["python", "-m", "unified_api.scripts.migrate_runtime_schema"]
