@@ -26,6 +26,26 @@ def test_aggregate_results_receive_query_provenance():
     assert citations[0]["query_fingerprint"]
 
 
+def test_ranked_entity_ids_are_not_mislabeled_as_deal_citations():
+    citations = build_citations(
+        "sql",
+        [
+            {"id": 18077, "name": "Merck & Co Inc", "deal_count": 15},
+            {"id": 19446, "name": "Roche Holding Ltd", "deal_count": 15},
+        ],
+        "SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count",
+    )
+
+    assert citations == [{
+        "id": "C1",
+        "source": "Cortellis",
+        "record_type": "aggregate_query",
+        "record_count": 2,
+        "query_fingerprint": citations[0]["query_fingerprint"],
+        "label": "Cortellis aggregate result",
+    }]
+
+
 def test_record_results_receive_stable_source_ids():
     citations = build_citations("rag", [{
         "deal_id": 42,
