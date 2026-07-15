@@ -115,8 +115,6 @@ async def export_deals_csv(request: ExportRequest):
              WHERE dd.deal_id = d.id) as drugs
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         ORDER BY d.date_start DESC NULLS LAST
         LIMIT :limit
@@ -203,8 +201,6 @@ async def export_company_deals_csv(
         FROM deal_companies dc
         JOIN deals d ON d.id = dc.deal_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         WHERE dc.company_id = :company_id
         ORDER BY d.date_start DESC NULLS LAST
         LIMIT :limit
@@ -314,8 +310,6 @@ async def export_market_trends_csv(
             COUNT(f.total_projected_current_amount) as disclosed_count
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
           AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
         GROUP BY {order_expr}
@@ -335,8 +329,8 @@ async def export_market_trends_csv(
         writer.writerow([
             row.period,
             row.deal_count,
-            round(row.total_value, 2) if row.total_value is not None else '',
-            round(row.avg_value, 2) if row.avg_value is not None else '',
+            round(row.total_value, 2) if row.total_value else '',
+            round(row.avg_value, 2) if row.avg_value else '',
             row.disclosed_count,
         ])
 
@@ -384,8 +378,6 @@ async def export_valuations_csv(
             FROM deal_phases dp
             JOIN deals d ON d.id = dp.deal_id
             JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
             WHERE f.total_projected_current_amount IS NOT NULL
               AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
             GROUP BY dp.stage
@@ -406,8 +398,6 @@ async def export_valuations_csv(
             JOIN deals d ON d.id = di.deal_id
             JOIN indications i ON i.id = di.indication_id
             JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
             WHERE f.total_projected_current_amount IS NOT NULL
               AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
             GROUP BY i.name
@@ -427,8 +417,6 @@ async def export_valuations_csv(
                 PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY f.total_projected_current_amount) as q3_value
             FROM deals d
             JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
             WHERE f.total_projected_current_amount IS NOT NULL
               AND d.date_start >= CURRENT_DATE - INTERVAL '{years} years'
             GROUP BY COALESCE(NULLIF(d.deal_type, ''), 'Unspecified')
@@ -575,8 +563,6 @@ async def export_deals_excel(request: ExportRequest):
              WHERE dd.deal_id = d.id) as drugs
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         LEFT JOIN therapy_areas ta ON ta.id = d.therapy_area_id
         WHERE {where_clause}
         ORDER BY d.date_start DESC NULLS LAST
@@ -693,8 +679,6 @@ async def export_company_deals_excel(
         FROM deal_companies dc
         JOIN deals d ON d.id = dc.deal_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         LEFT JOIN therapy_areas ta ON ta.id = d.therapy_area_id
         WHERE dc.company_id = :company_id
         ORDER BY d.date_start DESC NULLS LAST
@@ -913,8 +897,6 @@ async def export_search_results_excel(
              WHERE dd.deal_id = d.id) as drugs
         FROM deals d
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         {join_clause}
         WHERE {where_clause}
         ORDER BY d.date_start DESC NULLS LAST

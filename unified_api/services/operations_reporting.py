@@ -33,13 +33,6 @@ def operations_summary(hours: int) -> dict[str, Any]:
                    COUNT(*) FILTER (
                      WHERE status_code >= 400 OR error_type IS NOT NULL
                    )::bigint AS errors,
-                   COUNT(*) FILTER (
-                     WHERE status_code BETWEEN 400 AND 499
-                       AND error_type IS NULL
-                   )::bigint AS client_rejections,
-                   COUNT(*) FILTER (
-                     WHERE status_code >= 500 OR error_type IS NOT NULL
-                   )::bigint AS server_errors,
                    COUNT(*) FILTER (WHERE duration_ms >= :slow_request_ms)::bigint
                      AS slow_requests,
                    AVG(duration_ms) AS average_ms,
@@ -51,8 +44,6 @@ def operations_summary(hours: int) -> dict[str, Any]:
                      AS p99_ms,
                    SUM(sql_count)::bigint AS sql_calls,
                    SUM(sql_duration_ms) AS sql_time_ms,
-                   SUM(GREATEST(duration_ms - sql_duration_ms, 0))
-                     AS non_sql_time_ms,
                    SUM(dropped_sql_spans)::bigint AS dropped_sql_spans,
                    COUNT(DISTINCT NULLIF(principal_type || ':' || principal_id, ':'))
                      AS principals
@@ -75,13 +66,6 @@ def operations_summary(hours: int) -> dict[str, Any]:
                    COUNT(*) FILTER (
                      WHERE status_code >= 400 OR error_type IS NOT NULL
                    )::bigint AS errors,
-                   COUNT(*) FILTER (
-                     WHERE status_code BETWEEN 400 AND 499
-                       AND error_type IS NULL
-                   )::bigint AS client_rejections,
-                   COUNT(*) FILTER (
-                     WHERE status_code >= 500 OR error_type IS NOT NULL
-                   )::bigint AS server_errors,
                    AVG(duration_ms) AS average_ms,
                    percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)
                      AS p95_ms
@@ -96,8 +80,6 @@ def operations_summary(hours: int) -> dict[str, Any]:
                      AS p95_ms,
                    MAX(duration_ms) AS maximum_ms,
                    SUM(sql_duration_ms) AS sql_time_ms,
-                   SUM(GREATEST(duration_ms - sql_duration_ms, 0))
-                     AS non_sql_time_ms,
                    COUNT(*) FILTER (
                      WHERE status_code >= 400 OR error_type IS NOT NULL
                    )::bigint AS errors
@@ -127,13 +109,6 @@ def operations_summary(hours: int) -> dict[str, Any]:
         """), {"since": since}))
     request["error_rate"] = (
         float(request["errors"] or 0) / float(request["requests"] or 1)
-    )
-    request["server_error_rate"] = (
-        float(request["server_errors"] or 0) / float(request["requests"] or 1)
-    )
-    request["client_rejection_rate"] = (
-        float(request["client_rejections"] or 0)
-        / float(request["requests"] or 1)
     )
     return {
         "hours": hours,
@@ -180,12 +155,6 @@ def list_operation_requests(
         params["principal"] = f"%{principal}%"
     if status == "errors":
         filters.append("(status_code >= 400 OR error_type IS NOT NULL)")
-    elif status == "client_rejections":
-        filters.append(
-            "status_code BETWEEN 400 AND 499 AND error_type IS NULL"
-        )
-    elif status == "server_errors":
-        filters.append("(status_code >= 500 OR error_type IS NOT NULL)")
     elif status == "success":
         filters.append("status_code < 400 AND error_type IS NULL")
     if min_duration_ms is not None:

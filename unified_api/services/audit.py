@@ -12,30 +12,6 @@ from unified_api.services.database import get_cortellis_session
 logger = structlog.get_logger(__name__)
 
 
-def migrate_audit_schema(session) -> None:
-    """Install the audit schema during the deployment migration phase."""
-    session.execute(text("""
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            action VARCHAR(100) NOT NULL,
-            entity_type VARCHAR(50),
-            entity_id VARCHAR(255),
-            ip_address VARCHAR(45),
-            metadata JSONB,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """))
-    session.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_audit_log_created_at
-        ON audit_log(created_at DESC)
-    """))
-    session.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_audit_log_user_id
-        ON audit_log(user_id)
-    """))
-
-
 def log_audit(
     action: str,
     user_id: Optional[int] = None,
@@ -57,6 +33,20 @@ def log_audit(
     """
     try:
         with get_cortellis_session() as session:
+            # Ensure table exists
+            session.execute(text("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    action VARCHAR(100) NOT NULL,
+                    entity_type VARCHAR(50),
+                    entity_id VARCHAR(255),
+                    ip_address VARCHAR(45),
+                    metadata JSONB,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+
             # Insert audit log
             session.execute(
                 text("""

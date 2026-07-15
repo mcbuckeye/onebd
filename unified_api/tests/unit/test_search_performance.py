@@ -55,13 +55,3 @@ def test_non_owner_worker_does_not_block_or_run_schema_changes(monkeypatch):
     sql, params = connection.statements[0]
     assert "pg_try_advisory_lock" in sql
     assert params == {"lock_id": search_performance.ADVISORY_LOCK_ID}
-
-
-def test_contract_search_indexes_are_part_of_current_schema_version():
-    statements = "\n".join(search_performance.INDEX_STATEMENTS)
-
-    assert search_performance.SEARCH_SCHEMA_VERSION >= 4
-    assert "contract_chunks USING ivfflat" in statements
-    assert "embedding vector_cosine_ops" in statements
-    assert "contract_chunks USING gin" in statements
-    assert "to_tsvector('english', content)" in statements

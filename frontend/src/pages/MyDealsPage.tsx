@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Star, Bookmark, Clock } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import EmptyState from '../components/EmptyState';
 
@@ -17,7 +17,6 @@ export default function MyDealsPage() {
 
   useEffect(() => {
     setLoading(true);
-    setError(null);
     
     const fetchWatchlist = async () => {
       try {
@@ -32,6 +31,10 @@ export default function MyDealsPage() {
         } else if (data && typeof data === 'object') {
           rawItems = Array.isArray(data.items) ? data.items : [];
         }
+        
+        // Ensure we have an array
+        const items = Array.isArray(rawItems) ? rawItems : [];
+        console.log('Final items array:', items, 'Length:', items.length);
         
         if (Array.isArray(rawItems)) {
           setWatchlist(rawItems);
@@ -51,34 +54,20 @@ export default function MyDealsPage() {
     const fetchSavedSearches = async () => {
       try {
         const response = await api.get('/saved-searches');
-        const data = response?.data;
-        setSavedSearches(
-          Array.isArray(data) ? data :
-          Array.isArray(data?.saved_searches) ? data.saved_searches :
-          Array.isArray(data?.items) ? data.items : []
-        );
+        setSavedSearches(Array.isArray(response?.data) ? response.data : []);
       } catch (err) {
         console.error('Saved searches fetch error:', err);
         setSavedSearches([]);
-      } finally {
-        setLoading(false);
       }
     };
     
     const fetchSearchHistory = async () => {
       try {
         const response = await api.get('/search/history');
-        const data = response?.data;
-        setSearchHistory(
-          Array.isArray(data) ? data :
-          Array.isArray(data?.history) ? data.history :
-          Array.isArray(data?.items) ? data.items : []
-        );
+        setSearchHistory(Array.isArray(response?.data) ? response.data : []);
       } catch (err) {
         console.error('Search history fetch error:', err);
         setSearchHistory([]);
-      } finally {
-        setLoading(false);
       }
     };
     
@@ -154,10 +143,10 @@ export default function MyDealsPage() {
                   <tbody>
                     {watchlist.map((item: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
-                        <td className="px-4 py-3"><Link to={`/deals/${item.deal_id}`} className="text-slate-200 hover:text-blue-400">{item.deal_title || item.title || `Deal #${item.deal_id}`}</Link></td>
+                        <td className="px-4 py-3 text-slate-200">{item.deal_title || item.title || `Deal #${item.deal_id}`}</td>
                         <td className="px-4 py-3">
                           <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-400">
-                            {item.status || 'No status'}
+                            {item.status || 'Reviewing'}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -174,7 +163,7 @@ export default function MyDealsPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-slate-400">
-                          {item.added_at ? new Date(item.added_at).toLocaleDateString() : 'Unknown'}
+                          {item.created_at ? new Date(item.created_at).toLocaleDateString() : 'Unknown'}
                         </td>
                       </tr>
                     ))}
@@ -199,29 +188,15 @@ export default function MyDealsPage() {
                       <th className="px-4 py-3">Search Name</th>
                       <th className="px-4 py-3">Query</th>
                       <th className="px-4 py-3">Created</th>
-                      <th className="px-4 py-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {savedSearches.map((search: any, i: number) => (
                       <tr key={i} className="border-t border-slate-800/50 hover:bg-slate-800/30">
                         <td className="px-4 py-3 text-slate-200">{search.name}</td>
-                        <td className="px-4 py-3 text-slate-400">
-                          {search.criteria?.query || search.description || 'Saved deal filters'}
-                        </td>
+                        <td className="px-4 py-3 text-slate-400">{search.query}</td>
                         <td className="px-4 py-3 text-slate-400">
                           {search.created_at ? new Date(search.created_at).toLocaleDateString() : 'Unknown'}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {search.criteria?.query && (
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/chat?q=${encodeURIComponent(search.criteria.query)}`)}
-                              className="text-xs text-blue-400 hover:text-blue-300"
-                            >
-                              Run in Ask
-                            </button>
-                          )}
                         </td>
                       </tr>
                     ))}

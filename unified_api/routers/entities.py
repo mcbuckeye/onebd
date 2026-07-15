@@ -101,15 +101,9 @@ class DealSourceInfo(BaseModel):
 class FinanceSummary(BaseModel):
     """Financial summary."""
     total_paid_amount: Optional[float] = None
-    total_paid_currency: Optional[str] = None
-    total_paid_unit: Optional[str] = None
     total_paid_disclosure_status: Optional[str] = None
     total_projected_current_amount: Optional[float] = None
-    total_projected_current_currency: Optional[str] = None
-    total_projected_current_unit: Optional[str] = None
     total_projected_signing_amount: Optional[float] = None
-    total_projected_signing_currency: Optional[str] = None
-    total_projected_signing_unit: Optional[str] = None
 
 
 class DealDetail(BaseModel):
@@ -188,8 +182,6 @@ async def get_entity(
                 FROM deal_companies dc
                 JOIN deals d ON d.id = dc.deal_id
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 WHERE dc.company_id = :entity_id AND dc.role = 'Principal'
                 ORDER BY d.date_start DESC NULLS LAST
                 LIMIT :limit
@@ -212,8 +204,6 @@ async def get_entity(
                 FROM deal_companies dc
                 JOIN deals d ON d.id = dc.deal_id
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 WHERE dc.company_id = :entity_id AND dc.role = 'Partner'
                 ORDER BY d.date_start DESC NULLS LAST
                 LIMIT :limit
@@ -261,8 +251,6 @@ async def get_entity(
                 FROM deal_drugs dd
                 JOIN deals d ON d.id = dd.deal_id
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 WHERE dd.drug_id = :entity_id
                 ORDER BY d.date_start DESC NULLS LAST
                 LIMIT :limit
@@ -306,8 +294,6 @@ async def get_entity(
                 FROM deal_indications di
                 JOIN deals d ON d.id = di.deal_id
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 WHERE di.indication_id = :entity_id
                 ORDER BY d.date_start DESC NULLS LAST
                 LIMIT :limit
@@ -349,8 +335,6 @@ async def get_entity(
                 FROM deal_technologies dt
                 JOIN deals d ON d.id = dt.deal_id
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 WHERE dt.technology_id = :entity_id
                 ORDER BY d.date_start DESC NULLS LAST
                 LIMIT :limit
@@ -418,14 +402,8 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
                 d.phase_highest_now,
                 d.is_merger_acquisition,
                 f.total_projected_current_amount,
-                f.total_projected_current_currency,
-                f.total_projected_current_unit,
                 f.total_projected_signing_amount,
-                f.total_projected_signing_currency,
-                f.total_projected_signing_unit,
                 f.total_paid_amount,
-                f.total_paid_currency,
-                f.total_paid_unit,
                 f.total_paid_disclosure_status
             FROM deals d
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
@@ -593,25 +571,12 @@ async def get_deal(deal_id: int = Path(..., gt=0)):
 
         # Build finance summary if any financial data exists
         finance = None
-        if any(
-            value is not None
-            for value in (
-                deal.total_projected_current_amount,
-                deal.total_projected_signing_amount,
-                deal.total_paid_amount,
-            )
-        ):
+        if deal.total_projected_current_amount or deal.total_paid_amount:
             finance = FinanceSummary(
-                total_paid_amount=float(deal.total_paid_amount) if deal.total_paid_amount is not None else None,
-                total_paid_currency=deal.total_paid_currency,
-                total_paid_unit=deal.total_paid_unit,
+                total_paid_amount=float(deal.total_paid_amount) if deal.total_paid_amount else None,
                 total_paid_disclosure_status=deal.total_paid_disclosure_status,
-                total_projected_current_amount=float(deal.total_projected_current_amount) if deal.total_projected_current_amount is not None else None,
-                total_projected_current_currency=deal.total_projected_current_currency,
-                total_projected_current_unit=deal.total_projected_current_unit,
-                total_projected_signing_amount=float(deal.total_projected_signing_amount) if deal.total_projected_signing_amount is not None else None,
-                total_projected_signing_currency=deal.total_projected_signing_currency,
-                total_projected_signing_unit=deal.total_projected_signing_unit,
+                total_projected_current_amount=float(deal.total_projected_current_amount) if deal.total_projected_current_amount else None,
+                total_projected_signing_amount=float(deal.total_projected_signing_amount) if deal.total_projected_signing_amount else None,
             )
 
         return DealDetail(
@@ -726,7 +691,6 @@ class CompanyProfile(BaseModel):
     avg_deal_value: Optional[float] = None
     total_deal_value: Optional[float] = None
     deals_with_disclosed_value: int
-    financial_value_unit: str = "USD millions"
 
     # Timeline
     deals_by_year: List[DealsByYear]
@@ -787,57 +751,47 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
         # 2. Get deal counts by role
         deal_counts = session.execute(text("""
             SELECT
-                COUNT(DISTINCT deal_id) AS total_deals,
-                COUNT(DISTINCT deal_id) FILTER (
-                    WHERE LOWER(COALESCE(role, '')) = 'principal'
-                ) AS deals_as_principal,
-                COUNT(DISTINCT deal_id) FILTER (
-                    WHERE LOWER(COALESCE(role, '')) = 'partner'
-                ) AS deals_as_partner
+                role,
+                COUNT(*) as deal_count
             FROM deal_companies
             WHERE company_id = :company_id
-        """), {"company_id": company_id}).one()
+            GROUP BY role
+        """), {"company_id": company_id})
 
-        deals_as_principal = int(deal_counts.deals_as_principal or 0)
-        deals_as_partner = int(deal_counts.deals_as_partner or 0)
-        total_deals = int(deal_counts.total_deals or 0)
+        deals_as_principal = 0
+        deals_as_partner = 0
+        for row in deal_counts:
+            if row.role == 'Principal':
+                deals_as_principal = row.deal_count
+            elif row.role == 'Partner':
+                deals_as_partner = row.deal_count
+
+        total_deals = deals_as_principal + deals_as_partner
 
         # 3. Get financial summary
         financial_result = session.execute(text("""
-            WITH company_deals AS (
-                SELECT DISTINCT deal_id
-                FROM deal_companies
-                WHERE company_id = :company_id
-            )
             SELECT
                 AVG(f.total_projected_current_amount) as avg_value,
                 SUM(f.total_projected_current_amount) as total_value,
                 COUNT(f.total_projected_current_amount) as disclosed_count
-            FROM company_deals cd
-            JOIN deal_finance_summary f ON f.deal_id = cd.deal_id
-            WHERE f.total_projected_current_amount IS NOT NULL
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
+            FROM deal_companies dc
+            JOIN deal_finance_summary f ON f.deal_id = dc.deal_id
+            WHERE dc.company_id = :company_id
+              AND f.total_projected_current_amount IS NOT NULL
         """), {"company_id": company_id})
         financial = financial_result.fetchone()
 
         # 4. Get deals by year
         deals_by_year_result = session.execute(text("""
-            WITH company_deals AS (
-                SELECT DISTINCT deal_id
-                FROM deal_companies
-                WHERE company_id = :company_id
-            )
             SELECT
                 EXTRACT(YEAR FROM d.date_start)::int as year,
-                COUNT(DISTINCT d.id) as deal_count,
+                COUNT(*) as deal_count,
                 SUM(f.total_projected_current_amount) as total_value
-            FROM company_deals cd
-            JOIN deals d ON d.id = cd.deal_id
+            FROM deal_companies dc
+            JOIN deals d ON d.id = dc.deal_id
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
-            WHERE d.date_start IS NOT NULL
+            WHERE dc.company_id = :company_id
+              AND d.date_start IS NOT NULL
             GROUP BY EXTRACT(YEAR FROM d.date_start)
             ORDER BY year DESC
             LIMIT 20
@@ -854,26 +808,16 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
 
         # 5. Get top partners
         top_partners_result = session.execute(text("""
-            WITH focal_deals AS (
-                SELECT DISTINCT deal_id
-                FROM deal_companies
-                WHERE company_id = :company_id
-            ), partner_deals AS (
-                SELECT DISTINCT fd.deal_id, dc.company_id
-                FROM focal_deals fd
-                JOIN deal_companies dc ON dc.deal_id = fd.deal_id
-                WHERE dc.company_id <> :company_id
-            )
             SELECT
                 c2.id as partner_id,
                 c2.name as partner_name,
-                COUNT(*) as deal_count,
+                COUNT(DISTINCT dc1.deal_id) as deal_count,
                 SUM(f.total_projected_current_amount) as total_value
-            FROM partner_deals pd
-            JOIN companies c2 ON c2.id = pd.company_id
-            LEFT JOIN deal_finance_summary f ON f.deal_id = pd.deal_id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
+            FROM deal_companies dc1
+            JOIN deal_companies dc2 ON dc2.deal_id = dc1.deal_id AND dc2.company_id != dc1.company_id
+            JOIN companies c2 ON c2.id = dc2.company_id
+            LEFT JOIN deal_finance_summary f ON f.deal_id = dc1.deal_id
+            WHERE dc1.company_id = :company_id
             GROUP BY c2.id, c2.name
             ORDER BY deal_count DESC
             LIMIT 10
@@ -891,17 +835,13 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
 
         # 6. Get therapeutic focus (indications)
         therapeutic_result = session.execute(text("""
-            WITH company_deals AS (
-                SELECT DISTINCT deal_id
-                FROM deal_companies
-                WHERE company_id = :company_id
-            )
             SELECT
                 i.name as indication,
                 COUNT(DISTINCT di.deal_id) as deal_count
-            FROM company_deals cd
-            JOIN deal_indications di ON di.deal_id = cd.deal_id
+            FROM deal_companies dc
+            JOIN deal_indications di ON di.deal_id = dc.deal_id
             JOIN indications i ON i.id = di.indication_id
+            WHERE dc.company_id = :company_id
             GROUP BY i.name
             ORDER BY deal_count DESC
             LIMIT 15
@@ -917,11 +857,6 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
 
         # 7. Get recent deals (last 12 months)
         recent_deals_result = session.execute(text("""
-            WITH company_deals AS (
-                SELECT DISTINCT deal_id
-                FROM deal_companies
-                WHERE company_id = :company_id
-            )
             SELECT
                 d.id,
                 d.title,
@@ -930,12 +865,11 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
                 d.deal_type,
                 d.agreement_type,
                 f.total_projected_current_amount as total_value
-            FROM company_deals cd
-            JOIN deals d ON d.id = cd.deal_id
+            FROM deal_companies dc
+            JOIN deals d ON d.id = dc.deal_id
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
-            WHERE d.date_start >= CURRENT_DATE - INTERVAL '12 months'
+            WHERE dc.company_id = :company_id
+              AND d.date_start >= CURRENT_DATE - INTERVAL '12 months'
             ORDER BY d.date_start DESC
             LIMIT 20
         """), {"company_id": company_id})
@@ -1067,16 +1001,9 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
             total_deals=total_deals,
             deals_as_principal=deals_as_principal,
             deals_as_partner=deals_as_partner,
-            avg_deal_value=(
-                float(financial.avg_value)
-                if financial and financial.avg_value is not None else None
-            ),
-            total_deal_value=(
-                float(financial.total_value)
-                if financial and financial.total_value is not None else None
-            ),
+            avg_deal_value=float(financial.avg_value) if financial and financial.avg_value else None,
+            total_deal_value=float(financial.total_value) if financial and financial.total_value else None,
             deals_with_disclosed_value=financial.disclosed_count if financial else 0,
-            financial_value_unit="USD millions",
             deals_by_year=deals_by_year,
             top_partners=top_partners,
             therapeutic_focus=therapeutic_focus,
@@ -1117,14 +1044,8 @@ async def get_company_strategy_intelligence(
 # ============================================
 
 class TerritoryRights(BaseModel):
-    """Latest deal-scope evidence for a territory (not current ownership)."""
+    """Territory rights for a drug."""
     territory: str
-    scope_type: Optional[str] = None
-    deal_status: Optional[str] = None
-    deal_participants: List[str] = []
-    evidence_note: str = "Deal scope only; current ownership is not established"
-    # Deprecated compatibility fields. A deal participant is not necessarily a
-    # current rights holder, so new responses intentionally leave these null.
     rights_holder: Optional[str] = None
     rights_holder_id: Optional[int] = None
     deal_id: Optional[int] = None
@@ -1164,7 +1085,7 @@ class DrugProfile(BaseModel):
     # Timeline
     deals_by_year: List[DealsByYear]
 
-    # Deal territory-scope evidence (legacy response key retained for compatibility)
+    # Current rights holders
     rights_holders: List[TerritoryRights]
 
     # Deal history
@@ -1185,7 +1106,7 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
     Returns:
     - Drug overview (phase, mechanism, type)
     - Complete deal history
-    - Latest deal territory-scope evidence (not current ownership)
+    - Current rights holders by territory
     - Financial summary across all deals
     - Indications and technologies
     """
@@ -1219,8 +1140,6 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
                 COUNT(f.total_projected_current_amount) as disclosed_count
             FROM deal_drugs dd
             LEFT JOIN deal_finance_summary f ON f.deal_id = dd.deal_id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
             WHERE dd.drug_id = :drug_id
         """), {"drug_id": drug_id})
         stats = stats_result.fetchone()
@@ -1234,8 +1153,6 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
             FROM deal_drugs dd
             JOIN deals d ON d.id = dd.deal_id
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
             WHERE dd.drug_id = :drug_id
               AND d.date_start IS NOT NULL
             GROUP BY EXTRACT(YEAR FROM d.date_start)
@@ -1251,35 +1168,27 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
             for row in deals_by_year_result
         ]
 
-        # 4. Get recent deal-scope evidence per territory and scope type. Do not
-        # infer current ownership from a party's role in a deal record.
+        # 4. Get current rights holders (most recent deal per territory)
         rights_result = session.execute(text("""
             WITH ranked_rights AS (
                 SELECT
                     t.name as territory,
-                    dt.territory_type as scope_type,
-                    d.status as deal_status,
-                    (SELECT ARRAY_AGG(c.name || CASE
-                        WHEN dc.role IS NOT NULL THEN ' (' || dc.role || ')'
-                        ELSE '' END ORDER BY dc.role, c.name)
-                     FROM deal_companies dc
-                     JOIN companies c ON c.id = dc.company_id
-                     WHERE dc.deal_id = d.id) as deal_participants,
+                    c.name as rights_holder,
+                    c.id as rights_holder_id,
                     d.id as deal_id,
                     d.title as deal_title,
                     d.date_start,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY t.name, COALESCE(dt.territory_type, '')
-                        ORDER BY d.date_start DESC NULLS LAST, d.id DESC
-                    ) as rn
+                    ROW_NUMBER() OVER (PARTITION BY t.name ORDER BY d.date_start DESC) as rn
                 FROM deal_drugs dd
                 JOIN deals d ON d.id = dd.deal_id
                 JOIN deal_territories dt ON dt.deal_id = d.id
                 JOIN territories t ON t.id = dt.territory_id
+                JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner'
+                JOIN companies c ON c.id = dc.company_id
                 WHERE dd.drug_id = :drug_id
+                  AND dt.territory_type NOT ILIKE '%exclu%'
             )
-            SELECT territory, scope_type, deal_status, deal_participants,
-                   deal_id, deal_title
+            SELECT territory, rights_holder, rights_holder_id, deal_id, deal_title
             FROM ranked_rights
             WHERE rn = 1
             ORDER BY territory
@@ -1289,9 +1198,8 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
         rights_holders = [
             TerritoryRights(
                 territory=row.territory,
-                scope_type=row.scope_type,
-                deal_status=row.deal_status,
-                deal_participants=row.deal_participants or [],
+                rights_holder=row.rights_holder,
+                rights_holder_id=row.rights_holder_id,
                 deal_id=row.deal_id,
                 deal_title=row.deal_title,
             )
@@ -1330,8 +1238,6 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
             FROM deal_drugs dd
             JOIN deals d ON d.id = dd.deal_id
             LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-              AND f.total_projected_current_currency = 'USD'
-              AND f.total_projected_current_unit = 'Million'
             WHERE dd.drug_id = :drug_id
             ORDER BY d.date_start DESC NULLS LAST
             LIMIT 100
@@ -1344,7 +1250,7 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
                 deal_type=row.deal_type,
                 status=row.status,
                 date_start=row.date_start,
-                total_value=float(row.total_value) if row.total_value is not None else None,
+                total_value=float(row.total_value) if row.total_value else None,
                 principal_company=row.principal_company,
                 principal_company_id=row.principal_company_id,
                 partner_company=row.partner_company,
@@ -1385,8 +1291,8 @@ async def get_drug_profile(drug_id: int = Path(..., gt=0)):
             phase_highest_start=drug.phase_highest_start,
             phase_highest_now=drug.phase_highest_now,
             total_deals=stats.total_deals or 0,
-            total_deal_value=float(stats.total_value) if stats.total_value is not None else None,
-            avg_deal_value=float(stats.avg_value) if stats.avg_value is not None else None,
+            total_deal_value=float(stats.total_value) if stats.total_value else None,
+            avg_deal_value=float(stats.avg_value) if stats.avg_value else None,
             deals_with_disclosed_value=stats.disclosed_count or 0,
             deals_by_year=deals_by_year,
             rights_holders=rights_holders,

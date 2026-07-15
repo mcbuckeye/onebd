@@ -155,8 +155,6 @@ async def get_watchlist(
         FROM user_watchlist w
         JOIN deals d ON d.id = w.deal_id
         LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-          AND f.total_projected_current_currency = 'USD'
-          AND f.total_projected_current_unit = 'Million'
         WHERE {where_clause}
         ORDER BY w.added_at DESC
         LIMIT :limit OFFSET :offset
@@ -183,7 +181,7 @@ async def get_watchlist(
                 principal_company=row.principal_company,
                 partner_company=row.partner_company,
                 deal_status=row.deal_status,
-                total_value=float(row.total_value) if row.total_value is not None else None,
+                total_value=float(row.total_value) if row.total_value else None,
                 date_start=row.date_start,
                 note_count=row.note_count,
             )

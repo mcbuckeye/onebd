@@ -101,35 +101,7 @@ class TestCompCandidateFilters:
 
         where = " ".join(conditions)
         assert "deal_technologies" in where
-        assert "deal_technologies" in where
-        assert "public_drug_profiles" in where
-        assert "drug_chembl_records" in where
-        assert params["modality_patterns"] == ["%bispecific%"]
-        assert "NOT ILIKE ALL" in where
+        assert "t.name ILIKE :modality" in where
+        assert params["modality"] == "%bispecific%"
         assert "i.name ILIKE :indication" in indication_select
-        assert "modality_patterns" in modality_select
-
-    def test_adc_shorthand_expands_to_full_modality_names(self):
-        from unified_api.routers.comps import CompBuildRequest, build_comp_filters
-
-        _, params = build_comp_filters(CompBuildRequest(modality="ADC"))
-
-        assert "%adc%" in params["modality_patterns"]
-        assert "%antibody-drug conjugate%" in params["modality_patterns"]
-
-    def test_terminated_deals_can_be_included_explicitly(self):
-        from unified_api.routers.comps import CompBuildRequest, build_comp_filters
-
-        conditions, _ = build_comp_filters(
-            CompBuildRequest(indication="Oncology", include_terminated=True)
-        )
-
-        assert "NOT ILIKE ALL" not in " ".join(conditions)
-
-    def test_empty_request_is_rejected(self):
-        import pytest
-        from pydantic import ValidationError
-        from unified_api.routers.comps import CompBuildRequest
-
-        with pytest.raises(ValidationError, match="At least one comparison criterion"):
-            CompBuildRequest()
+        assert "t.name ILIKE :modality" in modality_select

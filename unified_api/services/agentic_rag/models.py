@@ -2,7 +2,6 @@
 Pydantic models for Agentic RAG.
 Defines request/response schemas and internal state management.
 """
-import json
 from typing import List, Dict, Any, Optional, Literal
 from enum import Enum
 from pydantic import BaseModel, Field
@@ -119,14 +118,6 @@ class ConversationState(BaseModel):
             context += "Previous steps:\n"
             for step in self.reasoning_steps:
                 context += f"  {step.hop_number}. {step.tool_type}: {step.result_summary}\n"
-        if self.accumulated_data:
-            context += "\nActual tool results (the only factual evidence available):\n"
-            context += json.dumps(
-                self.accumulated_data,
-                default=str,
-                ensure_ascii=False,
-                indent=2,
-            )
         return context
 
 

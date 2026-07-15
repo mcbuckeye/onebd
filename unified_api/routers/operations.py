@@ -65,9 +65,7 @@ def requests(
     channel: str | None = Query(default=None, max_length=30),
     path: str | None = Query(default=None, max_length=300),
     principal: str | None = Query(default=None, max_length=300),
-    status: Literal[
-        "success", "errors", "client_rejections", "server_errors"
-    ] | None = None,
+    status: Literal["success", "errors"] | None = None,
     min_duration_ms: float | None = Query(default=None, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=1_000_000),

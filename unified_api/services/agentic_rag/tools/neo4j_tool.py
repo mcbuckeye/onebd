@@ -16,8 +16,7 @@ class Neo4jTool(BaseTool):
     """Tool for querying Neo4j graph database."""
 
     SCHEMA_DESCRIPTION = """
-    Neo4j Graph Database contains synchronized business-development entities.
-    Counts change over time; query them when a count is needed.
+    Neo4j Graph Database contains business development data (145K+ deals, 55K+ companies).
 
     Nodes:
     - Deal: Business deal with these EXACT properties:
@@ -26,9 +25,9 @@ class Neo4jTool(BaseTool):
       - status (string): e.g., "Active", "Terminated"
       - deal_type (string): Type of deal
       - announced_at (string): Date like "2004-01-06 00:00:00" (use for sorting)
-      - total_value (number or null): Projected deal value as synchronized from Cortellis
       - updated_at (datetime)
       - source (string): Usually "cortellis"
+      NOTE: There is NO "value" or "total_value" property in Neo4j Deal nodes!
 
     - Company: Organization with properties:
       - id (integer)
@@ -40,9 +39,8 @@ class Neo4jTool(BaseTool):
       - source (string)
 
     Relationships:
-    - (Company)-[:LICENSES_OUT]->(Deal): Principal/licensor relationship
-    - (Company)-[:LICENSES_IN]->(Deal): Partner/licensee relationship
-    - Other synchronized roles may use PARTICIPATES_IN, ACQUIRES, or ACQUIRED_BY
+    - (Deal)-[:LICENSES_OUT]->(Company): Deal licenses out to company
+    - (Deal)-[:LICENSES_IN]->(Company): Deal licenses in from company
 
     CRITICAL Cypher Rules:
     - Use `IS NOT NULL` instead of `EXISTS()` for property checks (deprecated syntax)
@@ -50,15 +48,13 @@ class Neo4jTool(BaseTool):
     - NO SQL-style joins - use pattern matching instead
     - String contains: `d.title CONTAINS 'oncology'` (case-sensitive)
     - Case-insensitive: `toLower(d.title) CONTAINS 'oncology'`
-    - Company names must be matched case-insensitively with CONTAINS, never exact equality;
-      source names often include suffixes such as Inc, Ltd, plc, or country labels
 
     Example queries:
     - Find deals: "MATCH (d:Deal) WHERE d.title CONTAINS 'oncology' RETURN d LIMIT 10"
     - Oncology ADC deals: "MATCH (d:Deal) WHERE toLower(d.title) CONTAINS 'oncology' AND toLower(d.title) CONTAINS 'adc' RETURN d LIMIT 20"
-    - Find companies: "MATCH (c:Company) WHERE toLower(c.name) CONTAINS 'pfizer' RETURN c LIMIT 10"
+    - Find companies: "MATCH (c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN c LIMIT 10"
     - Recent deals: "MATCH (d:Deal) RETURN d ORDER BY d.announced_at DESC LIMIT 10"
-    - Company deals: "MATCH (c:Company)-[:LICENSES_OUT|LICENSES_IN]->(d:Deal) WHERE toLower(c.name) CONTAINS 'pfizer' RETURN d, c LIMIT 10"
+    - Company deals: "MATCH (d:Deal)-[:LICENSES_OUT|LICENSES_IN]->(c:Company) WHERE c.name CONTAINS 'Pfizer' RETURN d, c LIMIT 10"
     - Active deals only: "MATCH (d:Deal) WHERE d.status = 'Active' AND d.title CONTAINS 'oncology' RETURN d"
     """
 
@@ -98,7 +94,9 @@ class Neo4jTool(BaseTool):
         try:
             async with driver.session(database=self._database) as session:
                 result = await session.run(query)
-                records = await result.data()
+                records = await result.fetch(
+len(await result.fetch_all()) if hasattr(result, 'fetch_all') else 1000
+                )
 
                 # Convert records to dicts
                 data = []

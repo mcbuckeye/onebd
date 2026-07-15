@@ -9,14 +9,11 @@ the live processes only perform data manipulation after it succeeds.
 from sqlalchemy import text
 
 from unified_api.routers.conversations import ensure_conversation_schema
-from unified_api.routers.comps import migrate_comp_sets_schema
-from unified_api.routers.search import migrate_search_history_schema
 from unified_api.services.contract_financial_clauses import (
     ensure_contract_financial_clause_schema,
 )
 from unified_api.services.account_schema import migrate_account_schema
 from unified_api.services.api_credentials import migrate_api_access_schema
-from unified_api.services.audit import migrate_audit_schema
 from unified_api.services.clinical_trials import ensure_clinical_trials_schema
 from unified_api.services.collaboration import migrate_collaboration_schema
 from unified_api.services.company_entrant_alerts import (
@@ -69,9 +66,6 @@ def _apply_runtime_schema_migrations() -> None:
 
     with get_cortellis_session() as session:
         ensure_conversation_schema(session)
-        migrate_comp_sets_schema(session)
-        migrate_search_history_schema(session)
-        migrate_audit_schema(session)
         ensure_source_monitoring_tables(session)
         ensure_contract_financial_clause_schema(session)
         ensure_expanded_archive_schema(session)

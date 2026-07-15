@@ -373,9 +373,7 @@ async def data_health_check():
                 SELECT
                     (SELECT COUNT(*) FROM deals) as deals_total,
                     (SELECT COUNT(*) FROM deal_finance_summary
-                     WHERE total_projected_current_amount IS NOT NULL
-                       AND total_projected_current_currency = 'USD'
-                       AND total_projected_current_unit = 'Million') as deals_with_financials,
+                     WHERE total_projected_current_amount IS NOT NULL) as deals_with_financials,
                     (SELECT COUNT(*) FROM companies) as companies_total,
                     (SELECT COUNT(*) FROM company_xref) as companies_with_xref,
                     (SELECT MAX(date_start)::text FROM deals) as latest_deal_date
@@ -407,15 +405,7 @@ async def data_health_check():
                     last_success = session.execute(text(
                         "SELECT MAX(completed_at) FROM sync_log WHERE status = 'completed'"
                     )).scalar()
-                    last_data_change = session.execute(text("""
-                        SELECT MAX(completed_at) FROM sync_log
-                        WHERE status = 'completed'
-                          AND (COALESCE(records_created, 0)
-                               + COALESCE(records_updated, 0)
-                               + COALESCE(contracts_downloaded, 0)) > 0
-                    """)).scalar()
                     sync_info["last_success_at"] = last_success
-                    sync_info["last_data_change_at"] = last_data_change
                     sync_info["freshness"] = _sync_freshness(
                         last_success,
                         settings.cortellis_freshness_warn_hours,
@@ -592,19 +582,8 @@ async def data_health_check():
             )
             sync_checks.append({
                 "name": label,
-                "category": "freshness",
                 "status": severity,
                 "detail": detail,
-                "source_key": source_key,
-                "last_started_at": common_state.get("last_started_at"),
-                "last_completed_at": common_state.get("last_completed_at"),
-                "last_success_at": common_state.get("last_success_at"),
-                "source_data_at": common_state.get("source_data_at"),
-                "source_lag_seconds": common_state.get("source_lag_seconds"),
-                "duration_seconds": common_state.get("duration_seconds"),
-                "counts": common_state.get("counts") or {},
-                "consecutive_failures": common_state.get("consecutive_failures", 0),
-                "next_retry_at": common_state.get("next_retry_at"),
             })
             continue
         source = sources.get(source_name)
@@ -612,14 +591,12 @@ async def data_health_check():
             freshness = source.get("freshness", {})
             sync_checks.append({
                 "name": label,
-                "category": "freshness",
                 "status": freshness.get("status", "critical"),
                 "detail": freshness.get("detail", "freshness unavailable"),
             })
         else:
             sync_checks.append({
                 "name": label,
-                "category": "freshness",
                 "status": "critical",
                 "detail": "sync state unavailable",
             })
@@ -636,13 +613,8 @@ async def data_health_check():
         )
         sync_checks.append({
             "name": "Neo4j Graph Sync",
-            "category": "freshness",
             "status": severity,
             "detail": detail,
-            "source_key": "neo4j",
-            "last_success_at": graph_state.get("last_success_at"),
-            "duration_seconds": graph_state.get("duration_seconds"),
-            "counts": graph_state.get("counts") or {},
         })
 
     catalog_state = common_states.get("cortellis_catalog")
@@ -657,7 +629,6 @@ async def data_health_check():
         )
         sync_checks.append({
             "name": "Cortellis Catalog Reconciliation",
-            "category": "freshness",
             "status": severity,
             "detail": detail,
         })
@@ -674,7 +645,6 @@ async def data_health_check():
         )
         sync_checks.append({
             "name": "Cortellis Contract Metadata Scan",
-            "category": "freshness",
             "status": severity,
             "detail": detail,
         })
@@ -691,7 +661,6 @@ async def data_health_check():
         )
         sync_checks.append({
             "name": "Cortellis Raw Response and Source Scan",
-            "category": "freshness",
             "status": severity,
             "detail": detail,
         })
@@ -717,58 +686,17 @@ async def data_health_check():
         )
         sync_checks.append({
             "name": label,
-            "category": "freshness",
             "status": severity,
             "detail": detail,
         })
 
-    availability_checks = []
-    for source_key, label in (
-        ("cortellis_deals", "Cortellis PostgreSQL"),
-        ("edgar", "EDGAR PostgreSQL"),
-        ("neo4j", "Neo4j"),
-        ("redis", "Redis"),
-    ):
-        source = sources.get(source_key, {})
-        available = bool(source) and not source.get("error")
-        availability_checks.append({
-            "name": label,
-            "category": "operational",
-            "status": "ok" if available else "critical",
-            "detail": "reachable" if available else "unavailable",
-        })
-
-    checks = availability_checks + sync_checks + health["checks"]
-    actionable_checks = [
-        check for check in checks if check.get("status") not in {"ok", "info", "running"}
-    ]
-    if any(check.get("status") == "critical" for check in actionable_checks):
-        overall_status = "critical"
-    elif actionable_checks:
-        overall_status = "degraded"
-    else:
-        overall_status = "healthy"
-
-    sections = {
-        category: [check for check in checks if check.get("category") == category]
-        for category in ("operational", "freshness", "coverage", "quality")
-    }
+    health["checks"].extend(sync_checks)
+    degraded = any(check["status"] in {"warning", "critical"} for check in sync_checks)
 
     result = {
-        "status": overall_status,
-        "status_reason": (
-            f"{len(actionable_checks)} warning or critical checks require attention"
-            if actionable_checks else "All operational and freshness checks are within policy"
-        ),
-        "as_of": datetime.now(timezone.utc).isoformat(),
-        "cache_ttl_seconds": _DATA_HEALTH_CACHE_SECONDS,
+        "status": "degraded" if degraded else "healthy",
         "overall_score": health["overall_score"],
-        "readiness_score": health["readiness_score"],
-        "score_label": health["score_label"],
-        "score_scope": health["score_scope"],
-        "score_components": health["score_components"],
-        "checks": checks,
-        "sections": sections,
+        "checks": health["checks"],
         "sources": sources,
     }
     _data_health_cache = (time.monotonic(), result)

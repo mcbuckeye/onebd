@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell, Building2, Check, Plus, Search, UserPlus, X } from 'lucide-react';
 import api from '../lib/api';
-import { useToast } from '../contexts/ToastContext';
 
 interface CompetitorDeal {
   id: number;
@@ -49,13 +48,11 @@ interface CompanySuggestion {
 }
 
 export default function CompetitorsPage() {
-  const toast = useToast();
   const [competitors, setCompetitors] = useState<TrackedCompetitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState<CompanySuggestion[]>([]);
   const [entrantAlerts, setEntrantAlerts] = useState<EntrantAlert[]>([]);
-  const [error, setError] = useState('');
 
   // Load tracked competitors on mount
   useEffect(() => {
@@ -65,14 +62,13 @@ export default function CompetitorsPage() {
   const loadCompetitors = async () => {
     try {
       setLoading(true);
-      setError('');
+      // The list call also applies any forward-only alert schema migration.
       const competitorResponse = await api.get('/competitors');
       const alertResponse = await api.get('/competitors/entrant-alerts');
       setCompetitors(competitorResponse.data);
       setEntrantAlerts(alertResponse.data);
     } catch (e) {
       console.error('Failed to load competitors', e);
-      setError('Competitor tracking could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -105,11 +101,11 @@ export default function CompetitorsPage() {
     } catch (e: any) {
       console.error('Failed to add competitor', e);
       if (e.response?.status === 409) {
-        toast.error('Already tracking this company');
+        alert('Already tracking this company');
       } else if (e.response?.status === 404) {
-        toast.error('Company not found');
+        alert('Company not found');
       } else {
-        toast.error('Failed to add competitor');
+        alert('Failed to add competitor');
       }
     }
   };
@@ -126,7 +122,7 @@ export default function CompetitorsPage() {
         setCompetitors(prev => prev.filter(c => c.company_id !== companyId));
         setEntrantAlerts(prev => prev.filter(a => a.subject_company_id !== companyId));
       } else {
-        toast.error('Failed to remove competitor');
+        alert('Failed to remove competitor');
       }
     }
   };
@@ -148,7 +144,6 @@ export default function CompetitorsPage() {
         : item));
     } catch (error) {
       console.error('Failed to update entrant alerts', error);
-      toast.error('Failed to update entrant alert settings');
     }
   };
 
@@ -165,7 +160,6 @@ export default function CompetitorsPage() {
       await loadCompetitors();
     } catch (error) {
       console.error('Failed to update entrant alert', error);
-      toast.error('Failed to update entrant alert');
     }
   };
 
@@ -189,13 +183,6 @@ export default function CompetitorsPage() {
         <h1 className="text-2xl font-bold text-slate-100">Competitor Intelligence</h1>
         <p className="text-sm text-slate-500 mt-1">Track competitor deal activity and strategy</p>
       </div>
-
-      {error && (
-        <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-          <span>{error}</span>
-          <button type="button" onClick={loadCompetitors} className="rounded border border-red-400/30 px-3 py-1 hover:bg-red-500/10">Retry</button>
-        </div>
-      )}
 
       <div className="mb-6 rounded-xl border border-slate-800 bg-slate-900 p-5">
         <div className="mb-4 flex items-start justify-between gap-3">

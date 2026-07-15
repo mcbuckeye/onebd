@@ -79,7 +79,7 @@ async def list_competitors(user: TokenData = Depends(get_current_user)):
                    tc.entrant_alerts_enabled,
                    tc.entrant_baselined_at::text,
                    tc.entrant_last_checked_at::text,
-                   (SELECT COUNT(DISTINCT dc.deal_id) FROM deal_companies dc
+                   (SELECT COUNT(*) FROM deal_companies dc
                     WHERE dc.company_id = tc.company_id) AS total_deals,
                    (SELECT COUNT(*)
                     FROM company_entrant_alerts alert
@@ -97,11 +97,7 @@ async def list_competitors(user: TokenData = Depends(get_current_user)):
         }
         if company_ids:
             recent_rows = session.execute(text("""
-                WITH company_deals AS (
-                    SELECT DISTINCT company_id, deal_id
-                    FROM deal_companies
-                    WHERE company_id = ANY(:company_ids)
-                ), ranked AS (
+                WITH ranked AS (
                     SELECT company_deal.company_id, deal.id, deal.title,
                            deal.agreement_type, deal.status,
                            deal.date_start::text,
@@ -110,8 +106,9 @@ async def list_competitors(user: TokenData = Depends(get_current_user)):
                                ORDER BY deal.date_start DESC NULLS LAST,
                                         deal.id DESC
                            ) AS row_number
-                    FROM company_deals company_deal
+                    FROM deal_companies company_deal
                     JOIN deals deal ON deal.id = company_deal.deal_id
+                    WHERE company_deal.company_id = ANY(:company_ids)
                 )
                 SELECT company_id, id, title, agreement_type, status, date_start
                 FROM ranked WHERE row_number <= 5

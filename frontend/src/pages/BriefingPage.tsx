@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { Newspaper, Clock } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import api from '../lib/api';
-import { useToast } from '../contexts/ToastContext';
 
 function formatValue(v: number | null): string {
   if (v === null || v === undefined) return '—';
@@ -11,21 +9,18 @@ function formatValue(v: number | null): string {
 }
 
 export default function BriefingPage() {
-  const toast = useToast();
   const [topic, setTopic] = useState('');
   const [briefing, setBriefing] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  const generate = async (requestedTopic = topic) => {
-    if (!requestedTopic.trim()) return;
+  const generate = async () => {
+    if (!topic.trim()) return;
     setLoading(true);
-    setBriefing(null);
     try {
-      const resp = await api.post('/briefings/generate', { topic: requestedTopic.trim() });
+      const resp = await api.post('/briefings/generate', { topic: topic.trim() });
       setBriefing(resp.data);
     } catch (e) {
       console.error(e);
-      toast.error('Failed to generate the briefing');
     } finally {
       setLoading(false);
     }
@@ -46,7 +41,7 @@ export default function BriefingPage() {
           placeholder="Brief me on... (e.g., ADC deals, Pfizer, oncology)"
           className="flex-1 px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
         />
-        <button onClick={() => generate()} disabled={loading}
+        <button onClick={generate} disabled={loading}
           className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium"
         >
           {loading ? 'Generating...' : 'Generate'}
@@ -55,7 +50,7 @@ export default function BriefingPage() {
 
       <div className="flex flex-wrap gap-2 mb-6">
         {['Oncology', 'ADC deals', 'Pfizer', 'M&A activity', 'bispecific antibodies', 'immuno-oncology'].map(q => (
-          <button key={q} onClick={() => { setTopic(q); generate(q); }}
+          <button key={q} onClick={() => { setTopic(q); }}
             className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-400 hover:text-slate-200"
           >{q}</button>
         ))}
@@ -67,9 +62,7 @@ export default function BriefingPage() {
           <div className="flex items-center gap-2 text-xs text-slate-500 mb-6">
             <Clock className="w-3 h-3" />
             <span>Last {briefing.period_days} days</span>
-            <span>• Generated {new Date(briefing.generated_at).toLocaleString()}</span>
           </div>
-          <p className="mb-6 text-xs leading-5 text-slate-500">{briefing.methodology}</p>
 
           {briefing.sections?.map((section: any, i: number) => (
             <div key={i} className="mb-6">
@@ -78,8 +71,8 @@ export default function BriefingPage() {
               {section.title === 'Market Summary' && section.content && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-slate-800 rounded-lg p-3">
-                    <div className="text-xs text-slate-500">Matching Deals</div>
-                    <div className="text-2xl font-bold text-slate-200">{section.content.matching_deals}</div>
+                    <div className="text-xs text-slate-500">Deals</div>
+                    <div className="text-2xl font-bold text-slate-200">{section.content.deals_30d}</div>
                   </div>
                   <div className="bg-slate-800 rounded-lg p-3">
                     <div className="text-xs text-slate-500">Top Area</div>
@@ -93,7 +86,7 @@ export default function BriefingPage() {
                   {section.content.map((d: any, j: number) => (
                     <div key={j} className="flex items-center justify-between py-2 border-b border-slate-800 last:border-0">
                       <div>
-                        <Link to={`/deals/${d.id}`} className="text-sm text-slate-200 hover:text-blue-400 hover:underline">{d.title || `Deal ${d.id}`}</Link>
+                        <div className="text-sm text-slate-200">{d.title}</div>
                         <div className="text-xs text-slate-500">{d.principal} → {d.partner} • {d.type}</div>
                       </div>
                       <div className="text-right flex-shrink-0">
@@ -103,10 +96,6 @@ export default function BriefingPage() {
                     </div>
                   ))}
                 </div>
-              )}
-
-              {section.title === 'Notable Deals' && Array.isArray(section.content) && section.content.length === 0 && (
-                <p className="text-sm text-slate-400">No matching deals were found in this time window. This briefing does not imply that no historical records exist.</p>
               )}
             </div>
           ))}

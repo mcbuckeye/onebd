@@ -22,7 +22,6 @@ interface AuditLogEntry {
   ip_address: string | null;
   metadata: any;
   created_at: string;
-  user_email: string | null;
 }
 
 interface UserFormData {
@@ -37,8 +36,6 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'users' | 'access' | 'operations' | 'audit' | 'clauses'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
-  const [auditTotal, setAuditTotal] = useState(0);
-  const [auditOffset, setAuditOffset] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -73,19 +70,14 @@ export default function AdminPage() {
   const loadAuditLogs = async () => {
     setIsLoading(true);
     try {
-      const resp = await api.get(`/admin/audit-log?limit=50&offset=${auditOffset}`);
+      const resp = await api.get('/admin/audit-log?limit=100');
       setAuditLogs(resp.data.logs);
-      setAuditTotal(resp.data.total);
     } catch (err: any) {
       console.error('Failed to load audit logs:', err);
     } finally {
       setIsLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (activeTab === 'audit') loadAuditLogs();
-  }, [auditOffset]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,7 +114,7 @@ export default function AdminPage() {
   };
 
   const handleDeleteUser = async (userId: number) => {
-    if (!confirm('Disable this user account? They will no longer be able to sign in.')) return;
+    if (!confirm('Are you sure you want to disable this user?')) return;
 
     try {
       await api.delete(`/admin/users/${userId}`);
@@ -306,7 +298,7 @@ export default function AdminPage() {
                       className="inline-flex items-center gap-1 px-2 py-1 text-red-400 hover:text-red-300 text-sm"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Disable
+                      Delete
                     </button>
                   </td>
                 </tr>
@@ -328,7 +320,7 @@ export default function AdminPage() {
             <table className="w-full">
               <thead className="bg-slate-800/50">
                 <tr>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Time (local)</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Time</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase">User</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase">Action</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase">IP Address</th>
@@ -354,7 +346,7 @@ export default function AdminPage() {
                         {new Date(log.created_at).toLocaleString()}
                       </td>
                       <td className="px-4 py-3 text-slate-200 text-sm">
-                        {log.user_email || (log.user_id ? `User #${log.user_id}` : 'System')}
+                        {log.user_id ? `User #${log.user_id}` : 'System'}
                       </td>
                       <td className="px-4 py-3">
                         <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-400">
@@ -370,31 +362,6 @@ export default function AdminPage() {
               </tbody>
             </table>
           </div>
-          {auditTotal > 50 && (
-            <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-xs text-slate-500">
-              <span>
-                Showing {auditOffset + 1}–{Math.min(auditOffset + 50, auditTotal)} of {auditTotal.toLocaleString()}
-              </span>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={auditOffset === 0 || isLoading}
-                  onClick={() => setAuditOffset(Math.max(0, auditOffset - 50))}
-                  className="rounded border border-slate-700 px-3 py-1.5 disabled:opacity-40"
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  disabled={auditOffset + 50 >= auditTotal || isLoading}
-                  onClick={() => setAuditOffset(auditOffset + 50)}
-                  className="rounded border border-slate-700 px-3 py-1.5 disabled:opacity-40"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 

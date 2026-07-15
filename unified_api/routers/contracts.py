@@ -171,8 +171,6 @@ async def compare_deal_terms(
                     d.has_contract
                 FROM deals d
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 WHERE d.id = :deal_id
             """), {"deal_id": deal_id}).fetchone()
 
@@ -222,11 +220,9 @@ async def compare_deal_terms(
                 "principal": deal.principal,
                 "partner": deal.partner,
                 "financials": {
-                    "total_projected_value": float(deal.total_value) if deal.total_value is not None else None,
-                    "total_paid": float(deal.total_paid) if deal.total_paid is not None else None,
-                    "signing_value": float(deal.signing_value) if deal.signing_value is not None else None,
-                    "currency": "USD",
-                    "unit": "Million",
+                    "total_projected_value": float(deal.total_value) if deal.total_value else None,
+                    "total_paid": float(deal.total_paid) if deal.total_paid else None,
+                    "signing_value": float(deal.signing_value) if deal.signing_value else None,
                     "disclosure_status": deal.disclosure_status,
                 },
                 "indications": deal.indications,

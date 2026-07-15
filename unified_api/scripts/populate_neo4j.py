@@ -84,8 +84,6 @@ def populate_neo4j(batch_size: int = 1000, max_deals: int = None):
                        f.total_projected_current_amount as total_value
                 FROM deals d
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
-                  AND f.total_projected_current_currency = 'USD'
-                  AND f.total_projected_current_unit = 'Million'
                 ORDER BY d.id
                 LIMIT :limit OFFSET :offset
             """), {"limit": batch_size, "offset": offset})

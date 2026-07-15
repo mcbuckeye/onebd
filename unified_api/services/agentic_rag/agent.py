@@ -34,12 +34,6 @@ class AgentState:
     final_answer: Optional[str] = None
     error: Optional[str] = None
     forced_tool: Optional[ToolType] = None  # Hardcoded tool routing
-    stop_reason: Optional[str] = None
-
-
-def _normalized_query(query: str) -> str:
-    """Normalize generated queries enough to detect unproductive repeats."""
-    return " ".join((query or "").strip().rstrip(";").lower().split())
 
 
 # Keywords that indicate SQL tool should be used (financial/structured data)
@@ -275,8 +269,6 @@ DO NOT HALLUCINATE:
 - If a query returns titles but no values, DO NOT claim values exist
 - If columns like 'value' or 'amount' don't exist in the schema, DO NOT reference them
 - Say "data not available" rather than making up information
-- Zero returned rows only means that the attempted query did not match; it does not prove the relationship or record is absent
-- Do not repeat a query that has already been attempted. Refine it materially or synthesize an inconclusive answer
 
 Available Tool Names: neo4j, sql, pgvector, synthesize
 
@@ -318,38 +310,13 @@ Rules:
             # Create reasoning step
             if tool_selection.synthesize or tool_selection.tool == ToolType.SYNTHESIZE:
                 state.current_step = None
-                # Always use the dedicated synthesis node, which sees the actual rows.
-                # A tool-selection response is not itself evidence for an answer.
-                state.final_answer = None
+                state.final_answer = tool_selection.query if tool_selection.synthesize else None
             else:
-                candidate_query = tool_selection.query or ""
-                normalized = _normalized_query(candidate_query)
-                duplicate = next(
-                    (
-                        step
-                        for step in cs.reasoning_steps
-                        if step.tool_type == tool_selection.tool
-                        and _normalized_query(step.query) == normalized
-                    ),
-                    None,
-                )
-                if normalized and duplicate:
-                    state.current_step = None
-                    state.stop_reason = (
-                        f"Stopped before repeating {tool_selection.tool.value} query "
-                        f"from hop {duplicate.hop_number}."
-                    )
-                    self.logger.info(
-                        "Prevented duplicate agent query",
-                        tool=tool_selection.tool.value,
-                        prior_hop=duplicate.hop_number,
-                    )
-                    return state
                 state.current_step = ReasoningStep(
                     hop_number=cs.current_hop + 1,
                     thought=tool_selection.thought,
                     tool_type=tool_selection.tool,
-                    query=candidate_query,
+                    query=tool_selection.query,
                     result_summary="Pending execution..."
                 )
 
@@ -524,14 +491,6 @@ Corrected Query:"""
 
                     step.result_summary = f"Success on attempt {attempt_num + 1}: {result.row_count} rows"
                     step.retry_count = attempt_num
-                    cs.accumulated_data[f"hop_{cs.current_hop + 1}"] = {
-                        "source": step.tool_type.value,
-                        "query": result.query_executed or current_query,
-                        "row_count": result.row_count,
-                        # Bound prompt size while retaining the evidence needed to answer.
-                        "rows": (result.data or [])[:50],
-                        "truncated": bool(result.data and len(result.data) > 50),
-                    }
                     final_success = True
                     break
                 else:
@@ -606,19 +565,6 @@ Corrected Query:"""
         # Add step to conversation state
         state.conversation_state.add_step(step)
 
-        successful_zero_steps = sum(
-            1
-            for prior in state.conversation_state.reasoning_steps
-            if prior.attempts
-            and prior.attempts[-1].success
-            and prior.attempts[-1].row_count == 0
-        )
-        if successful_zero_steps >= 2:
-            state.stop_reason = (
-                "Stopped after two successful queries returned no rows; "
-                "additional retries would not establish that the requested facts are absent."
-            )
-
         # Update state with potentially modified step
         state.current_step = step
 
@@ -634,28 +580,6 @@ Corrected Query:"""
         # If we already have a final answer from LLM
         if state.final_answer:
             cs.mark_complete(state.final_answer)
-            return state
-
-        successful_results = [
-            result
-            for result in cs.accumulated_data.values()
-            if isinstance(result, dict) and "row_count" in result
-        ]
-        if successful_results and not any(
-            int(result.get("row_count") or 0) > 0 for result in successful_results
-        ):
-            attempted_sources = ", ".join(
-                sorted({str(result.get("source")) for result in successful_results})
-            )
-            answer = (
-                "The attempted database queries returned no matching records "
-                f"({attempted_sources}). This result is inconclusive: it does not prove "
-                "that the requested deal, company, or relationship is absent. Try a known "
-                "company alias, broader wording, or the structured SQL search, and verify "
-                "against the source record before relying on a negative conclusion."
-            )
-            cs.mark_complete(answer)
-            state.final_answer = answer
             return state
 
         # Check if there were errors in any steps
@@ -701,7 +625,6 @@ IMPORTANT - DO NOT HALLUCINATE:
 - Only report facts that are present in the query results above
 - If a query returned titles/IDs but no financial values, DO NOT claim values exist
 - If data is missing, say "not found" rather than making it up
-- Treat zero rows as an inconclusive attempted search, not proof that a fact or relationship is absent
 - Cite which database each fact came from (Neo4j, SQL, pgvector)
 
 Provide a clear, concise answer that directly addresses the user's question.
@@ -722,9 +645,6 @@ If information was incomplete or errors occurred, note what additional data migh
     def _should_continue(self, state: AgentState) -> str:
         """Determine if agent should continue or synthesize."""
         if state.error:
-            return "synthesize"
-
-        if state.stop_reason:
             return "synthesize"
 
         if not state.conversation_state:
@@ -755,15 +675,6 @@ If information was incomplete or errors occurred, note what additional data migh
                 context += f"   Result: {step.result_summary}\n"
                 if step.error:
                     context += f"   Error (after {step.retry_count} retries): {step.error}\n"
-
-        if cs.accumulated_data:
-            context += "\nActual tool result rows (use these as the only factual evidence):\n"
-            context += json.dumps(
-                cs.accumulated_data,
-                default=str,
-                ensure_ascii=False,
-                indent=2,
-            )
 
         return context
 
@@ -802,11 +713,9 @@ If information was incomplete or errors occurred, note what additional data migh
             if isinstance(final_state_dict, dict):
                 cs = final_state_dict.get('conversation_state')
                 final_error = final_state_dict.get('error')
-                stop_reason = final_state_dict.get('stop_reason')
             else:
                 cs = final_state_dict.conversation_state
                 final_error = final_state_dict.error
-                stop_reason = final_state_dict.stop_reason
 
             if not cs:
                 return AgenticRagResponse(
@@ -820,7 +729,7 @@ If information was incomplete or errors occurred, note what additional data migh
             return AgenticRagResponse(
                 success=not bool(final_error),
                 answer=cs.final_answer if cs.final_answer else "No answer generated",
-                partial=cs.current_hop >= cs.max_hops or bool(stop_reason),
+                partial=cs.current_hop >= cs.max_hops,
                 reasoning_steps=cs.reasoning_steps,
                 total_hops=cs.current_hop,
                 latency_ms=int((time.time() - start_time) * 1000)
@@ -870,11 +779,6 @@ If information was incomplete or errors occurred, note what additional data migh
                 if isinstance(final_state, dict)
                 else final_state.conversation_state
             )
-            stop_reason = (
-                final_state.get("stop_reason")
-                if isinstance(final_state, dict)
-                else final_state.stop_reason
-            )
 
             # Yield all reasoning steps
             if cs:
@@ -899,10 +803,7 @@ If information was incomplete or errors occurred, note what additional data migh
                 data={
                     "answer": cs.final_answer if cs else "No answer",
                     "total_hops": cs.current_hop if cs else 0,
-                    "partial": (
-                        cs.current_hop >= cs.max_hops or bool(stop_reason)
-                        if cs else False
-                    ),
+                    "partial": cs.current_hop >= cs.max_hops if cs else False,
                     "latency_ms": int((time.time() - start_time) * 1000)
                 },
                 timestamp=time.time()

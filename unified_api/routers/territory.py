@@ -1,4 +1,6 @@
-"""Deal territory-scope evidence endpoints."""
+"""
+Territory rights endpoints.
+"""
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 import structlog
@@ -12,11 +14,8 @@ router = APIRouter(tags=["territory"])
 @router.get("/territory/{drug_id}/map")
 async def get_territory_map(drug_id: int):
     """
-    Get territory-scope evidence from deals involving a drug/asset.
-
-    A territory listed on a deal is evidence about that agreement's scope. It
-    is not, by itself, proof of current ownership, availability, exclusivity,
-    or a rights holder.
+    Get territory rights map for a drug/asset.
+    Returns territories with commitment status.
     """
     with get_cortellis_session() as session:
         # Get drug info
@@ -32,19 +31,13 @@ async def get_territory_map(drug_id: int):
         territories = session.execute(text("""
             SELECT DISTINCT
                 t.name as territory,
-                dt.territory_type as scope_type,
                 d.id as deal_id,
                 d.title as deal_title,
                 d.status as deal_status,
                 d.date_start::text as deal_date,
-                (SELECT jsonb_agg(jsonb_build_object(
-                    'id', participant.id,
-                    'name', participant.name,
-                    'role', link.role
-                ) ORDER BY link.role, participant.name)
-                 FROM deal_companies link
-                 JOIN companies participant ON participant.id = link.company_id
-                 WHERE link.deal_id = d.id) as participants
+                (SELECT c.name FROM deal_companies dc
+                 JOIN companies c ON c.id = dc.company_id
+                 WHERE dc.deal_id = d.id AND dc.role = 'Principal' LIMIT 1) as rights_holder
             FROM deal_drugs dd
             JOIN deals d ON d.id = dd.deal_id
             JOIN deal_territories dt ON dt.deal_id = d.id
@@ -55,29 +48,11 @@ async def get_territory_map(drug_id: int):
 
         territory_list = []
         for t in territories:
-            scope_type = (t.scope_type or "").strip()
-            scope_lower = scope_type.lower()
-            scope_direction = (
-                "excluded" if "exclu" in scope_lower
-                else "included" if "inclu" in scope_lower
-                else "unspecified"
-            )
-            deal_status = (t.deal_status or "Unknown").strip()
-            deal_status_lower = deal_status.lower()
-            evidence_status = (
-                f"{scope_direction}_in_terminated_deal"
-                if "terminat" in deal_status_lower
-                else f"{scope_direction}_in_active_deal"
-                if deal_status_lower == "active"
-                else f"{scope_direction}_in_deal_record"
-            )
+            status = "committed" if t.deal_status == "Active" else "terminated" if t.deal_status == "Terminated" else "unknown"
             territory_list.append({
                 "territory": t.territory,
-                "scope_type": scope_type or "Unspecified",
-                "scope_direction": scope_direction,
-                "evidence_status": evidence_status,
-                "deal_status": deal_status,
-                "participants": t.participants or [],
+                "status": status,
+                "rights_holder": t.rights_holder,
                 "deal_id": t.deal_id,
                 "deal_title": t.deal_title,
                 "deal_date": t.deal_date,
@@ -87,15 +62,8 @@ async def get_territory_map(drug_id: int):
         "drug": {"id": drug.id, "name": drug.name, "phase": drug.phase},
         "territories": territory_list,
         "summary": {
-            "scope_records": len(territory_list),
-            "distinct_territories": len({t["territory"] for t in territory_list}),
-            "included_records": sum(1 for t in territory_list if t["scope_direction"] == "included"),
-            "excluded_records": sum(1 for t in territory_list if t["scope_direction"] == "excluded"),
-            "active_deal_records": sum(1 for t in territory_list if t["deal_status"].lower() == "active"),
+            "total_territories": len(territory_list),
+            "committed": sum(1 for t in territory_list if t["status"] == "committed"),
+            "terminated": sum(1 for t in territory_list if t["status"] == "terminated"),
         },
-        "methodology": (
-            "These are Cortellis deal-territory scope records. Active deal status "
-            "does not establish current ownership or availability; confirm rights in "
-            "the governing agreement and later amendments."
-        ),
     }

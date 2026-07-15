@@ -2016,12 +2016,6 @@ def ensure_contract_financial_clause_schema(session) -> None:
         ON contract_financial_clauses (deal_id)
     """))
     session.execute(text("""
-        CREATE INDEX IF NOT EXISTS ix_contract_clause_review_queue
-        ON contract_financial_clauses (
-            parser_version, review_status, clause_type, id
-        )
-    """))
-    session.execute(text("""
         CREATE TABLE IF NOT EXISTS contract_financial_clause_extractions (
             contract_id INTEGER PRIMARY KEY REFERENCES contract_content(id) ON DELETE CASCADE,
             deal_id INTEGER NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
@@ -2306,27 +2300,23 @@ def contract_financial_clause_review_sample(session, *, limit: int = 100) -> lis
     limit = max(1, min(500, limit))
     per_type = math.ceil(limit / len(_ANCHORS))
     rows = session.execute(text("""
-        SELECT candidate.*
-        FROM (VALUES
-            ('royalty_rate'),
-            ('milestone_payment'),
-            ('upfront_payment')
-        ) AS requested(clause_type)
-        CROSS JOIN LATERAL (
-            SELECT id, contract_id, deal_id,
-                   contract_financial_clauses.clause_type,
+        WITH ranked AS (
+            SELECT id, contract_id, deal_id, clause_type,
                    rate_min_pct, rate_max_pct,
                    amount_min_millions, amount_max_millions,
                    currency, is_tiered, confidence, source_text,
-                   source_line_start, source_line_end, source_hash
+                   source_line_start, source_line_end, source_hash,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY clause_type
+                       ORDER BY md5(contract_id::text || ':' || source_hash)
+                   ) AS sample_rank
             FROM contract_financial_clauses
             WHERE parser_version = :parser_version
               AND review_status = 'unreviewed'
-              AND contract_financial_clauses.clause_type = requested.clause_type
-            ORDER BY id
-            LIMIT :per_type
-        ) candidate
-        ORDER BY candidate.id
+        )
+        SELECT * FROM ranked
+        WHERE sample_rank <= :per_type
+        ORDER BY sample_rank, clause_type
         LIMIT :limit
     """), {
         "parser_version": CONTRACT_CLAUSE_PARSER_VERSION,
@@ -2476,22 +2466,19 @@ def contract_financial_clause_validation_status(
     )
 
     rows = session.execute(text("""
-        SELECT candidate.*, cc.content
-        FROM (VALUES
-            ('royalty_rate'),
-            ('milestone_payment'),
-            ('upfront_payment')
-        ) AS requested(clause_type)
-        CROSS JOIN LATERAL (
-            SELECT c.*
+        WITH sampled AS (
+            SELECT c.*, cc.content,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY c.clause_type
+                       ORDER BY md5(c.contract_id::text || ':' || c.source_hash)
+                   ) AS sample_rank
             FROM contract_financial_clauses c
+            JOIN contract_content cc ON cc.id = c.contract_id
             WHERE c.parser_version = :parser_version
-              AND c.clause_type = requested.clause_type
-            ORDER BY c.id
-            LIMIT :sample_per_type
-        ) candidate
-        JOIN contract_content cc ON cc.id = candidate.contract_id
-        ORDER BY candidate.clause_type, candidate.id
+        )
+        SELECT * FROM sampled
+        WHERE sample_rank <= :sample_per_type
+        ORDER BY clause_type, sample_rank
     """), {
         "parser_version": CONTRACT_CLAUSE_PARSER_VERSION,
         "sample_per_type": sample_per_type,

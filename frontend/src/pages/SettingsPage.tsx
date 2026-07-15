@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Mail, Bell, Check, X, Loader2, AlertTriangle, Send } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -46,8 +46,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-  const [saveError, setSaveError] = useState('');
-  const [savedSnapshot, setSavedSnapshot] = useState('');
   const [deliveryStatus, setDeliveryStatus] = useState<EmailDeliveryStatus | null>(null);
   const [testingEmail, setTestingEmail] = useState(false);
   const [testMessage, setTestMessage] = useState('');
@@ -61,12 +59,10 @@ export default function SettingsPage() {
     ])
       .then(([settingsRes, filtersRes, deliveryRes]) => {
         const loadedSettings = settingsRes.data;
-        const nextSettings = {
+        setSettings({
           ...loadedSettings,
           email: loadedSettings.email || user?.email || null,
-        };
-        setSettings(nextSettings);
-        setSavedSnapshot(JSON.stringify(nextSettings));
+        });
         setTherapyAreaOptions(filtersRes.data.therapy_areas || []);
         setDeliveryStatus(deliveryRes.data);
         
@@ -148,26 +144,17 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     setSuccessMessage('');
-    setSaveError('');
     try {
-      const response = await api.put('/settings/digest', settings);
-      const saved = response.data || settings;
-      setSettings(saved);
-      setSavedSnapshot(JSON.stringify(saved));
+      await api.put('/settings/digest', settings);
       setSuccessMessage('Settings saved successfully');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error('Failed to save settings:', error);
-      setSaveError('Failed to save settings. Please try again.');
+      alert('Failed to save settings. Please try again.');
     } finally {
       setSaving(false);
     }
   };
-
-  const hasChanges = useMemo(
-    () => Boolean(savedSnapshot) && JSON.stringify(settings) !== savedSnapshot,
-    [settings, savedSnapshot],
-  );
 
   const handleTestEmail = async () => {
     setTestingEmail(true);
@@ -248,10 +235,6 @@ export default function SettingsPage() {
             </div>
           </div>
           <button
-            type="button"
-            role="switch"
-            aria-label="Enable email digest"
-            aria-checked={settings.enabled}
             onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
               settings.enabled ? 'bg-blue-600' : 'bg-slate-700'
@@ -290,10 +273,6 @@ export default function SettingsPage() {
               </div>
             </div>
             <button
-              type="button"
-              role="switch"
-              aria-label="Include upcoming clinical catalysts"
-              aria-checked={settings.include_catalysts}
               onClick={() => setSettings({ ...settings, include_catalysts: !settings.include_catalysts })}
               disabled={!settings.enabled}
               className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
@@ -406,8 +385,6 @@ export default function SettingsPage() {
               >
                 <span>{company.name}</span>
                 <button
-                  type="button"
-                  aria-label={`Remove ${company.name} from tracked companies`}
                   onClick={() => removeCompany(company.id)}
                   className="hover:bg-blue-500/20 rounded-full p-0.5"
                   disabled={!settings.enabled}
@@ -422,9 +399,8 @@ export default function SettingsPage() {
         {/* Save Button */}
         <div className="flex items-center gap-3 pt-4 border-t border-slate-800">
           <button
-            type="button"
             onClick={handleSave}
-            disabled={saving || !hasChanges}
+            disabled={saving}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? (
@@ -445,10 +421,6 @@ export default function SettingsPage() {
               <Check className="w-4 h-4" />
               <span>{successMessage}</span>
             </div>
-          )}
-          {saveError && <div className="text-sm text-red-400">{saveError}</div>}
-          {!hasChanges && !saving && !successMessage && (
-            <span className="text-xs text-slate-600">No unsaved changes</span>
           )}
         </div>
       </div>

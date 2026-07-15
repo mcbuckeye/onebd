@@ -292,21 +292,6 @@ def _is_company_deal_activity_compare_query(message: str) -> bool:
     )
 
 
-def _normalized_entity_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
-
-
-def _is_bare_company_lookup(message: str, entity: dict) -> bool:
-    """Recognize a company name entered by itself instead of guessing an intent."""
-    query = _normalized_entity_text(message)
-    names = {
-        _normalized_entity_text(str(entity.get(key) or ""))
-        for key in ("mention", "canonical_name")
-    }
-    names.discard("")
-    return query in names
-
-
 def _is_due_diligence_query(message: str) -> bool:
     """Recognize explicit DD requests before generic intent classification."""
     normalized = message.lower()
@@ -527,32 +512,6 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
             "LIMIT 20"
         )
 
-    if len(resolved) == 1 and _is_bare_company_lookup(message, resolved[0]):
-        company_id = int(resolved[0]["company_id"])
-        return (
-            "SELECT company.id AS company_id, company.name AS company_name, "
-            "company.company_type, company.ticker, company.cik, "
-            "COUNT(DISTINCT deal.id)::int AS deal_count, "
-            "MIN(deal.date_start) AS first_deal_date, "
-            "MAX(deal.date_start) AS latest_deal_date, "
-            "COUNT(DISTINCT deal.id) FILTER (WHERE "
-            "finance.total_projected_current_amount IS NOT NULL "
-            "AND finance.total_projected_current_currency = 'USD' "
-            "AND finance.total_projected_current_unit = 'Million')::int "
-            "AS disclosed_deal_count, "
-            "SUM(finance.total_projected_current_amount) FILTER (WHERE "
-            "finance.total_projected_current_currency = 'USD' "
-            "AND finance.total_projected_current_unit = 'Million') "
-            "AS disclosed_projected_total_usd_millions "
-            "FROM companies company "
-            "LEFT JOIN deal_companies company_link "
-            "ON company_link.company_id = company.id "
-            "LEFT JOIN deals deal ON deal.id = company_link.deal_id "
-            "LEFT JOIN deal_finance_summary finance ON finance.deal_id = deal.id "
-            f"WHERE company.id = {company_id} "
-            "GROUP BY company.id, company.name, company.company_type, "
-            "company.ticker, company.cik LIMIT 1"
-        )
     asks_for_ranked_adc_deals = (
         bool(re.search(r"\b(?:largest|biggest|top)\b", normalized))
         and any(term in normalized for term in ("deal", "transaction"))
@@ -1100,117 +1059,6 @@ class ChatV2Response(BaseModel):
     citations: List[dict] = []
 
 
-def _markdown_cell(value) -> str:
-    return str(value if value is not None else "—").replace("|", "\\|")
-
-
-def _format_millions(value) -> str:
-    return f"${float(value):,.1f}M" if value is not None else "not disclosed"
-
-
-def _governed_synthesis(message: str, data: List[dict]) -> Optional[dict]:
-    """Format supported metric shapes without a slow or creative LLM pass."""
-    if not data:
-        return None
-    first = data[0]
-
-    if "adc_technologies" in first and "total_value_usd_millions" in first:
-        eligible = int(first.get("eligible_deal_count") or 0)
-        disclosed = int(first.get("disclosed_deal_count") or 0)
-        rows = [
-            "| Deal | Status | Announced | Projected total (USD M) |",
-            "|---|---|---:|---:|",
-        ]
-        for row in data:
-            rows.append(
-                f"| {_markdown_cell(row.get('title') or row.get('id'))} "
-                f"| {_markdown_cell(row.get('status'))} "
-                f"| {_markdown_cell(row.get('date_start'))} "
-                f"| {_markdown_cell(row.get('total_value_usd_millions'))} |"
-            )
-        rate = round(100 * disclosed / eligible, 1) if eligible else None
-        coverage_rate = f" ({rate}%)" if rate is not None else ""
-        answer = (
-            "These are the highest disclosed oncology ADC deals in the retrieved "
-            "Cortellis ranking, ordered by current projected total deal value.\n\n"
-            + "\n".join(rows)
-            + f"\n\n**Data quality:** {disclosed} of {eligible} eligible deals"
-            f"{coverage_rate} have a comparable disclosed USD-million value. "
-            "Projected total is not the same as upfront cash or realized proceeds."
-        )
-        return {
-            "answer": answer,
-            "confidence": {
-                "data_completeness": f"{len(data)} ranked records shown from {eligible} eligible deals",
-                "sample_size": eligible,
-                "underlying_sample_size": disclosed,
-                "disclosure_rate": rate,
-            },
-            "follow_ups": [
-                "Show ADC deal values by clinical phase",
-                "Which companies appear most often in these ADC deals?",
-            ],
-        }
-
-    if "median_value_usd_millions" in first and "eligible_deal_count" in first:
-        eligible = int(first.get("eligible_deal_count") or 0)
-        disclosed = int(first.get("disclosed_deal_count") or 0)
-        rate = round(100 * disclosed / eligible, 1) if eligible else None
-        answer = (
-            f"The disclosed-value benchmark is **{_format_millions(first.get('median_value_usd_millions'))} median** "
-            f"(25th–75th percentile: {_format_millions(first.get('p25_value_usd_millions'))}–"
-            f"{_format_millions(first.get('p75_value_usd_millions'))}). The mean is "
-            f"{_format_millions(first.get('average_value_usd_millions'))}.\n\n"
-            f"**Data quality:** {disclosed} of {eligible} eligible deals have a "
-            "disclosed current projected total in USD millions. These are projected "
-            "headline totals, not upfront payments."
-        )
-        return {
-            "answer": answer,
-            "confidence": {
-                "data_completeness": f"{disclosed} disclosed values across {eligible} eligible deals",
-                "sample_size": eligible,
-                "underlying_sample_size": disclosed,
-                "disclosure_rate": rate,
-            },
-            "follow_ups": [
-                "Show comparable deals behind this benchmark",
-                "How does this benchmark vary by year?",
-            ],
-        }
-
-    if "company_name" in first and "company_id" in first and len(data) == 1:
-        deal_count = int(first.get("deal_count") or 0)
-        disclosed = int(first.get("disclosed_deal_count") or 0)
-        rate = round(100 * disclosed / deal_count, 1) if deal_count else None
-        answer = (
-            f"**{first.get('company_name')}** is recorded as "
-            f"{first.get('company_type') or 'an organization'} with {deal_count} linked "
-            "Cortellis deals. "
-            f"The observed deal window is {_markdown_cell(first.get('first_deal_date'))} "
-            f"through {_markdown_cell(first.get('latest_deal_date'))}. "
-            f"{disclosed} linked deals have a disclosed current projected total in "
-            "USD millions.\n\nThis is a concise database overview, not a complete "
-            "company dossier or proof of current ownership/rights."
-        )
-        return {
-            "answer": answer,
-            "confidence": {
-                "data_completeness": f"1 company record; {deal_count} linked deals",
-                "sample_size": deal_count,
-                "underlying_sample_size": disclosed,
-                "disclosure_rate": rate,
-            },
-            "follow_ups": [
-                f"Show the most recent deals for {first.get('company_name')}",
-                f"What assets are linked to {first.get('company_name')}?",
-                f"Run due diligence on {first.get('company_name')}",
-            ],
-        }
-
-    return None
-
-
 @router.post("/chat/v2", response_model=ChatV2Response)
 async def chat_v2(request: ChatRequest):
     """
@@ -1295,9 +1143,7 @@ async def chat_v2(request: ChatRequest):
             "follow_ups": [],
         }
     else:
-        synthesis = _governed_synthesis(request.message, data)
-        if synthesis is None:
-            synthesis = await llm_service.synthesize_response(request.message, mode, data)
+        synthesis = await llm_service.synthesize_response(request.message, mode, data)
 
     confidence = dict(synthesis["confidence"])
     confidence["entity_resolution"] = raw_response.resolved_entities
@@ -1307,9 +1153,10 @@ async def chat_v2(request: ChatRequest):
     answer = append_citation_section(synthesis["answer"], raw_response.citations)
 
     # Build action suggestions
-    actions = []
+    actions = [
+        {"label": "Export to Excel", "type": "export", "params": {"format": "excel"}},
+    ]
     if data:
-        actions.append({"label": "Export CSV", "type": "export", "params": {"format": "csv"}})
         actions.append({"label": "Save Search", "type": "save_search", "params": {"query": request.message}})
     if intent == "deal_search":
         actions.append({"label": "View in Search", "type": "navigate", "params": {"path": "/search"}})

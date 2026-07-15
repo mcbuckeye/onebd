@@ -4,19 +4,15 @@ import {
   CartesianGrid, AreaChart, Area
 } from 'recharts';
 import { TrendingUp, DollarSign, Globe, Building2, Info } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import api from '../lib/api';
 
 type Tab = 'trends' | 'valuations' | 'geographic' | 'competitive';
 
 function DataBadge({ n, disclosed }: { n: number; disclosed?: number }) {
-  const disclosureLabel = disclosed !== undefined
-    ? `, ${n > 0 ? ((disclosed / n) * 100).toFixed(0) : '0'}% disclosed`
-    : '';
   return (
     <span className="inline-flex items-center gap-1 text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">
       <Info className="w-3 h-3" />
-      N={n}{disclosureLabel}
+      N={n}{disclosed !== undefined && `, ${((disclosed / n) * 100).toFixed(0)}% disclosed`}
     </span>
   );
 }
@@ -39,32 +35,8 @@ export default function AnalyticsPage() {
   const [agreementTypes, setAgreementTypes] = useState<any>(null);
   const [yoy, setYoy] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [refreshKey, setRefreshKey] = useState(0);
   const [therapyFilter, setTherapyFilter] = useState('');
   const [filterOptions, setFilterOptions] = useState<string[]>([]);
-
-  const geographicRows = Array.isArray(geographic?.territories)
-    ? geographic.territories
-    : Array.isArray(geographic?.data)
-      ? geographic.data
-      : Array.isArray(geographic)
-        ? geographic
-        : [];
-  const acquirerRows = Array.isArray(competitive?.topAcquirers?.acquirers)
-    ? competitive.topAcquirers.acquirers
-    : Array.isArray(competitive?.topAcquirers?.data)
-      ? competitive.topAcquirers.data
-      : Array.isArray(competitive?.topAcquirers)
-        ? competitive.topAcquirers
-        : [];
-  const topDealRows = Array.isArray(competitive?.topDeals?.deals)
-    ? competitive.topDeals.deals
-    : Array.isArray(competitive?.topDeals?.data)
-      ? competitive.topDeals.data
-      : Array.isArray(competitive?.topDeals)
-        ? competitive.topDeals
-        : [];
 
   // Load filter options
   useEffect(() => {
@@ -74,11 +46,9 @@ export default function AnalyticsPage() {
   // Load data based on tab
   useEffect(() => {
     setLoading(true);
-    setError('');
     const params = therapyFilter ? `?therapy_area=${encodeURIComponent(therapyFilter)}` : '';
-    const message = 'Analytics could not be loaded. Please retry.';
 
-    if (tab === 'trends') {
+    if (tab === 'trends' && !trends) {
       Promise.all([
         api.get(`/analytics/market-trends${params}`),
         api.get(`/analytics/agreement-type-distribution${params}`),
@@ -87,41 +57,32 @@ export default function AnalyticsPage() {
         setTrends(t.data);
         setAgreementTypes(a.data);
         setYoy(y.data);
-      }).catch((requestError) => {
-        console.error(requestError);
-        setError(message);
-      }).finally(() => setLoading(false));
-    } else if (tab === 'valuations') {
+      }).catch(console.error).finally(() => setLoading(false));
+    } else if (tab === 'valuations' && !valuations) {
       Promise.all([
         api.get('/analytics/valuations/by-phase'),
         api.get('/analytics/valuations/by-indication'),
-      ]).then(([p, i]) => {
-        setValuations({ byPhase: p.data, byIndication: i.data });
-      }).catch((requestError) => {
-        console.error(requestError);
-        setError(message);
-      }).finally(() => setLoading(false));
-    } else if (tab === 'geographic') {
+        api.get('/analytics/valuations/by-deal-type'),
+      ]).then(([p, i, d]) => {
+        setValuations({ byPhase: p.data, byIndication: i.data, byDealType: d.data });
+      }).catch(console.error).finally(() => setLoading(false));
+    } else if (tab === 'geographic' && !geographic) {
       api.get('/analytics/geographic-distribution')
         .then(r => setGeographic(r.data))
-        .catch((requestError) => {
-          console.error(requestError);
-          setError(message);
-        }).finally(() => setLoading(false));
-    } else if (tab === 'competitive') {
+        .catch(console.error).finally(() => setLoading(false));
+    } else if (tab === 'competitive' && !competitive) {
       Promise.all([
         api.get('/analytics/top-acquirers'),
         api.get('/analytics/top-deals'),
-      ]).then(([acq, deals]) => {
-        setCompetitive({ topAcquirers: acq.data, topDeals: deals.data });
-      }).catch((requestError) => {
-        console.error(requestError);
-        setError(message);
-      }).finally(() => setLoading(false));
+        api.get('/analytics/therapy-area-heatmap'),
+        api.get('/analytics/company-comparison?company_ids=1,2,3'),
+      ]).then(([acq, deals, heatmap, comp]) => {
+        setCompetitive({ topAcquirers: acq.data, topDeals: deals.data, heatmap: heatmap.data, comparison: comp.data });
+      }).catch(console.error).finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
-  }, [tab, therapyFilter, refreshKey]);
+  }, [tab, therapyFilter]);
 
   const tabs: Array<{ id: Tab; label: string; icon: any }> = [
     { id: 'trends', label: 'Market Trends', icon: TrendingUp },
@@ -135,32 +96,18 @@ export default function AnalyticsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Analytics</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Market intelligence dashboards. Financial values are disclosed current
-            projected totals in USD millions, not realized payments.
-          </p>
+          <p className="text-sm text-slate-500 mt-1">Market intelligence dashboards</p>
         </div>
-        {tab === 'trends' && (
-          <select
-            aria-label="Filter market trends by therapy area"
-            value={therapyFilter}
-            onChange={(e) => setTherapyFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300"
-          >
-            <option value="">All Therapy Areas</option>
-            {filterOptions.map(ta => <option key={ta} value={ta}>{ta}</option>)}
-          </select>
-        )}
+        {/* Therapy area filter */}
+        <select
+          value={therapyFilter}
+          onChange={(e) => { setTherapyFilter(e.target.value); setTrends(null); }}
+          className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300"
+        >
+          <option value="">All Therapy Areas</option>
+          {filterOptions.map(ta => <option key={ta} value={ta}>{ta}</option>)}
+        </select>
       </div>
-
-      {error && (
-        <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-          <span>{error}</span>
-          <button type="button" onClick={() => setRefreshKey(value => value + 1)} className="rounded border border-red-400/30 px-3 py-1 hover:bg-red-500/10">
-            Retry
-          </button>
-        </div>
-      )}
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 bg-slate-900 p-1 rounded-lg w-fit">
@@ -190,7 +137,7 @@ export default function AnalyticsPage() {
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-sm font-medium text-slate-400">Deal Volume Over Time</h2>
-                  <DataBadge n={(trends.data || []).reduce((sum: number, row: any) => sum + (row.deal_count || 0), 0)} />
+                  <DataBadge n={trends.data?.length || 0} />
                 </div>
                 <ResponsiveContainer width="100%" height={300}>
                   <AreaChart data={trends.data || []}>
@@ -256,19 +203,16 @@ export default function AnalyticsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {yoy.data.map((row: any) => {
-                          const growthRate = row.deal_count_growth_pct ?? row.growth_rate ?? null;
-                          return (
+                        {yoy.data.map((row: any) => (
                           <tr key={row.year} className="border-t border-slate-800/50">
                             <td className="py-2 text-slate-300">{row.year}</td>
                             <td className="py-2 text-slate-300">{row.deal_count?.toLocaleString()}</td>
-                            <td className={`py-2 ${growthRate > 0 ? 'text-green-400' : growthRate < 0 ? 'text-red-400' : 'text-slate-500'}`}>
-                              {growthRate !== null ? `${growthRate > 0 ? '+' : ''}${growthRate.toFixed(1)}%` : '—'}
+                            <td className={`py-2 ${row.growth_rate > 0 ? 'text-green-400' : row.growth_rate < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+                              {row.growth_rate !== null ? `${row.growth_rate > 0 ? '+' : ''}${row.growth_rate?.toFixed(1)}%` : '—'}
                             </td>
                             <td className="py-2 text-slate-400">{formatValue(row.avg_value)}</td>
                           </tr>
-                          );
-                        })}
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -304,8 +248,8 @@ export default function AnalyticsPage() {
                           <td className="py-2 text-slate-500">{b.disclosed_count} ({b.deal_count > 0 ? ((b.disclosed_count / b.deal_count) * 100).toFixed(0) : 0}%)</td>
                           <td className="py-2 text-slate-300">{formatValue(b.median_value)}</td>
                           <td className="py-2 text-slate-300">{formatValue(b.avg_value)}</td>
-                          <td className="py-2 text-slate-400">{b.q1_value != null && b.q3_value != null ? `${formatValue(b.q1_value)} – ${formatValue(b.q3_value)}` : '—'}</td>
-                          <td className="py-2 text-slate-500">{b.min_value != null && b.max_value != null ? `${formatValue(b.min_value)} – ${formatValue(b.max_value)}` : '—'}</td>
+                          <td className="py-2 text-slate-400">{b.q1_value && b.q3_value ? `${formatValue(b.q1_value)} – ${formatValue(b.q3_value)}` : '—'}</td>
+                          <td className="py-2 text-slate-500">{b.min_value && b.max_value ? `${formatValue(b.min_value)} – ${formatValue(b.max_value)}` : '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -364,10 +308,10 @@ export default function AnalyticsPage() {
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <h2 className="text-sm font-medium text-slate-400 mb-4">Deal Distribution by Territory</h2>
                 <ResponsiveContainer width="100%" height={400}>
-                  <BarChart data={geographicRows.slice(0, 20)} layout="vertical">
+                  <BarChart data={(geographic.data || geographic || []).slice(0, 20)} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis type="number" stroke="#475569" fontSize={12} />
-                    <YAxis type="category" dataKey="territory_name" stroke="#475569" fontSize={10} width={150} />
+                    <YAxis type="category" dataKey="territory" stroke="#475569" fontSize={10} width={150} />
                     <Tooltip contentStyle={CHART_STYLE} />
                     <Bar dataKey="deal_count" fill="#06b6d4" radius={[0, 4, 4, 0]} name="Deals" />
                   </BarChart>
@@ -383,10 +327,10 @@ export default function AnalyticsPage() {
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                 <h2 className="text-sm font-medium text-slate-400 mb-4">Top Acquirers by Deal Count</h2>
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={acquirerRows.slice(0, 15)} layout="vertical">
+                  <BarChart data={(competitive.topAcquirers?.data || competitive.topAcquirers || []).slice(0, 15)} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis type="number" stroke="#475569" fontSize={12} />
-                    <YAxis type="category" dataKey="name" stroke="#475569" fontSize={10} width={180} />
+                    <YAxis type="category" dataKey="company" stroke="#475569" fontSize={10} width={180} />
                     <Tooltip contentStyle={CHART_STYLE} />
                     <Bar dataKey="deal_count" fill="#f59e0b" radius={[0, 4, 4, 0]} name="Deals" />
                   </BarChart>
@@ -408,14 +352,12 @@ export default function AnalyticsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {topDealRows.slice(0, 15).map((d: any, i: number) => (
+                      {(competitive.topDeals?.data || competitive.topDeals || []).slice(0, 15).map((d: any, i: number) => (
                         <tr key={i} className="border-t border-slate-800/50">
-                          <td className="py-2 text-slate-200 max-w-xs truncate">
-                            <Link to={`/deals/${d.id}`} className="hover:text-blue-400 hover:underline">{d.title || `Deal ${d.id}`}</Link>
-                          </td>
+                          <td className="py-2 text-slate-200 max-w-xs truncate">{d.title}</td>
                           <td className="py-2 text-slate-400">{d.principal || d.principal_company || '—'}</td>
                           <td className="py-2 text-slate-400">{d.partner || d.partner_company || '—'}</td>
-                          <td className="py-2 text-slate-300 font-medium">{formatValue(d.total_value ?? d.value)}</td>
+                          <td className="py-2 text-slate-300 font-medium">{formatValue(d.total_value || d.value)}</td>
                           <td className="py-2 text-slate-500 text-xs">{d.date_start || d.date || '—'}</td>
                         </tr>
                       ))}

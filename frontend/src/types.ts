@@ -47,15 +47,9 @@ export interface CompanyInfo {
 
 export interface FinanceSummary {
   total_paid_amount?: number;
-  total_paid_currency?: string;
-  total_paid_unit?: string;
   total_paid_disclosure_status?: string;
   total_projected_current_amount?: number;
-  total_projected_current_currency?: string;
-  total_projected_current_unit?: string;
   total_projected_signing_amount?: number;
-  total_projected_signing_currency?: string;
-  total_projected_signing_unit?: string;
 }
 
 export interface TimelineEvent {

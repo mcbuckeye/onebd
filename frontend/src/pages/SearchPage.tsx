@@ -74,26 +74,13 @@ export default function SearchPage() {
   const [page, setPage] = useState(1);
   const [disclosedOnly, setDisclosedOnly] = useState(false);
   const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
-  const [error, setError] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [indicationText, setIndicationText] = useState('');
-  const [technologyText, setTechnologyText] = useState('');
 
   useEffect(() => {
     api.get('/search/filters').then(res => setFilterOptions(res.data)).catch(console.error);
   }, []);
 
   const search = useCallback(async (p = 1) => {
-    if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) {
-      setError('Deal date from must be on or before deal date to.');
-      return;
-    }
-    if (filters.value_min !== undefined && filters.value_max !== undefined && filters.value_min > filters.value_max) {
-      setError('Minimum disclosed total must not exceed the maximum.');
-      return;
-    }
     setLoading(true);
-    setError('');
     try {
       const res = await api.post(`/search/deals?page=${p}&page_size=25`, {
         ...filters,
@@ -101,28 +88,8 @@ export default function SearchPage() {
       });
       setResults(res.data);
       setPage(p);
-      const activeFilters = {
-        ...filters,
-        ...(disclosedOnly ? { disclosed_only: true } : {}),
-      };
-      if (p === 1 && Object.keys(activeFilters).length > 0) {
-        const query = Object.entries(activeFilters)
-          .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-          .join(' · ');
-        api.post('/search/history', null, {
-          params: { query, search_type: 'deals', result_count: res.data.total },
-        }).catch(() => undefined);
-      }
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      const detail = e.response?.data?.detail;
-      setError(
-        typeof detail === 'string'
-          ? detail
-          : Array.isArray(detail)
-            ? detail.map(item => item?.msg || 'Invalid filter').join('; ')
-            : 'Deal search failed',
-      );
     } finally {
       setLoading(false);
     }
@@ -135,8 +102,6 @@ export default function SearchPage() {
   const clearFilters = () => {
     setFilters({});
     setDisclosedOnly(false);
-    setIndicationText('');
-    setTechnologyText('');
   };
 
   const hasFilters = Object.values(filters).some(v =>
@@ -163,7 +128,6 @@ export default function SearchPage() {
       window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Export failed:', e);
-      setError('Export failed. Narrow the filters and try again.');
     }
   };
 
@@ -173,7 +137,7 @@ export default function SearchPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Deal Search</h1>
           <p className="text-sm text-slate-500 mt-1">
-            {results ? `${results.total.toLocaleString()} deals` : 'Search synchronized pharmaceutical deals'}
+            {results ? `${results.total.toLocaleString()} deals` : 'Search across 145K+ pharmaceutical deals'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -239,9 +203,6 @@ export default function SearchPage() {
 
         {/* Disclosed only toggle */}
         <button
-          type="button"
-          role="switch"
-          aria-checked={disclosedOnly}
           onClick={() => setDisclosedOnly(!disclosedOnly)}
           className={`px-3 py-1.5 rounded-lg border text-xs transition-colors ${
             disclosedOnly
@@ -259,14 +220,8 @@ export default function SearchPage() {
         )}
       </div>
 
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-          {error}
-        </div>
-      )}
-
       {/* Company search input */}
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className="flex gap-2 mb-6">
         <input
           type="text"
           placeholder="Filter by company name..."
@@ -275,66 +230,7 @@ export default function SearchPage() {
           onKeyDown={(e) => e.key === 'Enter' && search(1)}
           className="flex-1 max-w-sm min-w-0 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
         />
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(current => !current)}
-          aria-expanded={showAdvanced}
-          className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-400 hover:text-slate-200"
-        >
-          {showAdvanced ? 'Hide advanced filters' : 'Advanced filters'}
-        </button>
       </div>
-
-      {showAdvanced && (
-        <div className="mb-6 grid gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-xs text-slate-500">
-            Indications (comma-separated)
-            <input
-              type="text"
-              value={indicationText}
-              onChange={(event) => {
-                setIndicationText(event.target.value);
-                const values = event.target.value.split(',').map(value => value.trim()).filter(Boolean);
-                setFilters(current => ({ ...current, indication: values.length ? values : undefined }));
-              }}
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200"
-            />
-          </label>
-          <label className="text-xs text-slate-500">
-            Technologies or modalities (comma-separated)
-            <input
-              type="text"
-              value={technologyText}
-              onChange={(event) => {
-                setTechnologyText(event.target.value);
-                const values = event.target.value.split(',').map(value => value.trim()).filter(Boolean);
-                setFilters(current => ({ ...current, technology: values.length ? values : undefined }));
-              }}
-              className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200"
-            />
-          </label>
-          <label className="text-xs text-slate-500">
-            Deal date from
-            <input type="date" value={filters.date_from || ''} onChange={(event) => setFilters(current => ({ ...current, date_from: event.target.value || undefined }))} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200" />
-          </label>
-          <label className="text-xs text-slate-500">
-            Deal date to
-            <input type="date" value={filters.date_to || ''} onChange={(event) => setFilters(current => ({ ...current, date_to: event.target.value || undefined }))} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200" />
-          </label>
-          <label className="text-xs text-slate-500">
-            Minimum disclosed total (USD millions)
-            <input type="number" min="0" step="any" value={filters.value_min ?? ''} onChange={(event) => setFilters(current => ({ ...current, value_min: event.target.value === '' ? undefined : Number(event.target.value) }))} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200" />
-          </label>
-          <label className="text-xs text-slate-500">
-            Maximum disclosed total (USD millions)
-            <input type="number" min="0" step="any" value={filters.value_max ?? ''} onChange={(event) => setFilters(current => ({ ...current, value_max: event.target.value === '' ? undefined : Number(event.target.value) }))} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200" />
-          </label>
-          <p className="self-end text-xs leading-5 text-slate-600 sm:col-span-2">
-            Text filters use case-insensitive contains matching. Financial values
-            are disclosed current projected totals in USD millions, not realized payments.
-          </p>
-        </div>
-      )}
 
       {/* Results table */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
@@ -346,7 +242,7 @@ export default function SearchPage() {
                 <th className="px-4 py-3 font-medium">Principal</th>
                 <th className="px-4 py-3 font-medium">Partner</th>
                 <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Value (USD M)</th>
+                <th className="px-4 py-3 font-medium">Value</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Date</th>
               </tr>
