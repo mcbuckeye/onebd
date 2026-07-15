@@ -9,7 +9,6 @@ Tests search functionality across:
 """
 import pytest
 from sqlalchemy import text
-from typing import List, Dict, Any
 
 
 @pytest.mark.integration
@@ -430,3 +429,38 @@ class TestSearchPerformance:
         elapsed = time.time() - start
         # Should complete within 2 seconds
         assert elapsed < 2.0, f"Deal search took {elapsed:.2f}s (threshold: 2s)"
+
+    @pytest.mark.slow
+    def test_full_asset_expansion_pages_before_hydration(self, cortellis_session):
+        """A broad fully-expanded asset page must stay within the API budget."""
+        import time
+
+        from unified_api.services.advanced_search import (
+            AdvancedSearchRequest,
+            search_assets,
+        )
+
+        request = AdvancedSearchRequest.model_validate(
+            {
+                "limit": 10,
+                "expand": [
+                    "aliases",
+                    "companies",
+                    "diseases",
+                    "evidence",
+                    "modalities",
+                    "targets",
+                    "values",
+                ],
+                "evidence": {
+                    "allowed_attribution": ["asset", "deal"],
+                    "sources": ["cortellis_deals", "public_biology"],
+                },
+            }
+        )
+        started = time.perf_counter()
+        result = search_assets(cortellis_session, request)
+        elapsed = time.perf_counter() - started
+
+        assert len(result["items"]) == 10
+        assert elapsed < 3.0, f"Expanded asset search took {elapsed:.2f}s"

@@ -195,6 +195,10 @@ curl -H "X-API-Key: $ONEBD_API_KEY" \
 
 curl -H "X-API-Key: $ONEBD_API_KEY" \
   'https://onebd.pchomelab.com/api/v1/financial-terms?term_type=upfront_payment&min_amount_usd_millions=100&limit=25'
+
+# Exact root-population totals; do not enumerate search pages for counts.
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  'https://onebd.pchomelab.com/api/v1/counts'
 ```
 
 ### Structured deal and asset search
@@ -202,13 +206,14 @@ curl -H "X-API-Key: $ONEBD_API_KEY" \
 The two `POST` endpoints accept the same strict, typed filter document:
 
 - `/api/v1/deals/search` returns one row per deal;
-- `/api/v1/assets/search` returns one row per deal-referenced asset, together
-  with the supporting deal IDs and asset- versus deal-level attribution.
+- `/api/v1/assets/search` returns one row per deal-referenced asset.
 
-They require `deals:read` (or `data:read`). Public biology joins are included
-only when the owner has not disabled the `public_biology` dataset. Unknown
-fields and invalid ranges return `422`; the API never silently discards a
-misspelled filter.
+They require `deals:read` (or `data:read`). Search defaults to lightweight,
+Cortellis-only rows. Public biology must be selected explicitly in `evidence`,
+and related response fields must be selected explicitly in `expand`; those
+joins are included only when the owner has not disabled the `public_biology`
+dataset. Unknown fields and invalid ranges return `422`; the API never silently
+discards a misspelled filter.
 
 ```bash
 curl -X POST \
@@ -253,6 +258,10 @@ curl -X POST \
     "sources": ["cortellis_deals", "public_biology"],
     "missing_data": "exclude"
   },
+  "expand": [
+    "aliases", "companies", "targets", "diseases", "modalities",
+    "values", "evidence"
+  ],
   "sort": [{"field": "asset_name", "direction": "asc"}],
   "limit": 25,
   "include_total": true
@@ -272,6 +281,7 @@ The main filter families are:
 | Dates | Deal start/end/change/added/recent-event, active interval, timeline-event date, and contract date |
 | Values | Paid/projected totals by explicit source currency; USD-normalized upfront/milestone terms; royalty-rate ranges |
 | Evidence | Asset/deal attribution, Cortellis/public-biology source selection, and unknown-data behavior |
+| Expansion | `aliases`, `assets`, `companies`, `targets`, `diseases`, `modalities`, `territories`, `values`, `sources`, or `evidence` |
 
 For related concepts, `any` means at least one requested value, `all` requires a
 separate match for every requested value, and `exclude` rejects matching records.
@@ -286,18 +296,30 @@ misleading ranking across USD, EUR, JPY, and other unlike currencies. Parsed
 upfront and milestone filters use the separately retained USD-normalized term
 amount. Royalty filters use the retained percentage range.
 
+The default evidence policy is `sources=["cortellis_deals"]` and
+`allowed_attribution=["deal"]`; the default `expand` is empty. Selecting
+`public_biology` permits Open Targets/ChEMBL/PubChem-linked evidence, while
+omitting it also constrains alias matching and expansion to Cortellis aliases.
+
 Set the response's `next_cursor` as the next request's `cursor` without changing
 any other request field. Cursors are opaque and bound to the complete filter,
 sort, and page-size document. Each result reports active filter categories,
-evidence policy, citations or supporting deal IDs, and limitations. In
+evidence policy, selected expansions, and limitations. In
 particular, a deal-level indication, target, or modality may apply to one of
 several assets in that deal, and company participation does not establish asset
 ownership or current commercial rights.
 
+Search paginates matching IDs before hydrating any requested expansions.
+`include_total=true` uses a separate minimal count query and never re-runs the
+enrichment plan. For unfiltered root totals, prefer `/api/v1/counts` or the MCP
+tool `get_entity_counts`; its exact snapshot is cached for five minutes and
+requires only `deals:read`.
+
 The hosted MCP endpoint exposes the same operations as
-`search_deals_advanced` and `search_assets_advanced`. MCP arguments are the JSON
-body shown above; the adapter validates the nested document before issuing the
-governed HTTP request.
+`search_deals_advanced`, `search_assets_advanced`, and `get_entity_counts`.
+MCP arguments are the JSON body shown above; the adapter validates the nested
+document before issuing the governed HTTP request. Agents should always call
+`get_entity_counts` for totals instead of traversing cursor pages.
 
 ### Company asset-intelligence calls
 
@@ -444,7 +466,8 @@ colleagues.
 
 Available MCP tools cover the catalog, simple and structured deal/asset search,
 normalized deal financial terms, companies, drugs, trials, targets, diseases,
-EDGAR documents, and source status. `search_deals_advanced` and
+EDGAR documents, and source status. `get_entity_counts` returns exact cached
+deal/company/asset totals without enumeration. `search_deals_advanced` and
 `search_assets_advanced` expose the composable filters documented above. The
 dedicated `get_company_oncology_assets`, `get_company_asset_rights`, and
 `get_company_manufacturing_relationships` tools expose the three company

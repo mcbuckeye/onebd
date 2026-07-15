@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from unified_api.config import settings
 from unified_api.mcp_server import PROTOCOL_VERSION, OneBDMCPServer
@@ -94,7 +95,7 @@ async def mcp(request: Request) -> Response:
     """Process MCP JSON-RPC requests over stateless Streamable HTTP."""
     _validate_origin(request)
     api_key = _api_key(request)
-    authorize_mcp_request(request, api_key)
+    await run_in_threadpool(authorize_mcp_request, request, api_key)
     messages = await _messages(request)
 
     # ASGITransport keeps tool calls inside the service while still traversing

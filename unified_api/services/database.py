@@ -11,7 +11,7 @@ The legacy edgar_db_url and edgar_source_db_url both point to this
 same database for backwards compatibility.
 """
 from contextlib import contextmanager
-from typing import Generator, Optional
+from typing import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -41,9 +41,11 @@ def get_cortellis_engine():
         _cortellis_engine = create_engine(
             settings.cortellis_db_url,
             poolclass=QueuePool,
-            pool_size=10,
-            max_overflow=20,
-            pool_timeout=30,
+            # Four API workers can therefore open at most 40 Cortellis
+            # connections, leaving headroom for ETL and Celery processes.
+            pool_size=5,
+            max_overflow=5,
+            pool_timeout=10,
             pool_recycle=1800,  # Recycle connections every 30 min
             pool_pre_ping=True,  # Verify connections before use
             echo=settings.debug,
@@ -96,9 +98,9 @@ def get_edgar_source_engine():
         _edgar_source_engine = create_engine(
             settings.edgar_source_db_url,
             poolclass=QueuePool,
-            pool_size=10,
-            max_overflow=20,
-            pool_timeout=30,
+            pool_size=5,
+            max_overflow=5,
+            pool_timeout=10,
             pool_recycle=1800,  # Recycle connections every 30 min
             pool_pre_ping=True,  # Verify connections before use
             echo=settings.debug,

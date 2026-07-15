@@ -30,6 +30,15 @@ PROTOCOL_VERSION = "2025-06-18"
 
 TOOLS = [
     {
+        "name": "get_entity_counts",
+        "description": (
+            "Return cached exact totals for Cortellis deals and deal-referenced "
+            "companies/assets. Use this tool for totals; never enumerate search "
+            "pages to calculate counts."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "get_data_catalog",
         "description": "Get live OneBD dataset counts, provenance, and license notes.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -55,7 +64,8 @@ TOOLS = [
         "description": (
             "Search deals with Boolean company/asset/target/disease filters, "
             "date ranges, deal attributes, currency-safe value ranges, evidence "
-            "attribution, sorting, and opaque cursor pagination."
+            "attribution, explicit response expansions, sorting, and opaque cursor "
+            "pagination. Use get_entity_counts for unfiltered totals."
         ),
         "inputSchema": AdvancedSearchRequest.model_json_schema(),
     },
@@ -63,8 +73,8 @@ TOOLS = [
         "name": "search_assets_advanced",
         "description": (
             "Search deal-referenced assets using the same structured filters; "
-            "returns aliases, companies, phases, targets, diseases, modalities, "
-            "deal evidence, and explicit asset-versus-deal attribution."
+            "request aliases, companies, targets, diseases, modalities, values, "
+            "or deal evidence through expand. Use get_entity_counts for totals."
         ),
         "inputSchema": AdvancedSearchRequest.model_json_schema(),
     },
@@ -233,6 +243,7 @@ TOOLS = [
 
 
 TOOL_ROUTES = {
+    "get_entity_counts": ("counts", None),
     "get_data_catalog": ("catalog", None),
     "search_deals": ("deals", None),
     "get_deal": ("deals/{deal_id}", "deal_id"),

@@ -12,6 +12,7 @@ from fastapi import HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 
 from unified_api.services.auth import TokenData, decode_token
 from unified_api.services.database import get_cortellis_session
@@ -263,7 +264,12 @@ def _bearer_principal(request: Request) -> DataPrincipal | None:
     )
 
 
-def _api_key_principal(api_key: str | None, path: str) -> DataPrincipal | None:
+def _api_key_principal(
+    api_key: str | None,
+    path: str,
+    *,
+    record_usage: bool = True,
+) -> DataPrincipal | None:
     if not api_key:
         return None
     ensure_api_access_schema()
@@ -276,7 +282,7 @@ def _api_key_principal(api_key: str | None, path: str) -> DataPrincipal | None:
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
         """), {"key_hash": key_hash}).mappings().first()
-        if row:
+        if row and record_usage:
             session.execute(text("""
                 UPDATE api_credentials
                 SET last_used_at = NOW(), last_used_path = :path,
@@ -296,6 +302,47 @@ def _api_key_principal(api_key: str | None, path: str) -> DataPrincipal | None:
     )
 
 
+def _resolve_data_access(
+    request: Request,
+    api_key: str | None,
+    scope: str,
+    dataset: str,
+) -> DataPrincipal:
+    policy = get_data_access_policy()
+    if dataset in set(policy["disabled_datasets"] or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Dataset disabled by owner policy: {dataset}",
+        )
+
+    mode = policy["access_mode"]
+    if mode == "open":
+        principal = DataPrincipal(
+            principal_type="anonymous",
+            principal_id="anonymous",
+            name="anonymous",
+            scopes=["data:read"],
+        )
+    else:
+        principal = _api_key_principal(api_key, request.url.path)
+        if principal is None and mode == "authenticated":
+            principal = _bearer_principal(request)
+        if principal is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="A valid API key is required",
+            )
+
+    if policy["enforce_scopes"] and not (
+        scope in principal.scopes or "data:read" in principal.scopes
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API credential lacks scope: {scope}",
+        )
+    return principal
+
+
 def require_data_access(scope: str, dataset: str):
     """Build a FastAPI dependency honoring the mutable owner policy."""
     if scope not in ALLOWED_SCOPES:
@@ -307,39 +354,13 @@ def require_data_access(scope: str, dataset: str):
         request: Request,
         api_key: str | None = Security(api_key_header),
     ) -> DataPrincipal:
-        policy = get_data_access_policy()
-        if dataset in set(policy["disabled_datasets"] or []):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Dataset disabled by owner policy: {dataset}",
-            )
-
-        mode = policy["access_mode"]
-        if mode == "open":
-            principal = DataPrincipal(
-                principal_type="anonymous",
-                principal_id="anonymous",
-                name="anonymous",
-                scopes=["data:read"],
-            )
-        else:
-            principal = _api_key_principal(api_key, request.url.path)
-            if principal is None and mode == "authenticated":
-                principal = _bearer_principal(request)
-            if principal is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="A valid API key is required",
-                )
-
-        if policy["enforce_scopes"] and not (
-            scope in principal.scopes or "data:read" in principal.scopes
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"API credential lacks scope: {scope}",
-            )
-        return principal
+        return await run_in_threadpool(
+            _resolve_data_access,
+            request,
+            api_key,
+            scope,
+            dataset,
+        )
 
     return dependency
 
@@ -361,7 +382,13 @@ def authorize_mcp_request(
             name="anonymous",
             scopes=["data:read"],
         )
-    principal = _api_key_principal(api_key, request.url.path)
+    # The selected MCP tool traverses the governed REST route and records the
+    # precise endpoint. Avoid double-counting the outer transport request.
+    principal = _api_key_principal(
+        api_key,
+        request.url.path,
+        record_usage=False,
+    )
     if principal is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

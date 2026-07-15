@@ -152,8 +152,12 @@ def test_hosted_mcp_authenticates_key_before_tool_scope_selection(monkeypatch):
     })
     observed = {}
 
-    def principal(api_key, path):
-        observed.update(api_key=api_key, path=path)
+    def principal(api_key, path, *, record_usage=True):
+        observed.update(
+            api_key=api_key,
+            path=path,
+            record_usage=record_usage,
+        )
         return api_credentials.DataPrincipal(
             principal_type="api_key",
             principal_id="14",
@@ -168,7 +172,11 @@ def test_hosted_mcp_authenticates_key_before_tool_scope_selection(monkeypatch):
     )
 
     assert result.scopes == ["deals:read"]
-    assert observed == {"api_key": "onebd_test", "path": "/mcp"}
+    assert observed == {
+        "api_key": "onebd_test",
+        "path": "/mcp",
+        "record_usage": False,
+    }
 
 
 def test_hosted_mcp_respects_owner_open_mode(monkeypatch):

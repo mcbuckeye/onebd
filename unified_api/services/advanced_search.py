@@ -6,6 +6,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
+import time
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -18,6 +19,18 @@ MatchMode = Literal["exact", "contains"]
 MissingDataMode = Literal["exclude", "include_as_unknown", "require_known"]
 Attribution = Literal["asset", "deal"]
 Direction = Literal["asc", "desc"]
+Expansion = Literal[
+    "aliases",
+    "assets",
+    "companies",
+    "diseases",
+    "evidence",
+    "modalities",
+    "sources",
+    "targets",
+    "territories",
+    "values",
+]
 SortField = Literal[
     "id",
     "date_start",
@@ -207,10 +220,10 @@ class ValueFilters(StrictModel):
 
 class EvidenceFilters(StrictModel):
     allowed_attribution: list[Attribution] = Field(
-        default_factory=lambda: ["asset", "deal"], min_length=1, max_length=2
+        default_factory=lambda: ["deal"], min_length=1, max_length=2
     )
     sources: list[Literal["cortellis_deals", "public_biology"]] = Field(
-        default_factory=lambda: ["cortellis_deals", "public_biology"],
+        default_factory=lambda: ["cortellis_deals"],
         min_length=1,
         max_length=2,
     )
@@ -232,6 +245,7 @@ class AdvancedSearchRequest(StrictModel):
     dates: list[DateRange] = Field(default_factory=list, max_length=8)
     values: ValueFilters = Field(default_factory=ValueFilters)
     evidence: EvidenceFilters = Field(default_factory=EvidenceFilters)
+    expand: list[Expansion] = Field(default_factory=list, max_length=10)
     sort: list[SortSpec] = Field(default_factory=list, max_length=3)
     limit: int = Field(default=50, ge=1, le=100)
     cursor: str | None = Field(default=None, max_length=2000)
@@ -239,6 +253,7 @@ class AdvancedSearchRequest(StrictModel):
 
     @model_validator(mode="after")
     def validate_concept_refinements(self):
+        self.expand = list(dict.fromkeys(self.expand))
         if self.query:
             self.query = self.query.strip()
             if not self.query:
@@ -337,7 +352,12 @@ def _scalar_text_filter(
     return conditions
 
 
-def _company_match(criterion: CompanyCriterion, params: _Params) -> str:
+def _company_match(
+    criterion: CompanyCriterion,
+    params: _Params,
+    *,
+    allow_public_aliases: bool,
+) -> str:
     parts = []
     if criterion.id is not None:
         parts.append(f"company.id = {params.add(criterion.id, 'company_id')}")
@@ -352,20 +372,27 @@ def _company_match(criterion: CompanyCriterion, params: _Params) -> str:
             f"({name_match} OR EXISTS ("
             "SELECT 1 FROM company_xref xref "
             "JOIN company_aliases alias ON alias.xref_id=xref.id "
-            f"WHERE xref.cortellis_id=company.id AND {alias_match}))"
+            "WHERE xref.cortellis_id=company.id "
+            + ("" if allow_public_aliases else "AND alias.source='cortellis' ")
+            + f"AND {alias_match}))"
         )
     if criterion.roles:
         parts.append(f"company_link.role = ANY({params.add(criterion.roles, 'roles')})")
     return " AND ".join(parts)
 
 
-def _company_filters(filters: CompanyFilters, params: _Params) -> list[str]:
+def _company_filters(
+    filters: CompanyFilters,
+    params: _Params,
+    *,
+    allow_public_aliases: bool,
+) -> list[str]:
     def exists(criterion: CompanyCriterion) -> str:
         return (
             "EXISTS (SELECT 1 FROM deal_companies company_link "
             "JOIN companies company ON company.id=company_link.company_id "
             "WHERE company_link.deal_id=deal.id AND "
-            f"{_company_match(criterion, params)})"
+            f"{_company_match(criterion, params, allow_public_aliases=allow_public_aliases)})"
         )
 
     conditions = []
@@ -385,12 +412,15 @@ def _asset_identity_match(
     params: _Params,
     *,
     drug_alias: str,
+    allow_public_aliases: bool,
 ) -> str:
     name = _text_expression(f"{drug_alias}.name_display", value, mode, params)
     alias = _text_expression("asset_alias.alias_value", value, mode, params)
     return (
         f"({name} OR EXISTS (SELECT 1 FROM drug_aliases asset_alias "
-        f"WHERE asset_alias.drug_id={drug_alias}.id AND {alias}))"
+        f"WHERE asset_alias.drug_id={drug_alias}.id "
+        + ("" if allow_public_aliases else "AND asset_alias.source='cortellis' ")
+        + f"AND {alias}))"
     )
 
 
@@ -414,12 +444,17 @@ def _asset_filters(
     params: _Params,
     *,
     asset_search: bool,
+    allow_public_aliases: bool,
 ) -> list[str]:
     drug_alias = "drug" if asset_search else "candidate_drug"
 
     def identity(value: str) -> str:
         match = _asset_identity_match(
-            value, filters.names.match_mode, params, drug_alias=drug_alias
+            value,
+            filters.names.match_mode,
+            params,
+            drug_alias=drug_alias,
+            allow_public_aliases=allow_public_aliases,
         )
         if asset_search:
             return match
@@ -655,31 +690,41 @@ def _date_filters(ranges: list[DateRange], params: _Params) -> list[str]:
             column = columns[item.field]
             parts = []
             if item.gte:
-                parts.append(f"{column}::date >= {params.add(item.gte, 'date_gte')}")
+                value = params.add(item.gte, "date_gte")
+                parts.append(f"{column} >= CAST({value} AS date)")
             if item.lte:
-                parts.append(f"{column}::date <= {params.add(item.lte, 'date_lte')}")
+                value = params.add(item.lte, "date_lte")
+                parts.append(
+                    f"{column} < CAST({value} AS date) + INTERVAL '1 day'"
+                )
             conditions.append(" AND ".join(parts))
         elif item.field == "active_during":
             parts = []
             if item.lte:
+                value = params.add(item.lte, "active_lte")
                 parts.append(
-                    f"deal.date_start::date <= {params.add(item.lte, 'active_lte')}"
+                    "deal.date_start < "
+                    f"CAST({value} AS date) + INTERVAL '1 day'"
                 )
             if item.gte:
+                value = params.add(item.gte, "active_gte")
                 parts.append(
-                    "(deal.date_end IS NULL OR deal.date_end::date >= "
-                    f"{params.add(item.gte, 'active_gte')})"
+                    "(deal.date_end IS NULL OR deal.date_end >= "
+                    f"CAST({value} AS date))"
                 )
             conditions.append(" AND ".join(parts))
         elif item.field == "timeline_event_date":
             parts = ["timeline.deal_id=deal.id"]
             if item.gte:
+                value = params.add(item.gte, "timeline_gte")
                 parts.append(
-                    f"timeline.event_date::date >= {params.add(item.gte, 'timeline_gte')}"
+                    f"timeline.event_date >= CAST({value} AS date)"
                 )
             if item.lte:
+                value = params.add(item.lte, "timeline_lte")
                 parts.append(
-                    f"timeline.event_date::date <= {params.add(item.lte, 'timeline_lte')}"
+                    "timeline.event_date < "
+                    f"CAST({value} AS date) + INTERVAL '1 day'"
                 )
             conditions.append(
                 f"EXISTS (SELECT 1 FROM deal_timeline_events timeline WHERE {' AND '.join(parts)})"
@@ -688,12 +733,14 @@ def _date_filters(ranges: list[DateRange], params: _Params) -> list[str]:
             parts = ["contract.deal_id=deal.id"]
             contract_date = "COALESCE(contract.date_contract, contract.date_filing)"
             if item.gte:
+                value = params.add(item.gte, "contract_gte")
                 parts.append(
-                    f"{contract_date}::date >= {params.add(item.gte, 'contract_gte')}"
+                    f"{contract_date} >= CAST({value} AS date)"
                 )
             if item.lte:
+                value = params.add(item.lte, "contract_lte")
                 parts.append(
-                    f"{contract_date}::date <= {params.add(item.lte, 'contract_lte')}"
+                    f"{contract_date} < CAST({value} AS date) + INTERVAL '1 day'"
                 )
             conditions.append(
                 f"EXISTS (SELECT 1 FROM deal_contracts contract WHERE {' AND '.join(parts)})"
@@ -966,6 +1013,9 @@ def _deal_predicates(
     attribution = set(request.evidence.allowed_attribution)
     sources = set(request.evidence.sources)
     allow_public = allow_public_biology and "public_biology" in sources
+    alias_source_condition = (
+        "" if allow_public else "query_alias.source='cortellis' AND "
+    )
     conditions = ["TRUE"]
     if request.query:
         query = params.add(f"%{request.query}%", "query")
@@ -974,7 +1024,11 @@ def _deal_predicates(
                 "(deal.title ILIKE {query} OR deal.summary ILIKE {query} OR "
                 "drug.name_display ILIKE {query} OR EXISTS (SELECT 1 FROM "
                 "drug_aliases query_alias WHERE query_alias.drug_id=drug.id "
-                "AND query_alias.alias_value ILIKE {query}))".format(query=query)
+                "AND {alias_source_condition}query_alias.alias_value ILIKE "
+                "{query}))".format(
+                    query=query,
+                    alias_source_condition=alias_source_condition,
+                )
             )
         else:
             conditions.append(
@@ -984,14 +1038,31 @@ def _deal_predicates(
                 "AND (query_drug.name_display ILIKE {query} OR EXISTS (SELECT 1 "
                 "FROM drug_aliases query_alias WHERE "
                 "query_alias.drug_id=query_drug.id AND "
-                "query_alias.alias_value ILIKE {query}))) OR EXISTS (SELECT 1 "
+                "{alias_source_condition}query_alias.alias_value ILIKE {query}))) "
+                "OR EXISTS (SELECT 1 "
                 "FROM deal_companies query_company_link JOIN companies query_company "
                 "ON query_company.id=query_company_link.company_id WHERE "
                 "query_company_link.deal_id=deal.id AND "
-                "query_company.name ILIKE {query}))".format(query=query)
+                "query_company.name ILIKE {query}))".format(
+                    query=query,
+                    alias_source_condition=alias_source_condition,
+                )
             )
-    conditions.extend(_company_filters(request.companies, params))
-    conditions.extend(_asset_filters(request.assets, params, asset_search=asset_search))
+    conditions.extend(
+        _company_filters(
+            request.companies,
+            params,
+            allow_public_aliases=allow_public,
+        )
+    )
+    conditions.extend(
+        _asset_filters(
+            request.assets,
+            params,
+            asset_search=asset_search,
+            allow_public_aliases=allow_public,
+        )
+    )
     conditions.extend(
         _modality_filters(
             request.assets.modalities,
@@ -1032,91 +1103,8 @@ def _deal_predicates(
     return conditions
 
 
-def _deal_result_sql(
-    where: str,
-    *,
-    include_public_biology: bool,
-    include_deal_evidence: bool,
-) -> str:
-    public_asset_fields = (
-        """,
-                  'targets', COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                    'id', public_target.ensembl_id,
-                    'name', public_target.approved_symbol,
-                    'action_type', public_target_link.action_type,
-                    'source', public_target_link.source,
-                    'attribution', 'asset'
-                  ) ORDER BY public_target.approved_symbol)
-                  FROM public_drug_target_links public_target_link
-                  JOIN public_targets public_target
-                    ON public_target.ensembl_id=public_target_link.ensembl_id
-                  WHERE public_target_link.drug_id=drug.id), '[]'::jsonb),
-                  'diseases', COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                    'id', public_disease.disease_id,
-                    'name', public_disease.name,
-                    'source', public_disease_link.source,
-                    'attribution', 'asset'
-                  ) ORDER BY public_disease.name)
-                  FROM public_drug_disease_links public_disease_link
-                  JOIN public_diseases public_disease
-                    ON public_disease.disease_id=public_disease_link.disease_id
-                  WHERE public_disease_link.drug_id=drug.id), '[]'::jsonb),
-                  'modalities', COALESCE((SELECT jsonb_agg(
-                    DISTINCT to_jsonb(public_modality))
-                  FROM (
-                    SELECT profile.drug_type::text AS name,
-                           profile.source::text AS source,
-                           'asset'::text AS attribution
-                    FROM public_drug_profiles profile
-                    WHERE profile.drug_id=drug.id
-                      AND NULLIF(BTRIM(profile.drug_type), '') IS NOT NULL
-                    UNION
-                    SELECT chembl.molecule_type::text AS name,
-                           'ChEMBL'::text AS source,
-                           'asset'::text AS attribution
-                    FROM drug_chembl_records chembl
-                    WHERE chembl.drug_id=drug.id
-                      AND NULLIF(BTRIM(chembl.molecule_type), '') IS NOT NULL
-                  ) public_modality), '[]'::jsonb)
-        """
-        if include_public_biology
-        else ""
-    )
-    deal_diseases = (
-        """COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'id', indication.id, 'name', indication.name,
-                  'is_principal', link.is_principal,
-                  'attribution', 'deal'
-              ) ORDER BY link.is_principal DESC, indication.name)
-              FROM deal_indications link JOIN indications indication
-                ON indication.id=link.indication_id
-              WHERE link.deal_id=filtered.id), '[]'::jsonb)"""
-        if include_deal_evidence
-        else "'[]'::jsonb"
-    )
-    deal_modalities = (
-        """COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'id', technology.id, 'name', technology.name,
-                  'is_principal', link.is_principal,
-                  'attribution', 'deal'
-              ) ORDER BY link.is_principal DESC, technology.name)
-              FROM deal_technologies link JOIN technologies technology
-                ON technology.id=link.technology_id
-              WHERE link.deal_id=filtered.id), '[]'::jsonb)"""
-        if include_deal_evidence
-        else "'[]'::jsonb"
-    )
-    deal_targets = (
-        """COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'id', action.id, 'name', action.name,
-                  'action_type', link.action_type,
-                  'attribution', 'deal'
-              ) ORDER BY link.action_type, action.name)
-              FROM deal_actions link JOIN actions action ON action.id=link.action_id
-              WHERE link.deal_id=filtered.id), '[]'::jsonb)"""
-        if include_deal_evidence
-        else "'[]'::jsonb"
-    )
+def _deal_result_sql(where: str) -> str:
+    """Return only filterable/sortable deal columns; hydration happens after LIMIT."""
     return f"""
         WITH filtered AS (
             SELECT deal.id, deal.title, deal.summary, deal.deal_type,
@@ -1148,134 +1136,132 @@ def _deal_result_sql(
             WHERE {where}
         ),
         result AS (
-            SELECT filtered.*,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'id', company.id, 'name', company.name, 'role', link.role
-              ) ORDER BY link.role, company.name)
-              FROM deal_companies link JOIN companies company
-                ON company.id=link.company_id
-              WHERE link.deal_id=filtered.id), '[]'::jsonb) AS companies,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'id', drug.id, 'name', drug.name_display,
-                  'phase', drug.phase_highest_now,
-                  'attribution', 'asset'
-                  {public_asset_fields}
-              ) ORDER BY drug.name_display, drug.id)
-              FROM deal_drugs link JOIN drugs drug ON drug.id=link.drug_id
-              WHERE link.deal_id=filtered.id), '[]'::jsonb) AS assets,
-              {deal_diseases} AS diseases,
-              {deal_modalities} AS modalities,
-              {deal_targets} AS targets,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'id', territory.id, 'name', territory.name,
-                  'territory_type', link.territory_type
-              ) ORDER BY link.territory_type, territory.name)
-              FROM deal_territories link JOIN territories territory
-                ON territory.id=link.territory_id
-              WHERE link.deal_id=filtered.id), '[]'::jsonb) AS territories,
-              COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                  'source_id', source.source_id,
-                  'source_type', source.source_type
-              ) ORDER BY source.source_type, source.source_id)
-              FROM cortellis_deal_sources source
-              WHERE source.deal_id=filtered.id AND source.is_current=TRUE),
-              '[]'::jsonb) AS source_citations
-            FROM filtered
+            SELECT * FROM filtered
         )
     """
 
 
-def _asset_result_sql(
-    where: str,
+def _deal_hydration_sql(
+    expand: set[str],
     *,
     include_public_biology: bool,
     include_deal_evidence: bool,
 ) -> str:
-    target_queries = []
-    disease_queries = []
-    modality_queries = []
-    if include_public_biology:
-        target_queries.append("""
-        SELECT target.ensembl_id::text AS id,
-               target.approved_symbol AS name,
-               target_link.action_type AS action_type,
-               'asset'::text AS attribution,
-               target_link.source::text AS source
-        FROM public_drug_target_links target_link
-        JOIN public_targets target ON target.ensembl_id=target_link.ensembl_id
-        WHERE target_link.drug_id=drug.id
-        """)
-        disease_queries.append("""
-        SELECT disease.disease_id::text AS id, disease.name,
-               'asset'::text AS attribution,
-               disease_link.source::text AS source
-        FROM public_drug_disease_links disease_link
-        JOIN public_diseases disease ON disease.disease_id=disease_link.disease_id
-        WHERE disease_link.drug_id=drug.id
-        """)
-        modality_queries.extend(
-            [
-                """
-        SELECT profile.drug_type::text AS name,
-               'asset'::text AS attribution,
-               profile.source::text AS source
-        FROM public_drug_profiles profile
-        WHERE profile.drug_id=drug.id AND NULLIF(BTRIM(profile.drug_type), '') IS NOT NULL
-        """,
-                """
-        SELECT chembl.molecule_type::text AS name,
-               'asset'::text AS attribution,
-               'ChEMBL'::text AS source
-        FROM drug_chembl_records chembl
-        WHERE chembl.drug_id=drug.id AND NULLIF(BTRIM(chembl.molecule_type), '') IS NOT NULL
-        """,
-            ]
-        )
-    if include_deal_evidence:
-        target_queries.append("""
-        SELECT action.id::text AS id, action.name::text AS name,
-               action_link.action_type::text AS action_type,
-               'deal'::text AS attribution,
-               'Cortellis Deals'::text AS source
-        FROM matched target_match
-        JOIN deal_actions action_link
-          ON action_link.deal_id=target_match.deal_id
-        JOIN actions action ON action.id=action_link.action_id
-        WHERE target_match.asset_id=drug.id
-        """)
-        disease_queries.append("""
-        SELECT indication.id::text AS id, indication.name::text AS name,
-               'deal'::text AS attribution,
-               'Cortellis Deals'::text AS source
-        FROM matched disease_match
-        JOIN deal_indications disease_link
-          ON disease_link.deal_id=disease_match.deal_id
-        JOIN indications indication
-          ON indication.id=disease_link.indication_id
-        WHERE disease_match.asset_id=drug.id
-        """)
-        modality_queries.append("""
-        SELECT technology.name::text AS name,
-               'deal'::text AS attribution,
-               'Cortellis Deals'::text AS source
-        FROM matched modality_match
-        JOIN deal_technologies modality_link
-          ON modality_link.deal_id=modality_match.deal_id
-        JOIN technologies technology
-          ON technology.id=modality_link.technology_id
-        WHERE modality_match.asset_id=drug.id
-        """)
-    targets_sql = " UNION ".join(target_queries) or (
-        "SELECT NULL::text AS id, NULL::text AS name, NULL::text AS action_type, "
-        "NULL::text AS attribution, NULL::text AS source WHERE FALSE"
-    )
-    diseases_sql = " UNION ".join(disease_queries) or (
-        "SELECT NULL::text AS id, NULL::text AS name, NULL::text AS attribution, "
-        "NULL::text AS source WHERE FALSE"
-    )
-    modalities_sql = " UNION ".join(modality_queries) or (
-        "SELECT NULL::text AS name, NULL::text AS attribution, "
-        "NULL::text AS source WHERE FALSE"
+    """Hydrate only the already-limited deal page."""
+    fields = ["page.*"]
+    if "companies" in expand:
+        fields.append("""COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'id', company.id, 'name', company.name, 'role', link.role
+        ) ORDER BY link.role, company.name)
+        FROM deal_companies link JOIN companies company
+          ON company.id=link.company_id
+        WHERE link.deal_id=page.id), '[]'::jsonb) AS companies""")
+    if "assets" in expand:
+        public_fields = ""
+        if include_public_biology and "targets" in expand:
+            public_fields += """, 'targets', COALESCE((SELECT jsonb_agg(
+                jsonb_build_object('id', target.ensembl_id,
+                'name', target.approved_symbol,
+                'action_type', target_link.action_type,
+                'source', target_link.source, 'attribution', 'asset')
+                ORDER BY target.approved_symbol)
+              FROM public_drug_target_links target_link
+              JOIN public_targets target
+                ON target.ensembl_id=target_link.ensembl_id
+              WHERE target_link.drug_id=drug.id), '[]'::jsonb)"""
+        if include_public_biology and "diseases" in expand:
+            public_fields += """, 'diseases', COALESCE((SELECT jsonb_agg(
+                jsonb_build_object('id', disease.disease_id,
+                'name', disease.name, 'source', disease_link.source,
+                'attribution', 'asset') ORDER BY disease.name)
+              FROM public_drug_disease_links disease_link
+              JOIN public_diseases disease
+                ON disease.disease_id=disease_link.disease_id
+              WHERE disease_link.drug_id=drug.id), '[]'::jsonb)"""
+        if include_public_biology and "modalities" in expand:
+            public_fields += """, 'modalities', COALESCE((SELECT jsonb_agg(
+                DISTINCT to_jsonb(modality)) FROM (
+                  SELECT profile.drug_type::text AS name,
+                         profile.source::text AS source,
+                         'asset'::text AS attribution
+                  FROM public_drug_profiles profile
+                  WHERE profile.drug_id=drug.id
+                    AND NULLIF(BTRIM(profile.drug_type), '') IS NOT NULL
+                  UNION
+                  SELECT chembl.molecule_type::text AS name,
+                         'ChEMBL'::text AS source,
+                         'asset'::text AS attribution
+                  FROM drug_chembl_records chembl
+                  WHERE chembl.drug_id=drug.id
+                    AND NULLIF(BTRIM(chembl.molecule_type), '') IS NOT NULL
+                ) modality), '[]'::jsonb)"""
+        fields.append(f"""COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'id', drug.id, 'name', drug.name_display,
+            'phase', drug.phase_highest_now, 'attribution', 'asset'
+            {public_fields}
+        ) ORDER BY drug.name_display, drug.id)
+        FROM deal_drugs link JOIN drugs drug ON drug.id=link.drug_id
+        WHERE link.deal_id=page.id), '[]'::jsonb) AS assets""")
+    for name, expression in (
+        (
+            "diseases",
+            """COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'id', indication.id, 'name', indication.name,
+                'is_principal', link.is_principal, 'attribution', 'deal')
+              ORDER BY link.is_principal DESC, indication.name)
+              FROM deal_indications link JOIN indications indication
+                ON indication.id=link.indication_id
+              WHERE link.deal_id=page.id), '[]'::jsonb)""",
+        ),
+        (
+            "modalities",
+            """COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'id', technology.id, 'name', technology.name,
+                'is_principal', link.is_principal, 'attribution', 'deal')
+              ORDER BY link.is_principal DESC, technology.name)
+              FROM deal_technologies link JOIN technologies technology
+                ON technology.id=link.technology_id
+              WHERE link.deal_id=page.id), '[]'::jsonb)""",
+        ),
+        (
+            "targets",
+            """COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'id', action.id, 'name', action.name,
+                'action_type', link.action_type, 'attribution', 'deal')
+              ORDER BY link.action_type, action.name)
+              FROM deal_actions link JOIN actions action
+                ON action.id=link.action_id
+              WHERE link.deal_id=page.id), '[]'::jsonb)""",
+        ),
+    ):
+        if name in expand:
+            selected_expression = expression if include_deal_evidence else "'[]'::jsonb"
+            fields.append(f"{selected_expression} AS {name}")
+    if "territories" in expand:
+        fields.append("""COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'id', territory.id, 'name', territory.name,
+            'territory_type', link.territory_type)
+          ORDER BY link.territory_type, territory.name)
+          FROM deal_territories link JOIN territories territory
+            ON territory.id=link.territory_id
+          WHERE link.deal_id=page.id), '[]'::jsonb) AS territories""")
+    if {"sources", "evidence"} & expand:
+        fields.append("""COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'source_id', source.source_id, 'source_type', source.source_type)
+          ORDER BY source.source_type, source.source_id)
+          FROM cortellis_deal_sources source
+          WHERE source.deal_id=page.id AND source.is_current=TRUE),
+          '[]'::jsonb) AS source_citations""")
+    return "SELECT " + ",\n".join(fields) + "\nFROM page"
+
+
+def _asset_result_sql(where: str, *, include_evidence_ids: bool) -> str:
+    """Build the match set and cheap sortable asset summary only."""
+    evidence_ids = (
+        ", ARRAY_AGG(DISTINCT matched.deal_id ORDER BY matched.deal_id) "
+        "AS evidence_deal_ids"
+        if include_evidence_ids
+        else ""
     )
     return f"""
         WITH matched AS (
@@ -1313,49 +1299,218 @@ def _asset_result_sql(
                    ELSE NULL END AS max_total_projected_current_millions,
                    ARRAY_REMOVE(ARRAY_AGG(DISTINCT
                      matched.total_projected_current_currency), NULL)
-                     AS projected_value_currencies,
-                   COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                     'currency', projected.currency,
-                     'maximum_millions', projected.maximum_millions
-                   ) ORDER BY projected.currency)
-                   FROM (
-                     SELECT value_match.total_projected_current_currency AS currency,
-                            MAX(value_match.total_projected_current_millions)
-                              AS maximum_millions
-                     FROM matched value_match
-                     WHERE value_match.asset_id=drug.id
-                       AND value_match.total_projected_current_millions IS NOT NULL
-                       AND value_match.total_projected_current_currency IS NOT NULL
-                     GROUP BY value_match.total_projected_current_currency
-                   ) projected), '[]'::jsonb) AS projected_values_by_currency,
-                   ARRAY_AGG(DISTINCT matched.deal_id ORDER BY matched.deal_id)
-                     AS evidence_deal_ids,
-                   COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                     'value', alias.alias_value, 'type', alias.alias_type,
-                     'source', alias.source, 'confidence', alias.confidence,
-                     'review_status', alias.review_status
-                   ) ORDER BY alias.alias_value)
-                   FROM drug_aliases alias WHERE alias.drug_id=drug.id),
-                   '[]'::jsonb) AS aliases,
-                   COALESCE((SELECT jsonb_agg(DISTINCT jsonb_build_object(
-                     'id', company.id, 'name', company.name, 'role', company_link.role,
-                     'relationship_basis', 'deal_referenced',
-                     'ownership_or_control_established', false
-                   )) FROM matched company_match
-                   JOIN deal_companies company_link
-                     ON company_link.deal_id=company_match.deal_id
-                   JOIN companies company ON company.id=company_link.company_id
-                   WHERE company_match.asset_id=drug.id), '[]'::jsonb) AS companies,
-                   COALESCE((SELECT jsonb_agg(DISTINCT to_jsonb(modality_row))
-                   FROM ({modalities_sql}) modality_row), '[]'::jsonb) AS modalities,
-                   COALESCE((SELECT jsonb_agg(DISTINCT to_jsonb(target_row))
-                   FROM ({targets_sql}) target_row), '[]'::jsonb) AS targets,
-                   COALESCE((SELECT jsonb_agg(DISTINCT to_jsonb(disease_row))
-                   FROM ({diseases_sql}) disease_row), '[]'::jsonb) AS diseases
+                     AS projected_value_currencies{evidence_ids}
             FROM matched JOIN drugs drug ON drug.id=matched.asset_id
             GROUP BY drug.id
         )
     """
+
+
+def _asset_hydration_sql(
+    expand: set[str],
+    *,
+    include_public_biology: bool,
+    include_deal_evidence: bool,
+) -> str:
+    """Set-wise enrichment constrained to the already-limited asset page."""
+    ctes: list[str] = []
+    fields = ["page.*"]
+    joins: list[str] = []
+    deal_expansions = {"companies", "diseases", "modalities", "targets", "values"}
+    if include_deal_evidence and expand & deal_expansions:
+        ctes.append("""page_deals AS (
+            SELECT matched.* FROM matched
+            JOIN page ON page.id=matched.asset_id
+        )""")
+
+    if "aliases" in expand:
+        source_filter = "" if include_public_biology else "WHERE alias.source='cortellis'"
+        ctes.append(f"""alias_agg AS (
+            SELECT alias.drug_id AS asset_id,
+                   jsonb_agg(jsonb_build_object(
+                     'value', alias.alias_value, 'type', alias.alias_type,
+                     'source', alias.source, 'confidence', alias.confidence,
+                     'review_status', alias.review_status
+                   ) ORDER BY alias.alias_value) AS aliases
+            FROM drug_aliases alias JOIN page ON page.id=alias.drug_id
+            {source_filter}
+            GROUP BY alias.drug_id
+        )""")
+        fields.append("COALESCE(alias_agg.aliases, '[]'::jsonb) AS aliases")
+        joins.append("LEFT JOIN alias_agg ON alias_agg.asset_id=page.id")
+
+    if "companies" in expand:
+        if include_deal_evidence:
+            ctes.extend(
+                [
+                    """company_rows AS (
+                        SELECT DISTINCT page_deals.asset_id, company.id,
+                               company.name, company_link.role
+                        FROM page_deals
+                        JOIN deal_companies company_link
+                          ON company_link.deal_id=page_deals.deal_id
+                        JOIN companies company ON company.id=company_link.company_id
+                    )""",
+                    """company_agg AS (
+                        SELECT asset_id, jsonb_agg(jsonb_build_object(
+                          'id', id, 'name', name, 'role', role,
+                          'relationship_basis', 'deal_referenced',
+                          'ownership_or_control_established', false
+                        ) ORDER BY role, name) AS companies
+                        FROM company_rows GROUP BY asset_id
+                    )""",
+                ]
+            )
+            fields.append("COALESCE(company_agg.companies, '[]'::jsonb) AS companies")
+            joins.append("LEFT JOIN company_agg ON company_agg.asset_id=page.id")
+        else:
+            fields.append("'[]'::jsonb AS companies")
+
+    if "values" in expand:
+        if include_deal_evidence:
+            ctes.extend(
+                [
+                    """projected_value_rows AS (
+                        SELECT asset_id,
+                               total_projected_current_currency AS currency,
+                               MAX(total_projected_current_millions)
+                                 AS maximum_millions
+                        FROM page_deals
+                        WHERE total_projected_current_millions IS NOT NULL
+                          AND total_projected_current_currency IS NOT NULL
+                        GROUP BY asset_id, total_projected_current_currency
+                    )""",
+                    """projected_value_agg AS (
+                        SELECT asset_id, jsonb_agg(jsonb_build_object(
+                          'currency', currency,
+                          'maximum_millions', maximum_millions
+                        ) ORDER BY currency) AS projected_values_by_currency
+                        FROM projected_value_rows GROUP BY asset_id
+                    )""",
+                ]
+            )
+            fields.append(
+                "COALESCE(projected_value_agg.projected_values_by_currency, "
+                "'[]'::jsonb) AS projected_values_by_currency"
+            )
+            joins.append(
+                "LEFT JOIN projected_value_agg "
+                "ON projected_value_agg.asset_id=page.id"
+            )
+        else:
+            fields.append("'[]'::jsonb AS projected_values_by_currency")
+
+    relation_specs = {
+        "modalities": {
+            "public": [
+                """SELECT page.id AS asset_id, profile.drug_type::text AS name,
+                           'asset'::text AS attribution, profile.source::text AS source
+                    FROM page JOIN public_drug_profiles profile
+                      ON profile.drug_id=page.id
+                    WHERE NULLIF(BTRIM(profile.drug_type), '') IS NOT NULL""",
+                """SELECT page.id AS asset_id, chembl.molecule_type::text AS name,
+                           'asset'::text AS attribution, 'ChEMBL'::text AS source
+                    FROM page JOIN drug_chembl_records chembl
+                      ON chembl.drug_id=page.id
+                    WHERE NULLIF(BTRIM(chembl.molecule_type), '') IS NOT NULL""",
+            ],
+            "deal": """SELECT page_deals.asset_id, technology.name::text AS name,
+                              'deal'::text AS attribution,
+                              'Cortellis Deals'::text AS source
+                       FROM page_deals
+                       JOIN deal_technologies link
+                         ON link.deal_id=page_deals.deal_id
+                       JOIN technologies technology ON technology.id=link.technology_id""",
+            "columns": "asset_id, name, attribution, source",
+            "json": "'name', name, 'attribution', attribution, 'source', source",
+            "order": "name, source",
+        },
+        "targets": {
+            "public": [
+                """SELECT page.id AS asset_id, target.ensembl_id::text AS id,
+                           target.approved_symbol::text AS name,
+                           link.action_type::text AS action_type,
+                           'asset'::text AS attribution, link.source::text AS source
+                    FROM page JOIN public_drug_target_links link
+                      ON link.drug_id=page.id
+                    JOIN public_targets target ON target.ensembl_id=link.ensembl_id"""
+            ],
+            "deal": """SELECT page_deals.asset_id, action.id::text AS id,
+                              action.name::text AS name,
+                              link.action_type::text AS action_type,
+                              'deal'::text AS attribution,
+                              'Cortellis Deals'::text AS source
+                       FROM page_deals JOIN deal_actions link
+                         ON link.deal_id=page_deals.deal_id
+                       JOIN actions action ON action.id=link.action_id""",
+            "columns": "asset_id, id, name, action_type, attribution, source",
+            "json": (
+                "'id', id, 'name', name, 'action_type', action_type, "
+                "'attribution', attribution, 'source', source"
+            ),
+            "order": "name, source",
+        },
+        "diseases": {
+            "public": [
+                """SELECT page.id AS asset_id, disease.disease_id::text AS id,
+                           disease.name::text AS name,
+                           'asset'::text AS attribution, link.source::text AS source
+                    FROM page JOIN public_drug_disease_links link
+                      ON link.drug_id=page.id
+                    JOIN public_diseases disease
+                      ON disease.disease_id=link.disease_id"""
+            ],
+            "deal": """SELECT page_deals.asset_id, indication.id::text AS id,
+                              indication.name::text AS name,
+                              'deal'::text AS attribution,
+                              'Cortellis Deals'::text AS source
+                       FROM page_deals JOIN deal_indications link
+                         ON link.deal_id=page_deals.deal_id
+                       JOIN indications indication ON indication.id=link.indication_id""",
+            "columns": "asset_id, id, name, attribution, source",
+            "json": (
+                "'id', id, 'name', name, 'attribution', attribution, "
+                "'source', source"
+            ),
+            "order": "name, source",
+        },
+    }
+    for name, spec in relation_specs.items():
+        if name not in expand:
+            continue
+        queries = list(spec["public"]) if include_public_biology else []
+        if include_deal_evidence:
+            queries.append(spec["deal"])
+        if not queries:
+            fields.append(f"'[]'::jsonb AS {name}")
+            continue
+        row_cte = f"{name}_rows"
+        agg_cte = f"{name}_agg"
+        ctes.append(
+            f"""{row_cte} AS (
+                SELECT DISTINCT {spec['columns']} FROM (
+                    {' UNION ALL '.join(queries)}
+                ) source_rows WHERE name IS NOT NULL
+            )"""
+        )
+        ctes.append(
+            f"""{agg_cte} AS (
+                SELECT asset_id, jsonb_agg(jsonb_build_object(
+                  {spec['json']}) ORDER BY {spec['order']}) AS {name}
+                FROM {row_cte} GROUP BY asset_id
+            )"""
+        )
+        fields.append(f"COALESCE({agg_cte}.{name}, '[]'::jsonb) AS {name}")
+        joins.append(f"LEFT JOIN {agg_cte} ON {agg_cte}.asset_id=page.id")
+
+    cte_sql = "".join(f",\n{cte}" for cte in ctes)
+    return (
+        cte_sql
+        + "\nSELECT "
+        + ",\n".join(fields)
+        + "\nFROM page\n"
+        + "\n".join(joins)
+    )
 
 
 def _execute_search(
@@ -1385,31 +1540,51 @@ def _execute_search(
         allow_public_biology=allow_public_biology,
     )
     where = " AND ".join(f"({condition})" for condition in conditions)
+    expand = set(request.expand)
     cte = (
-        _deal_result_sql(
-            where,
-            include_public_biology=include_public_biology,
-            include_deal_evidence=include_deal_evidence,
-        )
+        _deal_result_sql(where)
         if endpoint == "deals"
         else _asset_result_sql(
             where,
-            include_public_biology=include_public_biology,
-            include_deal_evidence=include_deal_evidence,
+            include_evidence_ids=(
+                "evidence" in expand and include_deal_evidence
+            ),
         )
     )
     cursor_condition, order, sort_keys = _sort_clause(
         request, endpoint, params, query_hash
     )
     params.values["limit"] = request.limit + 1
+    page_order = order.replace("result.", "page.")
+    hydration = (
+        _deal_hydration_sql(
+            expand,
+            include_public_biology=include_public_biology,
+            include_deal_evidence=include_deal_evidence,
+        )
+        if endpoint == "deals"
+        else _asset_hydration_sql(
+            expand,
+            include_public_biology=include_public_biology,
+            include_deal_evidence=include_deal_evidence,
+        )
+    )
+    search_started = time.perf_counter()
+    session.execute(text("SET LOCAL statement_timeout = 25000"), {})
+    session.execute(text("SET LOCAL lock_timeout = 2000"), {})
+    session.execute(text("SET LOCAL work_mem = '32MB'"), {})
     rows = (
         session.execute(
             text(f"""
         {cte}
-        SELECT * FROM result
-        {cursor_condition}
-        ORDER BY {order}
-        LIMIT :limit
+        , page AS (
+            SELECT result.* FROM result
+            {cursor_condition}
+            ORDER BY {order}
+            LIMIT :limit
+        )
+        {hydration}
+        ORDER BY {page_order}
     """),
             params.values,
         )
@@ -1441,11 +1616,24 @@ def _execute_search(
 
     total = None
     if request.include_total:
+        remaining_ms = max(
+            1,
+            25000 - int((time.perf_counter() - search_started) * 1000),
+        )
+        session.execute(
+            text(f"SET LOCAL statement_timeout = {remaining_ms}"),
+            {},
+        )
+        count_target = (
+            "SELECT COUNT(*) FROM filtered"
+            if endpoint == "deals"
+            else "SELECT COUNT(DISTINCT asset_id) FROM matched"
+        )
         total = int(
             session.execute(
                 text(f"""
             {cte}
-            SELECT COUNT(*) FROM result
+            {count_target}
         """),
                 params.values,
             ).scalar()
@@ -1457,6 +1645,7 @@ def _execute_search(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "query_hash": query_hash,
         "matched_filter_categories": active_filters,
+        "expanded": request.expand,
         "items": items,
         "limit": request.limit,
         "has_more": has_more,

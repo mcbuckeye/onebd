@@ -183,6 +183,12 @@ class HealthResponse(BaseModel):
     services: dict
 
 
+class LivenessResponse(BaseModel):
+    status: str
+    version: str
+    commit: str
+
+
 class IndexStatus(BaseModel):
     """Index status for RAG search."""
     total_text_contracts: int
@@ -221,8 +227,18 @@ def check_neo4j_connection() -> bool:
         return False
 
 
+@router.get("/live", response_model=LivenessResponse)
+def liveness_check():
+    """Process-only health check that never waits on downstream services."""
+    return LivenessResponse(
+        status="healthy",
+        version=settings.app_version,
+        commit=_build_commit(),
+    )
+
+
 @router.get("/health", response_model=HealthResponse)
-async def health_check():
+def health_check():
     """
     Check health of all services.
 

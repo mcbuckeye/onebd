@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from starlette.concurrency import run_in_threadpool
+import structlog
 
 from unified_api.services.api_credentials import (
     DataPrincipal,
@@ -18,14 +23,25 @@ from unified_api.services.advanced_search import (
     search_assets as run_advanced_asset_search,
     search_deals as run_advanced_deal_search,
 )
-from unified_api.services.database import get_cortellis_session, get_edgar_session
+from unified_api.services.database import (
+    get_cortellis_engine,
+    get_cortellis_session,
+    get_edgar_session,
+)
+from unified_api.services.entity_counts import get_entity_counts
 from unified_api.services.company_asset_intelligence import (
     company_asset_intelligence,
 )
 from unified_api.services.finance_parser import FINANCE_PARSER_VERSION
+from unified_api.services.search_guard import (
+    SearchBusy,
+    SearchRateLimited,
+    advanced_search_guard,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["Governed Data API"])
+logger = structlog.get_logger(__name__)
 
 
 SOURCE_CATALOG = [
@@ -355,42 +371,147 @@ def _public_biology_allowed() -> bool:
     return "public_biology" not in set(policy.get("disabled_datasets") or [])
 
 
+@router.get("/counts")
+def entity_counts(
+    _principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Return cached exact counts without running enriched search queries."""
+    with get_cortellis_session() as session:
+        return get_entity_counts(session)
+
+
+def _cancel_backend(pid: int) -> None:
+    with get_cortellis_engine().connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    ) as connection:
+        connection.execute(
+            text("SELECT pg_cancel_backend(:pid)"),
+            {"pid": pid},
+        )
+
+
+async def _run_disconnect_aware(worker, http_request: Request | None, state: dict):
+    task = asyncio.create_task(run_in_threadpool(worker))
+    if http_request is None:
+        return await task
+    while True:
+        done, _pending = await asyncio.wait({task}, timeout=0.25)
+        if done:
+            return task.result()
+        if await http_request.is_disconnected():
+            pid = state.get("backend_pid")
+            if pid:
+                await run_in_threadpool(_cancel_backend, pid)
+            try:
+                await task
+            except Exception:
+                pass
+            raise HTTPException(status_code=499, detail="Client disconnected")
+
+
+async def _advanced_search(
+    endpoint: str,
+    search_request: AdvancedSearchRequest,
+    http_request: Request | None,
+    principal: DataPrincipal | None,
+):
+    state: dict[str, Any] = {}
+    runner = (
+        run_advanced_deal_search
+        if endpoint == "deals"
+        else run_advanced_asset_search
+    )
+
+    def worker():
+        started = time.perf_counter()
+        with advanced_search_guard(principal):
+            with get_cortellis_session() as session:
+                try:
+                    state["backend_pid"] = int(
+                        session.execute(text("SELECT pg_backend_pid()")).scalar()
+                    )
+                except (AttributeError, TypeError):
+                    # Lightweight test doubles do not expose a real backend.
+                    pass
+                result = runner(
+                    session,
+                    search_request,
+                    allow_public_biology=_public_biology_allowed(),
+                )
+        logger.info(
+            "advanced_search_complete",
+            endpoint=endpoint,
+            principal_type=getattr(principal, "principal_type", None),
+            principal_id=getattr(principal, "principal_id", None),
+            query_hash=result.get("query_hash"),
+            filter_categories=result.get("matched_filter_categories"),
+            expanded=result.get("expanded"),
+            include_total=search_request.include_total,
+            items=len(result.get("items", [])),
+            elapsed_seconds=round(time.perf_counter() - started, 3),
+        )
+        return result
+
+    try:
+        return await _run_disconnect_aware(worker, http_request, state)
+    except SearchRateLimited as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": "60"},
+        ) from exc
+    except SearchBusy as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": "5"},
+        ) from exc
+    except DBAPIError as exc:
+        code = getattr(exc.orig, "pgcode", None) or getattr(
+            exc.orig, "sqlstate", None
+        )
+        if code == "57014":
+            raise HTTPException(
+                status_code=504,
+                detail="Search exceeded the 25-second execution limit",
+            ) from exc
+        logger.error(
+            "advanced_search_database_error",
+            endpoint=endpoint,
+            error_type=type(exc.orig).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Search database is temporarily unavailable",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/deals/search")
 async def advanced_deal_search(
     request: AdvancedSearchRequest,
+    http_request: Request = None,
     _principal: DataPrincipal = Depends(
         require_data_access("deals:read", "cortellis_deals")
     ),
 ):
     """Search deals using typed Boolean, date, evidence, and value filters."""
-    try:
-        with get_cortellis_session() as session:
-            return run_advanced_deal_search(
-                session,
-                request,
-                allow_public_biology=_public_biology_allowed(),
-            )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _advanced_search("deals", request, http_request, _principal)
 
 
 @router.post("/assets/search")
 async def advanced_asset_search(
     request: AdvancedSearchRequest,
+    http_request: Request = None,
     _principal: DataPrincipal = Depends(
         require_data_access("deals:read", "cortellis_deals")
     ),
 ):
     """Search deal-referenced assets with asset- and deal-attributed evidence."""
-    try:
-        with get_cortellis_session() as session:
-            return run_advanced_asset_search(
-                session,
-                request,
-                allow_public_biology=_public_biology_allowed(),
-            )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _advanced_search("assets", request, http_request, _principal)
 
 
 @router.get("/deals/{deal_id}")

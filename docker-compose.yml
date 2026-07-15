@@ -16,6 +16,20 @@ services:
       POSTGRES_DB: ${CORTELLIS_DB:-cortellis}
       POSTGRES_USER: ${CORTELLIS_USER:-cortellis}
       POSTGRES_PASSWORD: ${CORTELLIS_PASSWORD:-changeme}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - max_worker_processes=16
+      - -c
+      - max_parallel_workers=12
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - effective_cache_size=16GB
     volumes:
       - onebd_cortellis_data:/var/lib/postgresql/data
       - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
@@ -147,14 +161,18 @@ services:
       - RESULT_BACKEND=redis://onebd-redis:6379/1
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ONEBD_SEARCH_RATE_PER_MINUTE=${ONEBD_SEARCH_RATE_PER_MINUTE:-30}
+      - ONEBD_SEARCH_GLOBAL_CONCURRENCY=${ONEBD_SEARCH_GLOBAL_CONCURRENCY:-4}
+      - ONEBD_SEARCH_LOCK_SECONDS=${ONEBD_SEARCH_LOCK_SECONDS:-40}
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/live', timeout=2)"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5m
     networks:
       - dokploy-network
     restart: unless-stopped

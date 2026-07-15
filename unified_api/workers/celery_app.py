@@ -835,6 +835,7 @@ def sync_cortellis_deals():
             read_catalog_proof,
         )
         from unified_api.services.database import get_cortellis_session
+        from unified_api.services.entity_counts import refresh_entity_counts
 
         with CortellisClient(cortellis_config) as client:
             catalog_total = client.search_deals("*", offset=0, hits=1).total_results
@@ -848,6 +849,7 @@ def sync_cortellis_deals():
                 FROM deals
             """)).mappings().one()
             proof = read_catalog_proof(session)
+            count_snapshot = refresh_entity_counts(session)
         cardinality = assess_catalog_cardinality(
             advertised_total=catalog_total,
             local_total=int(snapshot["local_total"]),
@@ -868,6 +870,9 @@ def sync_cortellis_deals():
                 snapshot["source_cursor"].isoformat()
                 if snapshot["source_cursor"] else None
             ),
+            "entity_counts_refreshed_at": count_snapshot[
+                "refreshed_at"
+            ].isoformat(),
         })
         if not cardinality["catalog_cardinality_complete"] and result["status"] == "completed":
             result["status"] = "partial"
@@ -930,6 +935,14 @@ def reconcile_cortellis_catalog():
                 scan_workers=settings.cortellis_catalog_scan_workers,
                 download_contracts=False,
             )
+            from unified_api.services.database import get_cortellis_session
+            from unified_api.services.entity_counts import refresh_entity_counts
+
+            with get_cortellis_session() as session:
+                count_snapshot = refresh_entity_counts(session)
+            result["entity_counts_refreshed_at"] = count_snapshot[
+                "refreshed_at"
+            ].isoformat()
             logger.info("Cortellis catalog reconciliation complete", **result)
             return _finish_source_job("cortellis_catalog", result)
         except Exception as exc:
