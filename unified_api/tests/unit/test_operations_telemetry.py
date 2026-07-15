@@ -24,6 +24,16 @@ def _settings(**overrides):
     return telemetry.TelemetrySettings(**values)
 
 
+def test_legacy_zero_ms_capture_policy_is_migrated_once_but_remains_editable():
+    migration = next(
+        statement for statement in telemetry.DDL if "VALUES (3)" in statement
+    )
+
+    assert "sql_min_duration_ms=5" in migration
+    assert "sql_min_duration_ms=0" in migration
+    assert "updated_by IS NULL" not in migration
+
+
 def test_sanitize_value_recursively_redacts_secrets_and_bounds_text():
     result = telemetry.sanitize_value({
         "query": "oncology",

@@ -2,8 +2,11 @@
 
 from unittest.mock import Mock
 
+import pytest
+
 from src.cortellis_catalog import (
     advance_catalog_proof,
+    advance_catalog_proof_to_verified_total,
     assess_catalog_cardinality,
     reconcile_catalog_exclusions,
 )
@@ -19,6 +22,30 @@ def test_incremental_sync_extends_exhaustive_catalog_baseline():
     assert "incremental_retrievable_additions + :newly_retrieved" in str(
         session.execute.call_args.args[0]
     )
+
+
+def test_complete_scan_can_reconcile_a_stale_catalog_baseline():
+    session = Mock()
+    session.execute.return_value.scalar_one_or_none.return_value = 37
+
+    changed = advance_catalog_proof_to_verified_total(
+        session,
+        verified_retrievable_total=172_675,
+    )
+
+    assert changed is True
+    statement, params = session.execute.call_args.args
+    assert params == {"verified_retrievable_total": 172_675}
+    assert ":verified_retrievable_total - retrievable_total" in str(statement)
+    assert "incremental_retrievable_additions" in str(statement)
+
+
+def test_verified_catalog_total_must_be_positive():
+    with pytest.raises(ValueError, match="must be positive"):
+        advance_catalog_proof_to_verified_total(
+            Mock(),
+            verified_retrievable_total=0,
+        )
 
 
 def test_reconcile_catalog_exclusions_reactivates_and_upserts_retired_ids():

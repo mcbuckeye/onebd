@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from src.api_client import CortellisClient, DealRecord, DealSourcesRecord
 from src.cortellis_catalog import (
+    advance_catalog_proof_to_verified_total,
     ensure_catalog_exclusion_schema,
     read_catalog_proof,
 )
@@ -493,6 +494,17 @@ def _attach_catalog_cardinality(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _finalize_scan_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Promote a fully verified scan total before reporting cardinality."""
+    if result.get("coverage_complete"):
+        with get_cortellis_session() as session:
+            advance_catalog_proof_to_verified_total(
+                session,
+                verified_retrievable_total=int(result["eligible_deals"]),
+            )
+    return _attach_catalog_cardinality(result)
+
+
 def sync_deal_api_coverage_batch(
     *,
     batch_size: int = 500,
@@ -518,7 +530,7 @@ def sync_deal_api_coverage_batch(
         if not candidates:
             status = deal_api_scan_status()
             run_status = "partial" if status["terminal_failures"] else "completed"
-            return _attach_catalog_cardinality({
+            return _finalize_scan_result({
                 "status": run_status,
                 "processed": 0,
                 **status,
@@ -545,7 +557,7 @@ def sync_deal_api_coverage_batch(
             result["error"] = "; ".join(
                 f"deal {item['deal_id']}: {item['error']}" for item in failures[:10]
             )
-        return _attach_catalog_cardinality(result)
+        return _finalize_scan_result(result)
     finally:
         try:
             lock_connection.execute(text(

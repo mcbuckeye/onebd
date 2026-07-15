@@ -108,6 +108,35 @@ def advance_catalog_proof(
     """), {"newly_retrieved": int(newly_retrieved)})
 
 
+def advance_catalog_proof_to_verified_total(
+    session: Session,
+    *,
+    verified_retrievable_total: int,
+) -> bool:
+    """Reconcile a stale baseline after every eligible ID is reverified.
+
+    The caller must establish complete per-ID API and raw-response coverage for
+    ``verified_retrievable_total`` records.  The proof only moves forward and
+    retains the original exhaustive baseline as provenance.
+    """
+    if verified_retrievable_total <= 0:
+        raise ValueError("verified_retrievable_total must be positive")
+    row = session.execute(text("""
+        UPDATE cortellis_catalog_proof
+        SET incremental_retrievable_additions =
+                :verified_retrievable_total - retrievable_total,
+            incremental_verified_at = NOW()
+        WHERE id = 1
+          AND :verified_retrievable_total >= retrievable_total
+          AND :verified_retrievable_total >
+              retrievable_total + incremental_retrievable_additions
+        RETURNING incremental_retrievable_additions
+    """), {
+        "verified_retrievable_total": int(verified_retrievable_total),
+    }).scalar_one_or_none()
+    return row is not None
+
+
 def read_catalog_proof(session: Session) -> dict[str, Any]:
     """Return the latest durable exhaustive proof, if one exists."""
     row = session.execute(text("""

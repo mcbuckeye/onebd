@@ -10,6 +10,7 @@ from unified_api.services.cortellis_deal_api_sync import (
     DEAL_SOURCES_ENDPOINT,
     _attach_catalog_cardinality,
     _archive_source_response,
+    _finalize_scan_result,
     _validate_expanded_record,
 )
 
@@ -101,3 +102,57 @@ def test_catalog_cardinality_uses_exhaustive_proof_not_advertised_count():
     assert complete["verified_retrievable_total"] == 172_638
     assert complete["catalog_membership_complete"] is True
     assert incomplete["catalog_membership_complete"] is False
+
+
+def test_complete_lossless_scan_promotes_verified_catalog_total():
+    session = Mock()
+    session_context = Mock()
+    session_context.__enter__ = Mock(return_value=session)
+    session_context.__exit__ = Mock(return_value=False)
+    result = {
+        "coverage_complete": True,
+        "eligible_deals": 172_675,
+    }
+    with (
+        patch(
+            "unified_api.services.cortellis_deal_api_sync.get_cortellis_session",
+            return_value=session_context,
+        ),
+        patch(
+            "unified_api.services.cortellis_deal_api_sync."
+            "advance_catalog_proof_to_verified_total"
+        ) as advance,
+        patch(
+            "unified_api.services.cortellis_deal_api_sync."
+            "_attach_catalog_cardinality",
+            side_effect=lambda value: value,
+        ),
+    ):
+        finalized = _finalize_scan_result(result)
+
+    advance.assert_called_once_with(
+        session,
+        verified_retrievable_total=172_675,
+    )
+    assert finalized is result
+
+
+def test_incomplete_scan_cannot_promote_catalog_total():
+    result = {
+        "coverage_complete": False,
+        "eligible_deals": 172_675,
+    }
+    with (
+        patch(
+            "unified_api.services.cortellis_deal_api_sync."
+            "advance_catalog_proof_to_verified_total"
+        ) as advance,
+        patch(
+            "unified_api.services.cortellis_deal_api_sync."
+            "_attach_catalog_cardinality",
+            side_effect=lambda value: value,
+        ),
+    ):
+        _finalize_scan_result(result)
+
+    advance.assert_not_called()
