@@ -352,6 +352,8 @@ def test_company_deal_activity_comparison_binds_every_canonical_id():
     assert "company.id IN (18767, 18077)" in sql
     assert "COUNT(DISTINCT deal.id)::int AS deal_count" in sql
     assert "disclosed_value_count" in sql
+    assert "AS eligible_deal_count" in sql
+    assert "AS disclosed_deal_count" in sql
     assert "company_id" in sql
     assert "LIMIT 20" in sql
 
