@@ -342,8 +342,11 @@ async def search_edgar_filings(
     # Use source database directly (has the GIN index for fulltext search)
     with get_edgar_source_session() as session:
         if mode == "fulltext":
-            # Build conditions
-            conditions = ["to_tsvector('english', c.text) @@ plainto_tsquery('english', :query)"]
+            fulltext_condition = (
+                "to_tsvector('english', c.text) @@ "
+                "plainto_tsquery('english', :query)"
+            )
+            conditions = []
             params = {
                 "query": query,
                 "limit": limit,
@@ -358,11 +361,90 @@ async def search_edgar_filings(
                 conditions.append("(e.name ILIKE :company OR e.ticker ILIKE :company)")
                 params["company"] = f"%{company}%"
 
-            where_clause = " AND ".join(conditions)
+            # A broad word such as "agreement" matches more than a million
+            # chunks.  Ranking every hit (or parsing every chunk belonging to
+            # 48k 8-Ks) makes a five-result request take seconds.  Use an
+            # adaptive top-K plan for broad, unscoped searches.  Rare form
+            # filters and company-scoped requests retain the exact plan so a
+            # global sample cannot hide their matches.
+            use_sample = not company and not doc_type
+            if not company and doc_type:
+                eligible_documents = session.execute(text("""
+                    SELECT COUNT(*)
+                    FROM documents
+                    WHERE COALESCE(subtype, doc_type) = :doc_type
+                """), {"doc_type": doc_type}).scalar_one()
+                use_sample = (
+                    eligible_documents
+                    > settings.edgar_fulltext_exact_document_threshold
+                )
+
+            ctes = []
+            source = "chunks c"
+            joins = """
+                JOIN documents d ON c.document_id = d.id
+                JOIN raw_documents r ON d.raw_document_id = r.id
+                JOIN companies e ON r.company_id = e.id
+            """
+            document_type = "COALESCE(d.subtype, d.doc_type)"
+            accession_no = "d.accession_no"
+            filing_date = "r.filing_date"
+            company_name = "e.name"
+            company_ticker = "e.ticker"
+            if company:
+                # Resolve a company's relatively small filing set first.  This
+                # prevents PostgreSQL from searching millions of unrelated
+                # chunks before it can apply the company predicate.
+                ctes.append(f"""
+                    eligible_documents AS MATERIALIZED (
+                        SELECT
+                            d.id,
+                            COALESCE(d.subtype, d.doc_type) AS doc_type,
+                            d.accession_no,
+                            r.filing_date,
+                            e.name AS company_name,
+                            e.ticker
+                        FROM documents d
+                        JOIN raw_documents r ON d.raw_document_id = r.id
+                        JOIN companies e ON r.company_id = e.id
+                        WHERE {" AND ".join(conditions)}
+                    )
+                """)
+                source = (
+                    "eligible_documents eligible "
+                    "JOIN chunks c ON c.document_id = eligible.id"
+                )
+                joins = ""
+                document_type = "eligible.doc_type"
+                accession_no = "eligible.accession_no"
+                filing_date = "eligible.filing_date"
+                company_name = "eligible.company_name"
+                company_ticker = "eligible.ticker"
+                conditions = [fulltext_condition]
+            elif use_sample:
+                params["sample_limit"] = max(
+                    settings.edgar_fulltext_sample_limit,
+                    limit * (100 if doc_type else 20),
+                )
+                ctes.append("""
+                    text_candidates AS MATERIALIZED (
+                        SELECT c.id, c.document_id, c.section, c.text
+                        FROM chunks c
+                        WHERE to_tsvector('english', c.text) @@
+                              plainto_tsquery('english', :query)
+                        ORDER BY c.id DESC
+                        LIMIT :sample_limit
+                    )
+                """)
+                source = "text_candidates c"
+            else:
+                conditions.insert(0, fulltext_condition)
+
+            where_clause = " AND ".join(conditions) or "TRUE"
 
             # Query source database tables (chunks, documents, raw_documents, companies)
-            result = session.execute(text(f"""
-                WITH candidates AS MATERIALIZED (
+            ctes.append(f"""
+                candidates AS MATERIALIZED (
                     SELECT
                         c.id AS chunk_id,
                         c.document_id,
@@ -372,19 +454,20 @@ async def search_edgar_filings(
                             to_tsvector('english', c.text),
                             plainto_tsquery('english', :query)
                         ) AS score,
-                        COALESCE(d.subtype, d.doc_type) AS doc_type,
-                        d.accession_no,
-                        r.filing_date,
-                        e.name AS company_name,
-                        e.ticker
-                    FROM chunks c
-                    JOIN documents d ON c.document_id = d.id
-                    JOIN raw_documents r ON d.raw_document_id = r.id
-                    JOIN companies e ON r.company_id = e.id
+                        {document_type} AS doc_type,
+                        {accession_no} AS accession_no,
+                        {filing_date} AS filing_date,
+                        {company_name} AS company_name,
+                        {company_ticker} AS ticker
+                    FROM {source}
+                    {joins}
                     WHERE {where_clause}
                     ORDER BY score DESC, c.id
                     LIMIT :candidate_limit
-                ), diverse AS (
+                )
+            """)
+            ctes.append("""
+                diverse AS (
                     SELECT candidates.*,
                            ROW_NUMBER() OVER (
                                PARTITION BY document_id
@@ -392,6 +475,9 @@ async def search_edgar_filings(
                            ) AS document_rank
                     FROM candidates
                 )
+            """)
+            result = session.execute(text(f"""
+                WITH {", ".join(ctes)}
                 SELECT
                     chunk_id, document_id, section, text, score,
                     doc_type, accession_no, filing_date, company_name, ticker

@@ -99,6 +99,21 @@ def _apply_runtime_schema_migrations() -> None:
             "ix_edgar_companies_name_upper_trgm "
             "ON companies USING gin (UPPER(name) gin_trgm_ops)"
         ))
+        connection.execute(text(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "ix_edgar_documents_effective_type_id "
+            "ON documents ((COALESCE(subtype, doc_type)), id)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "ix_edgar_raw_documents_company_id "
+            "ON raw_documents (company_id, id)"
+        ))
+        connection.execute(text(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "ix_edgar_documents_raw_document_id "
+            "ON documents (raw_document_id, id)"
+        ))
 
 
 def migrate_runtime_schema() -> None:

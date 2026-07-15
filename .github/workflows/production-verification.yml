@@ -86,10 +86,6 @@ jobs:
           python -m unified_api.scripts.evaluate_questions
           --base-url "$BASE_URL" --tier regression
           --timeout 120 --request-retries 1
-      - name: Enforce deployed EDGAR search latency budgets
-        run: >-
-          python -m unified_api.scripts.benchmark_edgar_search
-          --base-url "$BASE_URL" --runs 3
       - name: Trigger an explicitly requested rollback drill
         shell: bash
         run: |
@@ -98,6 +94,28 @@ jobs:
             echo "Controlled rollback drill requested by the deployed commit."
             exit 1
           fi
+
+  performance:
+    name: Verify production performance budgets
+    needs: verify
+    if: needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BASE_URL: https://onebd.pchomelab.com
+      EXPECTED_SHA: ${{ inputs.commit || github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install httpx==0.28.1
+      - name: Enforce deployed EDGAR search latency budgets
+        run: >-
+          python -m unified_api.scripts.benchmark_edgar_search
+          --base-url "$BASE_URL" --runs 3
 
   rollback:
     name: Roll back a failed production deployment
@@ -275,7 +293,3 @@ jobs:
           python -m unified_api.scripts.evaluate_questions
           --base-url "$BASE_URL" --tier regression
           --timeout 120 --request-retries 1
-      - name: Re-run EDGAR latency budgets on the rollback
-        run: >-
-          python -m unified_api.scripts.benchmark_edgar_search
-          --base-url "$BASE_URL" --runs 3
