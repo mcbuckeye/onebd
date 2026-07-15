@@ -779,6 +779,7 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
             "JOIN therapy_areas ta ON ta.id = d.therapy_area_id AND ta.name = 'Cancer' "
             "JOIN deal_companies dc ON dc.deal_id = d.id AND dc.role = 'Partner' "
             "JOIN companies c ON c.id = dc.company_id "
+            "WHERE d.agreement_type = 'Company - M&A (in whole or part)' "
             "GROUP BY c.id, c.name "
             "ORDER BY deal_count DESC, c.id "
             "LIMIT 20"

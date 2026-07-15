@@ -444,6 +444,16 @@ def test_high_value_questions_use_governed_sql(question, required_sql):
     assert required_sql in sql
 
 
+def test_ranked_oncology_acquirers_only_count_m_and_a_buyers():
+    sql = _build_governed_sql(
+        "Which acquirers have done the most oncology deals?",
+        [],
+    )
+
+    assert "dc.role = 'Partner'" in sql
+    assert "d.agreement_type = 'Company - M&A (in whole or part)'" in sql
+
+
 def test_financial_governed_sql_normalizes_currency_and_unit():
     sql = _build_governed_sql("What is the average deal size in oncology?", [])
 
