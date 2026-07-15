@@ -71,7 +71,18 @@ def ensure_search_performance_schema() -> None:
     """Install indexes once, serialized across multiple Uvicorn workers."""
     engine = get_cortellis_engine()
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.execute(text(f"SELECT pg_advisory_lock({ADVISORY_LOCK_ID})"))
+        # Do not let the other Uvicorn workers wait on this session lock.
+        # CREATE INDEX CONCURRENTLY waits for older transactions, so blocking
+        # startup workers here can otherwise form a PostgreSQL deadlock cycle.
+        acquired = bool(
+            conn.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": ADVISORY_LOCK_ID},
+            ).scalar()
+        )
+        if not acquired:
+            logger.info("search_performance_schema_owned_by_another_worker")
+            return
         try:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_stat_statements"))
@@ -117,4 +128,7 @@ def ensure_search_performance_schema() -> None:
                 indexes=len(INDEX_STATEMENTS),
             )
         finally:
-            conn.execute(text(f"SELECT pg_advisory_unlock({ADVISORY_LOCK_ID})"))
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:lock_id)"),
+                {"lock_id": ADVISORY_LOCK_ID},
+            )
