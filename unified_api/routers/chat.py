@@ -84,8 +84,10 @@ async def chat(request: ChatRequest):
             mode = "sql"
         elif intent in ["contract_search"]:
             mode = "rag"
-        elif intent in ["relationship", "company_compare"] and not _is_deal_pattern_query(
-            request.message
+        elif (
+            intent in ["relationship", "company_compare"]
+            and not _is_deal_pattern_query(request.message)
+            and not _is_company_deal_activity_compare_query(request.message)
         ):
             mode = "graph"
         else:
@@ -263,6 +265,16 @@ def _is_deal_pattern_query(message: str) -> bool:
     return "strategy" in normalized and "deal pattern" in normalized
 
 
+def _is_company_deal_activity_compare_query(message: str) -> bool:
+    """Keep named company deal-activity comparisons on canonical SQL IDs."""
+    normalized = message.lower()
+    return (
+        "compar" in normalized
+        and "deal" in normalized
+        and any(term in normalized for term in ("activity", "pace", "count", "volume"))
+    )
+
+
 def _is_due_diligence_query(message: str) -> bool:
     """Recognize explicit DD requests before generic intent classification."""
     normalized = message.lower()
@@ -438,6 +450,32 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
     ]
     year_match = re.search(r"\b(19|20)\d{2}\b", message)
     normalized = message.lower()
+
+    if len(resolved) >= 2 and _is_company_deal_activity_compare_query(message):
+        company_ids = ", ".join(
+            str(int(entity["company_id"]))
+            for entity in resolved
+        )
+        return (
+            "SELECT company.id AS company_id, company.name AS company_name, "
+            "COUNT(DISTINCT deal.id)::int AS deal_count, "
+            "MIN(deal.date_start) AS first_deal_date, "
+            "MAX(deal.date_start) AS latest_deal_date, "
+            "COUNT(DISTINCT deal.id) FILTER (WHERE "
+            "finance.total_projected_current_amount IS NOT NULL "
+            "AND finance.total_projected_current_currency = 'USD' "
+            "AND finance.total_projected_current_unit = 'Million')::int "
+            "AS disclosed_value_count "
+            "FROM companies company "
+            "JOIN deal_companies company_link "
+            "ON company_link.company_id = company.id "
+            "JOIN deals deal ON deal.id = company_link.deal_id "
+            "LEFT JOIN deal_finance_summary finance ON finance.deal_id = deal.id "
+            f"WHERE company.id IN ({company_ids}) "
+            "GROUP BY company.id, company.name "
+            "ORDER BY deal_count DESC, company.id "
+            "LIMIT 20"
+        )
 
     asks_for_ranked_adc_deals = (
         bool(re.search(r"\b(?:largest|biggest|top)\b", normalized))
@@ -1011,8 +1049,10 @@ async def chat_v2(request: ChatRequest):
         mode = "rag"
         data = [r.model_dump() for r in (raw_response.search_results or [])]
         sql_query = None
-    elif intent in ["relationship", "company_compare"] and not _is_deal_pattern_query(
-        request.message
+    elif (
+        intent in ["relationship", "company_compare"]
+        and not _is_deal_pattern_query(request.message)
+        and not _is_company_deal_activity_compare_query(request.message)
     ):
         raw_response = await _handle_graph_query(request.message, llm_service)
         mode = "graph"

@@ -267,7 +267,7 @@ export default function ChatPage() {
               <div className="flex flex-wrap gap-2 justify-center max-w-lg mx-auto">
                 {[
                   'What are the largest ADC deals in oncology?',
-                  'Compare Pfizer and Merck deal activity',
+                  'Compare Pfizer and Merck & Co deal activity',
                   'Typical Phase 2 oncology deal values?',
                   'Who are the most active acquirers this year?',
                 ].map(q => (

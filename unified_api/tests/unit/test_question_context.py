@@ -4,6 +4,7 @@ import pytest
 
 from unified_api.routers.chat import (
     _build_governed_sql,
+    _is_company_deal_activity_compare_query,
     _is_deal_pattern_query,
     _missing_resolved_entity_ids,
     _structured_metric_limitation,
@@ -89,6 +90,74 @@ def test_prefers_ticker_backed_holding_company_for_short_brand_name():
     assert result[0]["canonical_name"] == "Roche Holding Ltd"
 
 
+def test_short_merck_brand_requires_disambiguation_between_xref_parents():
+    def search(phrase, limit):
+        if phrase == "Pfizer":
+            return []
+        assert phrase == "Merck"
+        assert limit == 5
+        return [
+            {"id": 18101, "name": "Merck KGaA", "has_xref": True},
+            {
+                "id": 18077,
+                "name": "Merck & Co Inc",
+                "ticker": "MRK",
+                "has_xref": True,
+            },
+            {"id": 18171, "name": "Merck SA", "has_xref": False},
+        ]
+
+    result = resolve_company_mentions("Compare Pfizer vs Merck", search=search)
+
+    assert result == [{
+        "mention": "Merck",
+        "status": "ambiguous",
+        "candidates": [
+            {
+                "company_id": 18101,
+                "canonical_name": "Merck KGaA",
+                "ticker": None,
+            },
+            {
+                "company_id": 18077,
+                "canonical_name": "Merck & Co Inc",
+                "ticker": "MRK",
+            },
+        ],
+    }]
+
+
+def test_explicit_merck_and_co_resolves_ticker_backed_parent():
+    def search(phrase, limit):
+        if phrase == "Pfizer":
+            return []
+        assert phrase == "Merck Co"
+        assert limit == 5
+        return [
+            {"id": 18101, "name": "Merck KGaA", "has_xref": True},
+            {
+                "id": 18077,
+                "name": "Merck & Co Inc",
+                "ticker": "MRK",
+                "has_xref": True,
+            },
+            {"id": 18171, "name": "Merck SA", "has_xref": False},
+        ]
+
+    result = resolve_company_mentions(
+        "Compare Pfizer and Merck & Co deal activity",
+        search=search,
+    )
+
+    assert result == [{
+        "mention": "Merck Co",
+        "status": "resolved",
+        "company_id": 18077,
+        "canonical_name": "Merck & Co Inc",
+        "ticker": "MRK",
+    }]
+
+
 def test_compound_holding_suffix_normalizes_independent_of_legal_form():
     from unified_api.services.entity_resolution import EntityResolutionService
 
@@ -96,6 +165,8 @@ def test_compound_holding_suffix_normalizes_independent_of_legal_form():
 
     assert service.normalize_company_name("Roche Holding Ltd") == "ROCHE"
     assert service.normalize_company_name("Roche Holdings AG") == "ROCHE"
+    assert service.normalize_company_name("Merck KGaA") == "MERCK"
+    assert service.normalize_company_name("Merck & Co Inc") == "MERCK"
 
 
 def test_resolution_preserves_reviewable_parent_relationship():
@@ -268,6 +339,21 @@ def test_company_oncology_strategy_uses_governed_deal_pattern_sql():
     assert "dc.company_id = 19446" in sql
     assert "ta.name = 'Cancer'" in sql
     assert "GROUP BY COALESCE(d.agreement_type, 'Unknown')" in sql
+
+
+def test_company_deal_activity_comparison_binds_every_canonical_id():
+    question = "Compare Pfizer and Merck & Co deal activity"
+    sql = _build_governed_sql(question, [
+        {"status": "resolved", "company_id": 18767},
+        {"status": "resolved", "company_id": 18077},
+    ])
+
+    assert _is_company_deal_activity_compare_query(question)
+    assert "company.id IN (18767, 18077)" in sql
+    assert "COUNT(DISTINCT deal.id)::int AS deal_count" in sql
+    assert "disclosed_value_count" in sql
+    assert "company_id" in sql
+    assert "LIMIT 20" in sql
 
 
 @pytest.mark.parametrize(

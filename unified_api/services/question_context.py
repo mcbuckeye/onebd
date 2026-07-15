@@ -85,8 +85,28 @@ def resolve_company_mentions(
             elif len(normalized_phrase) >= 4 and normalized_phrase in normalized_name:
                 plausible.append(candidate)
 
+        # Preserve explicit distinguishing words such as "& Co" before legal
+        # suffix normalization collapses related companies onto the same brand.
+        phrase_words = set(re.findall(r"[A-Z0-9]+", phrase.upper()))
+        if len(phrase_words) > 1:
+            lexical_exact = []
+            for candidate in exact:
+                candidate_text = " ".join(filter(None, (
+                    candidate.get("name"),
+                    candidate.get("matched_alias"),
+                )))
+                candidate_words = set(re.findall(r"[A-Z0-9]+", candidate_text.upper()))
+                if phrase_words.issubset(candidate_words):
+                    lexical_exact.append(candidate)
+            if lexical_exact:
+                exact = lexical_exact
+
         preferred_exact = [
             candidate for candidate in exact
+            if candidate.get("ticker") or candidate.get("has_xref")
+        ]
+        preferred_plausible = [
+            candidate for candidate in plausible
             if candidate.get("ticker") or candidate.get("has_xref")
         ]
         selected_exact = (
@@ -94,6 +114,14 @@ def resolve_company_mentions(
             if len(preferred_exact) == 1
             else exact[0] if len(exact) == 1 else None
         )
+
+        if (
+            selected_exact
+            and not selected_exact.get("ticker")
+            and not selected_exact.get("has_xref")
+            and preferred_plausible
+        ):
+            selected_exact = None
 
         if selected_exact:
             candidate = selected_exact
@@ -114,7 +142,12 @@ def resolve_company_mentions(
                     resolution[key] = candidate[key]
             resolutions.append(resolution)
         elif exact or plausible:
-            choices = (exact or plausible)[:3]
+            choices = (
+                preferred_exact
+                or preferred_plausible
+                or exact
+                or plausible
+            )[:3]
             resolutions.append({
                 "mention": phrase,
                 "status": "ambiguous",
