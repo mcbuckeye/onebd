@@ -11,6 +11,10 @@ DEAL_PHASE_PARSER_VERSION = 1
 
 
 def ensure_deal_phase_extraction_schema(session) -> None:
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS deal_phase_extractions (
             deal_id INTEGER PRIMARY KEY REFERENCES deals(id) ON DELETE CASCADE,

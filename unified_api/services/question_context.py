@@ -172,7 +172,9 @@ def _search_drugs_in_question(question: str, limit: int) -> List[dict]:
 
     service = get_entity_resolution_service()
     service.ensure_identity_schema()
-    normalized_question = normalize_identifier_value("drug_alias", question)
+    candidate_aliases = _question_alias_candidates(question)
+    if not candidate_aliases:
+        return []
     with get_cortellis_session() as session:
         rows = session.execute(text("""
             WITH identities AS (
@@ -182,33 +184,53 @@ def _search_drugs_in_question(question: str, limit: int) -> List[dict]:
                        drug.name_display AS matched_alias,
                        'cortellis_display_name' AS match_source
                 FROM drugs drug
+                WHERE LOWER(REGEXP_REPLACE(TRIM(drug.name_display),
+                            '\\s+', ' ', 'g')) = ANY(:candidate_aliases)
                 UNION ALL
                 SELECT alias.drug_id, drug.name_display,
                        alias.normalized_value, alias.alias_value,
                        alias.source
                 FROM drug_aliases alias
                 JOIN drugs drug ON drug.id = alias.drug_id
+                WHERE alias.normalized_value = ANY(:candidate_aliases)
                 UNION ALL
                 SELECT identifier.drug_id, drug.name_display,
-                       LOWER(identifier.normalized_value),
+                       identifier.normalized_value,
                        identifier.identifier_value, identifier.source
                 FROM drug_identifiers identifier
                 JOIN drugs drug ON drug.id = identifier.drug_id
                 WHERE identifier.identifier_type IN ('chembl_id', 'pubchem_cid')
+                  AND identifier.normalized_value = ANY(:candidate_aliases)
             )
             SELECT DISTINCT drug_id, name_display, normalized_value,
                    matched_alias, match_source,
                    LENGTH(normalized_value) AS match_length
             FROM identities
             WHERE LENGTH(normalized_value) >= 4
-              AND STRPOS(:question, normalized_value) > 0
             ORDER BY LENGTH(normalized_value) DESC, drug_id
             LIMIT :limit
         """), {
-            "question": normalized_question,
+            "candidate_aliases": candidate_aliases,
             "limit": max(10, limit * 5),
         }).mappings().all()
     return [dict(row) for row in rows]
+
+
+def _question_alias_candidates(question: str) -> list[str]:
+    """Return bounded contiguous phrases that can use exact identity indexes."""
+    normalized = normalize_identifier_value("drug_alias", question)
+    words = [
+        word.strip(".,!?;:()[]{}\"'")
+        for word in normalized.split()[:40]
+    ]
+    words = [word for word in words if word]
+    candidates = {
+        " ".join(words[start:end])
+        for start in range(len(words))
+        for end in range(start + 1, len(words) + 1)
+        if len(" ".join(words[start:end])) >= 4
+    }
+    return sorted(candidates, key=lambda value: (-len(value), value))
 
 
 def resolve_drug_mentions(

@@ -19,6 +19,11 @@ def ensure_expanded_archive_schema(session: Session) -> None:
     global _expanded_archive_schema_ready
     if _expanded_archive_schema_ready:
         return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _expanded_archive_schema_ready = True
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS cortellis_expanded_response_history (
             id BIGSERIAL PRIMARY KEY,

@@ -106,6 +106,11 @@ def ensure_europe_pmc_schema() -> None:
     global _europe_pmc_schema_ready
     if _europe_pmc_schema_ready:
         return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _europe_pmc_schema_ready = True
+        return
     ensure_public_target_schema()
     with get_cortellis_session() as session:
         session.execute(text("""

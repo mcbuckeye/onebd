@@ -104,6 +104,51 @@ def test_sql_span_cap_counts_dropped_statements(monkeypatch):
     assert operation.dropped_sql_spans == 1
 
 
+def test_fast_sql_details_are_filtered_but_operation_totals_are_preserved(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        telemetry,
+        "get_telemetry_settings",
+        lambda **_kw: _settings(sql_min_duration_ms=1_000_000),
+    )
+    engine = create_engine("sqlite:///:memory:")
+    telemetry.install_sqlalchemy_telemetry(engine, "filtered")
+    operation, token = telemetry.start_operation("request")
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    finally:
+        telemetry._current_operation.reset(token)
+
+    assert operation.spans == []
+    assert operation.sql_count == 1
+    assert operation.sql_duration_ms > 0
+
+
+def test_sql_errors_are_retained_below_the_duration_threshold(monkeypatch):
+    monkeypatch.setattr(
+        telemetry,
+        "get_telemetry_settings",
+        lambda **_kw: _settings(sql_min_duration_ms=1_000_000),
+    )
+    engine = create_engine("sqlite:///:memory:")
+    telemetry.install_sqlalchemy_telemetry(engine, "errors")
+    operation, token = telemetry.start_operation("request")
+    try:
+        with engine.connect() as connection:
+            try:
+                connection.execute(text("SELECT * FROM table_that_does_not_exist"))
+            except Exception:
+                pass
+    finally:
+        telemetry._current_operation.reset(token)
+
+    assert operation.sql_count == 1
+    assert len(operation.spans) == 1
+    assert operation.spans[0].success is False
+
+
 def test_disabled_policy_does_not_persist_job_telemetry(monkeypatch):
     monkeypatch.setattr(
         telemetry,
@@ -166,6 +211,29 @@ def test_asgi_middleware_captures_mcp_principal_and_redacted_body(monkeypatch):
         == "[REDACTED]"
     )
     assert operation.operation_type == "request"
+
+
+def test_caught_semantic_error_is_persisted_even_with_http_200(monkeypatch):
+    records = []
+    monkeypatch.setattr(telemetry, "get_telemetry_settings", lambda **_kw: _settings())
+    monkeypatch.setattr(
+        telemetry,
+        "persist_request",
+        lambda operation, record: records.append((operation, record)),
+    )
+    app = FastAPI()
+    app.add_middleware(telemetry.OperationsTelemetryMiddleware)
+
+    @app.get("/caught-error")
+    async def caught_error():
+        telemetry.mark_current_operation_error(ValueError("query failed"))
+        return {"ok": False}
+
+    response = TestClient(app).get("/caught-error")
+
+    assert response.status_code == 200
+    assert records[0][1]["error_type"] == "ValueError"
+    assert records[0][0].error_message == "query failed"
 
 
 def test_nested_mcp_rest_request_preserves_parent_correlation(monkeypatch):

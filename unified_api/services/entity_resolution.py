@@ -254,8 +254,8 @@ class EntityResolutionService:
 
         logger.info("company_aliases table created")
 
-    def ensure_identity_schema(self) -> None:
-        """Create durable alias and ownership structures used during resolution."""
+    def migrate_identity_schema(self) -> None:
+        """Create identity structures during the deployment migration."""
         global _identity_schema_ready
         if _identity_schema_ready:
             return
@@ -268,6 +268,26 @@ class EntityResolutionService:
                     {"lock_key": IDENTITY_SCHEMA_ADVISORY_LOCK},
                 )
                 self._ensure_identity_schema_locked(session)
+            _identity_schema_ready = True
+
+    def ensure_identity_schema(self) -> None:
+        """Verify the identity migration once per application process."""
+        global _identity_schema_ready
+        if _identity_schema_ready:
+            return
+        with _identity_schema_process_lock:
+            if _identity_schema_ready:
+                return
+            with get_cortellis_session() as session:
+                installed = session.execute(text(
+                    "SELECT to_regclass('public.company_aliases') IS NOT NULL "
+                    "AND to_regclass('public.drug_aliases') IS NOT NULL"
+                )).scalar()
+            if not installed:
+                raise RuntimeError(
+                    "Entity identity schema is missing; run the runtime schema "
+                    "migration"
+                )
             _identity_schema_ready = True
 
     def _ensure_identity_schema_locked(self, session) -> None:
@@ -1174,7 +1194,7 @@ class EntityResolutionService:
                     WHERE ca.xref_id = cx.id
                       AND (
                           ca.alias_value ILIKE :pattern
-                          OR similarity(UPPER(ca.alias_value), :normalized) > 0.3
+                          OR UPPER(ca.alias_value) % :normalized
                       )
                     ORDER BY
                         CASE WHEN UPPER(ca.alias_value) = :normalized THEN 0 ELSE 1 END,
@@ -1187,7 +1207,7 @@ class EntityResolutionService:
                  AND rel.review_status IN ('verified', 'unreviewed')
                 LEFT JOIN companies parent ON parent.id = rel.parent_company_id
                 WHERE c.name ILIKE :pattern
-                   OR similarity(UPPER(c.name), :normalized) > 0.3
+                   OR UPPER(c.name) % :normalized
                    OR alias_match.alias_value IS NOT NULL
                 ORDER BY
                     CASE WHEN UPPER(c.name) = :normalized THEN 0 ELSE 1 END,

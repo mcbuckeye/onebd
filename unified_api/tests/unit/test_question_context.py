@@ -11,10 +11,19 @@ from unified_api.routers.chat import (
 )
 from unified_api.services.llm import LLMService, _financial_disclosure_summary
 from unified_api.services.question_context import (
+    _question_alias_candidates,
     extract_company_phrases,
     resolve_company_mentions,
     resolve_drug_mentions,
 )
+
+
+def test_question_alias_candidates_support_indexed_exact_drug_lookup():
+    candidates = _question_alias_candidates("What targets does DB-003 have?")
+
+    assert "db-003" in candidates
+    assert "targets does db-003" in candidates
+    assert all(len(candidate) >= 4 for candidate in candidates)
 
 
 def test_extracts_company_mentions_without_domain_terms():

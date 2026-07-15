@@ -16,6 +16,10 @@ CATALOG_EXCLUSION_REASON = (
 
 def ensure_catalog_exclusion_schema(session: Session) -> None:
     """Create the small retained-record exception table when needed."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS cortellis_catalog_exclusions (
             deal_id INTEGER PRIMARY KEY REFERENCES deals(id) ON DELETE CASCADE,
@@ -28,6 +32,10 @@ def ensure_catalog_exclusion_schema(session: Session) -> None:
 
 def ensure_catalog_proof_schema(session: Session) -> None:
     """Create the singleton exhaustive-membership proof table."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS cortellis_catalog_proof (
             id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -35,8 +43,16 @@ def ensure_catalog_proof_schema(session: Session) -> None:
             numeric_id_min INTEGER NOT NULL,
             numeric_id_max INTEGER NOT NULL,
             advertised_total INTEGER,
+            incremental_retrievable_additions INTEGER NOT NULL DEFAULT 0,
+            incremental_verified_at TIMESTAMPTZ,
             verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+    """))
+    session.execute(text("""
+        ALTER TABLE cortellis_catalog_proof
+        ADD COLUMN IF NOT EXISTS incremental_retrievable_additions
+            INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS incremental_verified_at TIMESTAMPTZ
     """))
 
 
@@ -49,7 +65,6 @@ def record_catalog_proof(
     advertised_total: int | None,
 ) -> None:
     """Persist a successful exhaustive numeric-ID membership proof."""
-    ensure_catalog_proof_schema(session)
     session.execute(text("""
         INSERT INTO cortellis_catalog_proof (
             id, retrievable_total, numeric_id_min, numeric_id_max,
@@ -63,6 +78,8 @@ def record_catalog_proof(
             numeric_id_min = EXCLUDED.numeric_id_min,
             numeric_id_max = EXCLUDED.numeric_id_max,
             advertised_total = EXCLUDED.advertised_total,
+            incremental_retrievable_additions = 0,
+            incremental_verified_at = NULL,
             verified_at = NOW()
     """), {
         "retrievable_total": int(retrievable_total),
@@ -74,12 +91,31 @@ def record_catalog_proof(
     })
 
 
+def advance_catalog_proof(
+    session: Session,
+    *,
+    newly_retrieved: int,
+) -> None:
+    """Extend an exhaustive baseline with newly retrieved incremental IDs."""
+    if newly_retrieved < 0:
+        raise ValueError("newly_retrieved cannot be negative")
+    session.execute(text("""
+        UPDATE cortellis_catalog_proof
+        SET incremental_retrievable_additions =
+                incremental_retrievable_additions + :newly_retrieved,
+            incremental_verified_at = NOW()
+        WHERE id = 1
+    """), {"newly_retrieved": int(newly_retrieved)})
+
+
 def read_catalog_proof(session: Session) -> dict[str, Any]:
     """Return the latest durable exhaustive proof, if one exists."""
-    ensure_catalog_proof_schema(session)
     row = session.execute(text("""
         SELECT retrievable_total, numeric_id_min, numeric_id_max,
-               advertised_total, verified_at
+               advertised_total, incremental_retrievable_additions,
+               retrievable_total + incremental_retrievable_additions
+                   AS effective_retrievable_total,
+               incremental_verified_at, verified_at
         FROM cortellis_catalog_proof
         WHERE id = 1
     """)).mappings().first()

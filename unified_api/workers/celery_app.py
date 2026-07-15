@@ -1,6 +1,8 @@
 """
 Celery application configuration and task definitions.
 """
+import os
+
 from celery import Celery
 from celery.schedules import crontab
 from celery.signals import task_failure, task_postrun, task_prerun, worker_process_init
@@ -90,17 +92,17 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.cortellis.reconcile_catalog",
             "schedule": crontab(hour=4, minute=15, day_of_week="sunday"),
         },
-        # Scan contract metadata independently in bounded, database-checkpointed
-        # batches. API failures remain retryable and never become false negatives.
+        # Daily post-sync scans are sufficient once historical coverage is
+        # complete. Each batch remains resumable if a future sync adds backlog.
         "scan-cortellis-contract-metadata": {
             "task": "unified_api.workers.tasks.cortellis.scan_contract_metadata",
-            "schedule": crontab(minute="*/10"),
+            "schedule": crontab(hour=7, minute=0),
         },
         # Preserve exact expanded responses and per-deal source citations in a
         # separate staggered lane so completeness survives worker restarts.
         "scan-cortellis-deal-api-coverage": {
             "task": "unified_api.workers.tasks.cortellis.scan_deal_api_coverage",
-            "schedule": crontab(minute="5,15,25,35,45,55"),
+            "schedule": crontab(hour=7, minute=15),
         },
         # Sync graph database daily at 7:00 AM
         "sync-neo4j-graph": {
@@ -147,7 +149,7 @@ celery_app.conf.update(
         # Cheap, resumable normalization of the structured Cortellis finance JSON.
         "extract-cortellis-financial-terms": {
             "task": "unified_api.workers.tasks.enrichment.extract_financial_terms",
-            "schedule": crontab(minute="*/15"),
+            "schedule": crontab(hour=7, minute=30),
         },
         # Deterministic, no-API-cost extraction of explicit financial clauses.
         "extract-contract-financial-clauses": {
@@ -155,7 +157,7 @@ celery_app.conf.update(
                 "unified_api.workers.tasks.enrichment."
                 "extract_contract_financial_clauses"
             ),
-            "schedule": crontab(minute="10,40"),
+            "schedule": crontab(hour=8, minute=0),
         },
         # Exact NCT citations create high-precision deal-to-trial links without
         # treating broad shared drug or disease names as deal-specific evidence.
@@ -170,27 +172,27 @@ celery_app.conf.update(
         # ceiling while advancing the corpus in bounded resumable batches.
         "enrich-pubchem-identifiers": {
             "task": "unified_api.workers.tasks.enrichment.pubchem_identifiers",
-            "schedule": crontab(minute="*/2"),
+            "schedule": crontab(hour=8, minute=15),
         },
         # Exact structure mapping establishes durable ChEMBL identifiers.
         "enrich-chembl-identifiers": {
             "task": "unified_api.workers.tasks.enrichment.chembl_identifiers",
-            "schedule": crontab(minute="1,5,9,13,17,21,25,29,33,37,41,45,49,53,57"),
+            "schedule": crontab(hour=8, minute=30),
         },
         # ChEMBL IDs then unlock batched Open Targets profiles and target links.
         "enrich-open-targets-profiles": {
             "task": "unified_api.workers.tasks.enrichment.open_targets_profiles",
-            "schedule": crontab(minute="2,6,10,14,18,22,26,30,34,38,42,46,50,54,58"),
+            "schedule": crontab(hour=9, minute=0),
         },
         # Exact Swiss-Prot IDs from Open Targets unlock reviewed protein records.
         "enrich-uniprot-targets": {
             "task": "unified_api.workers.tasks.enrichment.uniprot_targets",
-            "schedule": crontab(minute="3,7,11,15,19,23,27,31,35,39,43,47,51,55,59"),
+            "schedule": crontab(hour=9, minute=30),
         },
         # Structured UniProt/Ensembl citations become durable literature evidence.
         "enrich-europe-pmc-target-literature": {
             "task": "unified_api.workers.tasks.enrichment.europe_pmc_targets",
-            "schedule": crontab(minute="0,4,8,12,16,20,24,28,32,36,40,44,48,52,56"),
+            "schedule": crontab(hour=10, minute=0),
         },
         # Batch pre-index contracts with PageIndex nightly at 3 AM
         "batch-pageindex-contracts": {
@@ -204,6 +206,13 @@ celery_app.conf.update(
     task_acks_late=True,  # Acknowledge tasks after completion
     task_reject_on_worker_lost=True,  # Reject tasks if worker dies
 )
+
+# Importing the Celery application from FastAPI must never start or expose a
+# periodic schedule. Production tracing showed API worker processes publishing
+# duplicate enrichment batches. Only the dedicated Beat container receives the
+# role flag below; every other process has an empty schedule by construction.
+if os.environ.get("ONEBD_PROCESS_ROLE", "").strip().lower() != "beat":
+    celery_app.conf.beat_schedule = {}
 
 
 @worker_process_init.connect
@@ -495,19 +504,34 @@ def _sync_clinicaltrials_lane(lane: str):
         return _finish_source_job(source_key, result)
     except Exception as exc:
         logger.error("ClinicalTrials.gov sync failed", lane=lane, error=str(exc))
-        return _finish_source_job(
+        _finish_source_job(
             source_key,
             {"status": "failed", "lane": lane, "error": str(exc)},
         )
+        raise
 
 
-@celery_app.task(name="unified_api.workers.tasks.clinicaltrials.recent")
+@celery_app.task(
+    name="unified_api.workers.tasks.clinicaltrials.recent",
+    autoretry_for=(Exception,),
+    retry_backoff=900,
+    retry_backoff_max=21600,
+    retry_jitter=True,
+    max_retries=3,
+)
 def sync_clinicaltrials_recent():
     """Refresh the latest published ClinicalTrials.gov changes."""
     return _sync_clinicaltrials_lane("recent")
 
 
-@celery_app.task(name="unified_api.workers.tasks.clinicaltrials.backfill")
+@celery_app.task(
+    name="unified_api.workers.tasks.clinicaltrials.backfill",
+    autoretry_for=(Exception,),
+    retry_backoff=900,
+    retry_backoff_max=21600,
+    retry_jitter=True,
+    max_retries=3,
+)
 def backfill_clinicaltrials():
     """Advance the historical ClinicalTrials.gov cursor."""
     return _sync_clinicaltrials_lane("backfill")
@@ -932,6 +956,7 @@ def sync_cortellis_deals():
         from sqlalchemy import text
         from src.api_client import CortellisClient
         from src.cortellis_catalog import (
+            advance_catalog_proof,
             assess_catalog_cardinality,
             ensure_catalog_exclusion_schema,
             read_catalog_proof,
@@ -950,19 +975,35 @@ def sync_cortellis_deals():
                         FROM cortellis_catalog_exclusions) AS exclusion_total
                 FROM deals
             """)).mappings().one()
+            if sync_log.status == "completed":
+                advance_catalog_proof(
+                    session,
+                    newly_retrieved=int(sync_log.records_created or 0),
+                )
             proof = read_catalog_proof(session)
             count_snapshot = refresh_entity_counts(session)
         cardinality = assess_catalog_cardinality(
             advertised_total=catalog_total,
             local_total=int(snapshot["local_total"]),
             exclusion_total=int(snapshot["exclusion_total"]),
-            verified_retrievable_total=proof.get("retrievable_total"),
+            verified_retrievable_total=(
+                proof.get("effective_retrievable_total")
+                or proof.get("retrievable_total")
+            ),
         )
         result.update({
             **cardinality,
             "catalog_verified_at": (
                 proof["verified_at"].isoformat()
                 if proof.get("verified_at") else None
+            ),
+            "catalog_incremental_verified_at": (
+                proof["incremental_verified_at"].isoformat()
+                if proof.get("incremental_verified_at") else None
+            ),
+            "catalog_exhaustive_total": proof.get("retrievable_total"),
+            "catalog_incremental_additions": proof.get(
+                "incremental_retrievable_additions", 0
             ),
             "cursor": (
                 snapshot["source_cursor"].isoformat()
@@ -981,7 +1022,7 @@ def sync_cortellis_deals():
             if proof:
                 result["error"] = (
                     "Cortellis verified catalog/local count mismatch: "
-                    f"verified_source={proof['retrievable_total']}, "
+                    f"verified_source={cardinality['verified_retrievable_total']}, "
                     f"eligible_local={cardinality['eligible_local_total']}, "
                     f"retained_local_only={cardinality['catalog_exclusions']}"
                 )

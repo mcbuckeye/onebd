@@ -1,6 +1,8 @@
 """
 TDD: Chat v2 synthesis tests — write these FIRST, then implement.
 """
+from unittest.mock import AsyncMock
+
 class TestFollowUpSuggestions:
     """Test contextual follow-up generation."""
 
@@ -45,6 +47,60 @@ def test_due_diligence_intent_is_detected_deterministically():
     assert _is_due_diligence_query("Generate a due diligence package for Pfizer")
     assert _is_due_diligence_query("DD report on Pfizer")
     assert not _is_due_diligence_query("How many deals has Pfizer completed?")
+
+
+def test_common_governed_questions_bypass_llm_intent_classification():
+    from unified_api.routers.chat import _is_governed_sql_query
+
+    assert _is_governed_sql_query("What are the largest ADC deals in oncology?")
+    assert _is_governed_sql_query(
+        "Which companies are most actively acquiring oncology assets?"
+    )
+    assert _is_governed_sql_query(
+        "Which acquirers have done the most oncology deals?"
+    )
+    assert not _is_governed_sql_query("Search contract indemnification language")
+
+
+async def test_chat_v2_governed_sql_uses_only_final_synthesis(monkeypatch):
+    from unified_api.routers import chat
+
+    llm = type("LLM", (), {})()
+    llm.classify_intent = AsyncMock(return_value="deal_search")
+    llm.synthesize_response = AsyncMock(return_value={
+        "answer": "Grounded answer",
+        "confidence": {"sample_size": 1},
+        "follow_ups": [],
+    })
+    llm.format_response = AsyncMock(return_value="discarded formatting")
+    raw = chat.ChatResponse(
+        response="",
+        mode_used="sql",
+        sql_query="SELECT 1",
+        data=[{"deal_id": 1}],
+        citations=[{
+            "id": "C1",
+            "source": "Cortellis",
+            "label": "Deal 1",
+        }],
+    )
+
+    monkeypatch.setattr(
+        "unified_api.services.llm.get_llm_service",
+        lambda: llm,
+    )
+    handler = AsyncMock(return_value=raw)
+    monkeypatch.setattr(chat, "_handle_sql_query", handler)
+
+    response = await chat.chat_v2(chat.ChatRequest(
+        message="What are the largest ADC deals in oncology?"
+    ))
+
+    llm.classify_intent.assert_not_awaited()
+    llm.format_response.assert_not_awaited()
+    llm.synthesize_response.assert_awaited_once()
+    assert handler.await_args.kwargs["format_answer"] is False
+    assert response.answer.startswith("Grounded answer")
 
 
 async def test_due_diligence_chat_uses_governed_package():

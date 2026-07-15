@@ -5,6 +5,10 @@ from sqlalchemy import text
 
 def ensure_digest_settings_schema(session) -> None:
     """Create or safely extend the per-user digest settings table."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS user_digest_settings (
             id SERIAL PRIMARY KEY,

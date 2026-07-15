@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from io import BytesIO
 import json
 from urllib.parse import parse_qs, urlparse
+from urllib.error import HTTPError
 
 import pytest
 
@@ -106,6 +107,55 @@ def test_dataset_timestamp_treats_source_timestamp_as_new_york_time():
     assert clinical_trials._dataset_timestamp(
         "2026-01-13T09:00:05"
     ) == datetime(2026, 1, 13, 14, 0, 5, tzinfo=timezone.utc)
+
+
+def test_recent_window_discards_token_from_an_older_dataset_snapshot():
+    session = type("Session", (), {})()
+    result = type("Result", (), {})()
+    mappings = type("Mappings", (), {})()
+    mappings.first = lambda: {
+        "lane": "recent",
+        "status": "partial",
+        "window_start": date(2026, 7, 7),
+        "window_end": date(2026, 7, 14),
+        "next_page_token": "stale-token",
+        "dataset_timestamp": datetime(2026, 7, 14, 13, tzinfo=timezone.utc),
+    }
+    result.mappings = lambda: mappings
+    session.execute = lambda *_args, **_kwargs: result
+
+    state = clinical_trials._initial_window(
+        session,
+        lane="recent",
+        dataset_date=date(2026, 7, 15),
+        dataset_timestamp=datetime(2026, 7, 15, 13, tzinfo=timezone.utc),
+    )
+
+    assert state["next_page_token"] is None
+    assert state["window_end"] == date(2026, 7, 15)
+
+
+def test_page_fetch_restarts_once_without_a_rejected_token():
+    calls = []
+
+    class Client:
+        def updated_studies(self, **kwargs):
+            calls.append(kwargs["page_token"])
+            if kwargs["page_token"]:
+                raise HTTPError("https://example.test", 400, "bad token", {}, None)
+            return clinical_trials.ClinicalTrialsPage([], None, 0)
+
+    page, reset = clinical_trials._updated_studies_page_with_token_recovery(
+        Client(),
+        start_date=date(2026, 7, 7),
+        end_date=date(2026, 7, 15),
+        page_size=1000,
+        page_token="stale-token",
+    )
+
+    assert reset is True
+    assert page.studies == []
+    assert calls == ["stale-token", None]
 
 
 @pytest.mark.parametrize(

@@ -276,3 +276,22 @@ def test_money_sort_requires_one_currency_and_matching_filter():
 def test_unknown_fields_are_rejected_instead_of_silently_ignored():
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         AdvancedSearchRequest.model_validate({"unknown_filter": "value"})
+def test_simple_filter_shorthand_normalizes_to_boolean_filters():
+    from unified_api.services.advanced_search import AdvancedSearchRequest
+
+    request = AdvancedSearchRequest(
+        company="HanchorBio Inc",
+        asset="HCB-101",
+        target="CD73",
+        disease="Solid tumor",
+        deal_type="Licensing",
+    )
+
+    assert request.companies.any[0].name == "HanchorBio Inc"
+    assert request.assets.names.any == ["HCB-101"]
+    assert request.targets.names.any == ["CD73"]
+    assert request.diseases.names.any == ["Solid tumor"]
+    assert request.deals.types.include == ["Licensing"]
+    canonical = request.model_dump(exclude_none=True)
+    assert "company" not in canonical
+    assert "asset" not in canonical

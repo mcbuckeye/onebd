@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 import math
 from pathlib import Path
 import re
+import time
 
 from unified_api.config import settings
 from unified_api.services.database import check_cortellis_connection, check_edgar_connection
@@ -16,6 +17,8 @@ from unified_api.services.database import check_cortellis_connection, check_edga
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+_DATA_HEALTH_CACHE_SECONDS = 60.0
+_data_health_cache: tuple[float, dict] | None = None
 
 
 def _build_commit() -> str:
@@ -349,6 +352,14 @@ async def data_health_check():
     Comprehensive data health check across all sources.
     Reports on: Cortellis PG, EDGAR PG, Neo4j graph, sync freshness.
     """
+    global _data_health_cache
+    now = time.monotonic()
+    if (
+        _data_health_cache is not None
+        and now - _data_health_cache[0] < _DATA_HEALTH_CACHE_SECONDS
+    ):
+        return _data_health_cache[1]
+
     from unified_api.services.database import get_cortellis_session, get_edgar_source_session
     from unified_api.services.data_health import compute_health_score
     from sqlalchemy import text
@@ -682,9 +693,11 @@ async def data_health_check():
     health["checks"].extend(sync_checks)
     degraded = any(check["status"] in {"warning", "critical"} for check in sync_checks)
 
-    return {
+    result = {
         "status": "degraded" if degraded else "healthy",
         "overall_score": health["overall_score"],
         "checks": health["checks"],
         "sources": sources,
     }
+    _data_health_cache = (time.monotonic(), result)
+    return result

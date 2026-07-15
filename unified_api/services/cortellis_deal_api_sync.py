@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+import threading
 from typing import Any
 
 from sqlalchemy import text
@@ -27,10 +28,11 @@ DEAL_API_SCAN_VERSION = 1
 SINGLE_DEAL_ENDPOINT = "deals-v2/deal/expanded/{id}"
 DEAL_SOURCES_ENDPOINT = "deals-v2/deal/sources/{dealId}"
 _deal_api_scan_schema_ready = False
+_deal_api_scan_schema_lock = threading.Lock()
 
 
-def ensure_deal_api_scan_schema() -> None:
-    """Create durable response, citation, and checkpoint tables."""
+def migrate_deal_api_scan_schema() -> None:
+    """Create durable response, citation, and checkpoint tables at deploy time."""
     global _deal_api_scan_schema_ready
     if _deal_api_scan_schema_ready:
         return
@@ -98,6 +100,27 @@ def ensure_deal_api_scan_schema() -> None:
             )
         """))
     _deal_api_scan_schema_ready = True
+
+
+def ensure_deal_api_scan_schema() -> None:
+    """Verify the deal-response migration once per application process."""
+    global _deal_api_scan_schema_ready
+    if _deal_api_scan_schema_ready:
+        return
+    with _deal_api_scan_schema_lock:
+        if _deal_api_scan_schema_ready:
+            return
+        with get_cortellis_session() as session:
+            installed = session.execute(text(
+                "SELECT to_regclass('public.cortellis_deal_api_scan_state') "
+                "IS NOT NULL"
+            )).scalar()
+        if not installed:
+            raise RuntimeError(
+                "Cortellis deal API scan schema is missing; run the runtime "
+                "schema migration"
+            )
+        _deal_api_scan_schema_ready = True
 
 
 def _claim_candidates(batch_size: int) -> list[int]:
@@ -422,6 +445,14 @@ def _latest_catalog_proof() -> dict[str, Any]:
     return proof
 
 
+def _effective_catalog_total(proof: dict[str, Any]) -> int | None:
+    """Return the exhaustive baseline plus proven incremental additions."""
+    value = proof.get("effective_retrievable_total")
+    if value is None:
+        value = proof.get("retrievable_total")
+    return int(value) if value is not None else None
+
+
 def _attach_catalog_cardinality(result: dict[str, Any]) -> dict[str, Any]:
     """Require both full response coverage and a successful exhaustive audit."""
     config = CortellisConfig(
@@ -435,10 +466,16 @@ def _attach_catalog_cardinality(result: dict[str, Any]) -> dict[str, Any]:
                 query="*", offset=0, hits=1
             ).total_results
         catalog_proof = _latest_catalog_proof()
-        retrievable_total = catalog_proof.get("retrievable_total")
+        retrievable_total = _effective_catalog_total(catalog_proof)
         verified_at = catalog_proof.get("last_success_at")
         result["catalog_total"] = catalog_total
         result["verified_retrievable_total"] = retrievable_total
+        result["exhaustive_retrievable_total"] = catalog_proof.get(
+            "retrievable_total"
+        )
+        result["incremental_retrievable_additions"] = catalog_proof.get(
+            "incremental_retrievable_additions", 0
+        )
         result["catalog_verified_at"] = (
             verified_at.isoformat()
             if hasattr(verified_at, "isoformat")

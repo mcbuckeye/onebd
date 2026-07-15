@@ -301,6 +301,11 @@ def ensure_sec_company_identity_schema() -> None:
     global _identity_schema_ready
     if _identity_schema_ready:
         return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _identity_schema_ready = True
+        return
     if _identity_schema_is_current():
         _identity_schema_ready = True
         return

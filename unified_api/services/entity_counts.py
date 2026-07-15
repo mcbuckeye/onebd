@@ -13,6 +13,10 @@ COUNTS_MAX_AGE_SECONDS = 300
 
 def ensure_entity_counts_schema(session) -> None:
     """Create the durable singleton cache used by REST and MCP counts."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS api_entity_counts (
             singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),

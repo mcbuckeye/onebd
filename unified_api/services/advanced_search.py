@@ -236,6 +236,14 @@ class SortSpec(StrictModel):
 
 
 class AdvancedSearchRequest(StrictModel):
+    # Discoverable convenience fields for simple API and agent calls. They are
+    # normalized into the full Boolean filter model below and excluded from the
+    # canonical query hash/payload.
+    company: BoundedText | None = Field(default=None, exclude=True)
+    asset: BoundedText | None = Field(default=None, exclude=True)
+    target: BoundedText | None = Field(default=None, exclude=True)
+    disease: BoundedText | None = Field(default=None, exclude=True)
+    deal_type: BoundedText | None = Field(default=None, exclude=True)
     query: str | None = Field(default=None, min_length=1, max_length=200)
     companies: CompanyFilters = Field(default_factory=CompanyFilters)
     assets: AssetFilters = Field(default_factory=AssetFilters)
@@ -253,6 +261,20 @@ class AdvancedSearchRequest(StrictModel):
 
     @model_validator(mode="after")
     def validate_concept_refinements(self):
+        if self.company:
+            criterion = CompanyCriterion(name=self.company)
+            if criterion not in self.companies.any:
+                self.companies.any.append(criterion)
+        shorthand_related = (
+            (self.asset, self.assets.names.any),
+            (self.target, self.targets.names.any),
+            (self.disease, self.diseases.names.any),
+        )
+        for value, destination in shorthand_related:
+            if value and value not in destination:
+                destination.append(value)
+        if self.deal_type and self.deal_type not in self.deals.types.include:
+            self.deals.types.include.append(self.deal_type)
         self.expand = list(dict.fromkeys(self.expand))
         if self.query:
             self.query = self.query.strip()
