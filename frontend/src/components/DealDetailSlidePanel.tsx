@@ -22,10 +22,16 @@ function stripXml(text: string): string {
     .trim();
 }
 
-function formatValue(v: number | null | undefined): string {
+function formatValue(
+  v: number | null | undefined,
+  currency?: string,
+  unit?: string,
+): string {
   if (v === null || v === undefined) return '—';
-  if (v >= 1000) return `$${(v / 1000).toFixed(1)}B`;
-  return `$${v.toFixed(0)}M`;
+  const symbols: Record<string, string> = { USD: '$', EUR: '€', GBP: '£', JPY: '¥' };
+  const prefix = symbols[currency || ''] || (currency ? `${currency} ` : '');
+  const suffix = unit === 'Million' ? 'M' : unit === 'Billion' ? 'B' : unit ? ` ${unit}` : '';
+  return `${prefix}${v.toLocaleString()}${suffix}`;
 }
 
 function PhaseBadge({ phase }: { phase?: string }) {
@@ -223,11 +229,15 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                     Financials
                   </h3>
                   <div className="grid grid-cols-2 gap-3">
-                    {deal.finance.total_paid_amount !== undefined && (
+                    {deal.finance.total_paid_amount != null && (
                       <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
                         <div className="text-xs text-slate-500 mb-1">Paid Amount</div>
                         <div className="text-base font-semibold text-slate-200">
-                          {formatValue(deal.finance.total_paid_amount)}
+                          {formatValue(
+                            deal.finance.total_paid_amount,
+                            deal.finance.total_paid_currency,
+                            deal.finance.total_paid_unit,
+                          )}
                         </div>
                         {deal.finance.total_paid_disclosure_status && (
                           <div className="text-xs text-slate-500 mt-0.5">
@@ -236,19 +246,27 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                         )}
                       </div>
                     )}
-                    {deal.finance.total_projected_current_amount !== undefined && (
+                    {deal.finance.total_projected_current_amount != null && (
                       <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
                         <div className="text-xs text-slate-500 mb-1">Projected (Current)</div>
                         <div className="text-base font-semibold text-slate-200">
-                          {formatValue(deal.finance.total_projected_current_amount)}
+                          {formatValue(
+                            deal.finance.total_projected_current_amount,
+                            deal.finance.total_projected_current_currency,
+                            deal.finance.total_projected_current_unit,
+                          )}
                         </div>
                       </div>
                     )}
-                    {deal.finance.total_projected_signing_amount !== undefined && (
+                    {deal.finance.total_projected_signing_amount != null && (
                       <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
                         <div className="text-xs text-slate-500 mb-1">Projected (Signing)</div>
                         <div className="text-base font-semibold text-slate-200">
-                          {formatValue(deal.finance.total_projected_signing_amount)}
+                          {formatValue(
+                            deal.finance.total_projected_signing_amount,
+                            deal.finance.total_projected_signing_currency,
+                            deal.finance.total_projected_signing_unit,
+                          )}
                         </div>
                       </div>
                     )}

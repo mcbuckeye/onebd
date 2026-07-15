@@ -32,4 +32,6 @@ class TestTerritoryEndpoint:
         if resp.status_code == 200:
             for t in resp.json().get("territories", []):
                 assert "territory" in t
-                assert "status" in t  # committed, available, etc.
+                assert "scope_type" in t
+                assert "deal_status" in t
+                assert "evidence_status" in t

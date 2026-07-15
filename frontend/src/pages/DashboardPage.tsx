@@ -6,6 +6,8 @@ import api, { DealSummary } from '../lib/api';
 import DealDetailSlidePanel from '../components/DealDetailSlidePanel';
 
 interface DashboardData {
+  as_of: string;
+  cache_ttl_seconds: number;
   market_pulse: {
     deal_count_30d: number;
     deal_count_prev_30d: number;
@@ -13,6 +15,7 @@ interface DashboardData {
     disclosed_count_30d: number;
     top_therapy_areas: Array<{ name: string; count: number }>;
     monthly_trend: Array<{ month: string; count: number }>;
+    value_definition: string;
   };
   notable_deals: Array<DealSummary & { agreement_type?: string }>;
 }
@@ -21,6 +24,7 @@ interface Recommendation {
   deal_id: number;
   title: string;
   agreement_type: string;
+  status?: string;
   date: string;
   value: number | null;
   principal: string;
@@ -31,12 +35,21 @@ interface Recommendation {
 }
 
 interface DataHealth {
+  status: 'healthy' | 'degraded' | 'critical';
+  status_reason: string;
+  as_of: string;
+  score_label: string;
+  score_scope: string;
   overall_score: number;
   checks: Array<{
     name: string;
-    status: 'ok' | 'warning' | 'critical';
+    category?: string;
+    status: 'ok' | 'info' | 'running' | 'warning' | 'critical';
     detail: string;
+    duration_seconds?: number | null;
+    counts?: Record<string, number | null>;
   }>;
+  sections?: Record<string, DataHealth['checks']>;
   sources: {
     cortellis_deals?: { total: number; with_financials: number };
     companies?: { total: number; cross_referenced: number };
@@ -76,27 +89,67 @@ function formatValue(v: number | null): string {
   return `$${v.toFixed(0)}M`;
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
+  return Number.isNaN(parsed.getTime()) ? value.slice(0, 10) : parsed.toLocaleDateString();
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [recommendationMethodology, setRecommendationMethodology] = useState('');
   const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
+  const [dashboardError, setDashboardError] = useState('');
+  const [healthError, setHealthError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setDashboardError('');
+    setHealthError('');
+    const loadHealth = () => api.get('/health/data').then(response => {
+      if (active) {
+        setDataHealth(response.data);
+        setHealthError('');
+      }
+    }).catch(error => {
+      console.error(error);
+      if (active) setHealthError('System and data status is temporarily unavailable.');
+    });
+
     Promise.allSettled([
       api.get('/dashboard/executive'),
       api.get('/recommendations?limit=5'),
-      api.get('/health/data')
+      api.get('/health/data'),
     ])
       .then(([dashRes, recRes, healthRes]) => {
-        if (dashRes.status === 'fulfilled') setData(dashRes.value.data);
-        if (recRes.status === 'fulfilled') setRecommendations(recRes.value.data.recommendations || []);
-        if (healthRes.status === 'fulfilled') setDataHealth(healthRes.value.data);
+        if (!active) return;
+        if (dashRes.status === 'fulfilled') {
+          setData(dashRes.value.data);
+        } else {
+          setDashboardError('The market dashboard could not be loaded.');
+        }
+        if (recRes.status === 'fulfilled') {
+          setRecommendations(recRes.value.data.recommendations || []);
+          setRecommendationMethodology(recRes.value.data.methodology || '');
+        }
+        if (healthRes.status === 'fulfilled') {
+          setDataHealth(healthRes.value.data);
+        } else {
+          setHealthError('System and data status is temporarily unavailable.');
+        }
       })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => { if (active) setLoading(false); });
+    const healthInterval = window.setInterval(loadHealth, 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(healthInterval);
+    };
+  }, [retryKey]);
 
   if (loading) {
     return (
@@ -109,7 +162,14 @@ export default function DashboardPage() {
     );
   }
 
-  if (!data) return <div className="p-6 text-slate-400">Failed to load dashboard</div>;
+  if (!data) return (
+    <div className="p-6">
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+        <p>{dashboardError || 'The market dashboard could not be loaded.'}</p>
+        <button type="button" onClick={() => setRetryKey(value => value + 1)} className="mt-3 rounded border border-red-400/30 px-3 py-1 hover:bg-red-500/10">Retry</button>
+      </div>
+    </div>
+  );
 
   const { market_pulse: pulse, notable_deals } = data;
   const dealChange = pulse.deal_count_prev_30d > 0
@@ -121,8 +181,14 @@ export default function DashboardPage() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-100">Market Pulse</h1>
-        <p className="text-sm text-slate-500 mt-1">Pharmaceutical deal activity overview</p>
+        <p className="text-sm text-slate-500 mt-1">Pharmaceutical deal activity overview • as of {new Date(data.as_of).toLocaleString()}</p>
       </div>
+
+      {healthError && !dataHealth && (
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+          {healthError}
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -136,7 +202,7 @@ export default function DashboardPage() {
         <StatCard
           label="Avg Deal Value (30d)"
           value={formatValue(pulse.avg_value_30d)}
-          subtext={`${pulse.disclosed_count_30d} disclosed deals`}
+          subtext={`${pulse.disclosed_count_30d} disclosed USD-million values`}
           icon={DollarSign}
         />
         <StatCard
@@ -228,9 +294,9 @@ export default function DashboardPage() {
                     </td>
                     <td className="py-2.5 pr-4 text-slate-400 text-xs">{deal.agreement_type || deal.deal_type || '—'}</td>
                     <td className="py-2.5 pr-4 text-slate-300">
-                      {deal.total_value ? formatValue(deal.total_value) : '—'}
+                      {deal.total_value !== null && deal.total_value !== undefined ? formatValue(deal.total_value) : '—'}
                     </td>
-                    <td className="py-2.5 text-slate-500 text-xs">{deal.date_start || '—'}</td>
+                    <td className="py-2.5 text-slate-500 text-xs">{formatDate(deal.date_start)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -263,12 +329,13 @@ export default function DashboardPage() {
       {/* Recommendations */}
       {recommendations.length > 0 && (
         <div className="mt-6 bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <h2 className="text-sm font-medium text-slate-400 mb-4">Deals You Should Know About</h2>
+          <h2 className="text-sm font-medium text-slate-400">Recent High-Value Deals</h2>
+          <p className="mb-4 mt-1 text-xs text-slate-500">{recommendationMethodology}</p>
           <div className="space-y-3">
             {recommendations.map((rec) => (
               <div key={rec.deal_id} className="flex items-start justify-between py-3 border-b border-slate-800/50 last:border-0">
                 <div className="flex-1">
-                  <div className="text-sm text-slate-200 font-medium">{rec.title}</div>
+                  <Link to={`/deals/${rec.deal_id}`} className="text-sm text-slate-200 font-medium hover:text-blue-400 hover:underline">{rec.title}</Link>
                   <div className="text-xs text-slate-500 mt-0.5">
                     {rec.principal} → {rec.partner} • {rec.agreement_type}
                   </div>
@@ -282,7 +349,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-right flex-shrink-0 ml-4">
                   <div className="text-sm text-slate-300 font-medium">{formatValue(rec.value)}</div>
-                  <div className="text-xs text-slate-500">{rec.date}</div>
+                  <div className="text-xs text-slate-500">{formatDate(rec.date)}</div>
                 </div>
               </div>
             ))}
@@ -294,33 +361,56 @@ export default function DashboardPage() {
       {dataHealth && (
         <div className="mt-6 bg-slate-900 border border-slate-800 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-slate-400">Data Health Status</h2>
+            <div>
+              <h2 className="text-sm font-medium text-slate-400">System & Data Status</h2>
+              <p className="mt-1 text-xs text-slate-600">As of {new Date(dataHealth.as_of).toLocaleString()} • refreshes every minute</p>
+            </div>
             <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
-              dataHealth.overall_score >= 80 ? 'bg-green-500/10 text-green-400 border border-green-500/30' :
-              dataHealth.overall_score >= 60 ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30' :
+              dataHealth.status === 'healthy' ? 'bg-green-500/10 text-green-400 border border-green-500/30' :
+              dataHealth.status === 'degraded' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30' :
               'bg-red-500/10 text-red-400 border border-red-500/30'
             }`}>
-              Score: {dataHealth.overall_score}/100
+              {dataHealth.status.toUpperCase()}
             </div>
           </div>
+          <p className="mb-4 text-sm text-slate-400">{dataHealth.status_reason}</p>
 
           {/* Health Checks */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-            {dataHealth.checks.map((check, i) => {
-              const Icon = check.status === 'ok' ? CheckCircle : check.status === 'warning' ? AlertTriangle : XCircle;
-              const colorClass = check.status === 'ok' ? 'text-green-400' : check.status === 'warning' ? 'text-yellow-400' : 'text-red-400';
-              
-              return (
-                <div key={i} className="flex items-start gap-2 p-2 rounded border border-slate-800/50">
-                  <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${colorClass}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-slate-300">{check.name}</div>
-                    <div className="text-xs text-slate-500 mt-0.5 truncate">{check.detail}</div>
-                  </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+            {Object.entries(dataHealth.sections || { checks: dataHealth.checks }).map(([section, checks]) => (
+              <section key={section} className="rounded-lg border border-slate-800/70 p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{section}</h3>
+                <div className="space-y-2">
+                  {checks.map((check, i) => {
+                    const Icon = check.status === 'ok' ? CheckCircle : check.status === 'warning' ? AlertTriangle : check.status === 'critical' ? XCircle : Activity;
+                    const colorClass = check.status === 'ok' ? 'text-green-400' : check.status === 'warning' ? 'text-yellow-400' : check.status === 'critical' ? 'text-red-400' : 'text-blue-400';
+                    const counts = Object.entries(check.counts || {}).filter(([, value]) => value !== null && value !== undefined);
+                    return (
+                      <div key={`${check.name}-${i}`} className="flex items-start gap-2 rounded border border-slate-800/50 p-2">
+                        <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${colorClass}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium text-slate-300">{check.name}</div>
+                          <div className="text-xs text-slate-500 mt-0.5 leading-5">{check.detail}</div>
+                          {(check.duration_seconds != null || counts.length > 0) && (
+                            <div className="mt-1 text-[11px] text-slate-600">
+                              {check.duration_seconds != null && `Duration ${check.duration_seconds.toFixed(1)}s`}
+                              {check.duration_seconds != null && counts.length > 0 && ' • '}
+                              {counts.map(([key, value]) => `${key.replace(/_/g, ' ')}: ${Number(value).toLocaleString()}`).join(' • ')}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </section>
+            ))}
           </div>
+
+          <details className="mb-4 rounded border border-slate-800 p-3 text-xs text-slate-500">
+            <summary className="cursor-pointer text-slate-400">Data readiness methodology</summary>
+            <p className="mt-2">{dataHealth.score_label}: {dataHealth.overall_score}/100. {dataHealth.score_scope}</p>
+          </details>
 
           {/* Source Summary */}
           <div className="grid grid-cols-3 gap-3 pt-3 border-t border-slate-800">

@@ -1,21 +1,26 @@
 import { useState } from 'react';
 import { ScrollText, Search } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import api from '../lib/api';
 
 export default function ContractsPage() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<'semantic' | 'fulltext'>('semantic');
+  const [mode, setMode] = useState<'semantic' | 'fulltext' | 'hybrid'>('hybrid');
+  const [error, setError] = useState('');
 
-  const search = async () => {
-    if (!query.trim()) return;
+  const search = async (requestedQuery = query) => {
+    if (!requestedQuery.trim()) return;
     setLoading(true);
+    setError('');
     try {
-      const resp = await api.get(`/search/contracts?query=${encodeURIComponent(query)}&mode=${mode}&limit=20`);
+      const resp = await api.get(`/search/contracts?query=${encodeURIComponent(requestedQuery)}&mode=${mode}&limit=20`);
       setResults(resp.data);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setResults(null);
+      setError(e.response?.data?.detail || 'Contract search failed');
     } finally {
       setLoading(false);
     }
@@ -25,7 +30,7 @@ export default function ContractsPage() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-100">Contract Intelligence</h1>
-        <p className="text-sm text-slate-500 mt-1">Search across 26K+ pharmaceutical contracts and 903K embedded chunks</p>
+        <p className="text-sm text-slate-500 mt-1">Search indexed pharmaceutical contract excerpts with semantic, lexical, or hybrid ranking</p>
       </div>
 
       <div className="flex gap-2 mb-6">
@@ -43,27 +48,37 @@ export default function ContractsPage() {
           value={mode} onChange={(e) => setMode(e.target.value as any)}
           className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-300"
         >
+          <option value="hybrid">Hybrid</option>
           <option value="semantic">Semantic</option>
           <option value="fulltext">Full Text</option>
         </select>
-        <button onClick={search} disabled={loading}
+        <button onClick={() => search()} disabled={loading}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium"
         >
-          Search
+          {loading ? 'Searching…' : 'Search'}
         </button>
       </div>
 
+      {error && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{error}</div>}
+
       {results && (
         <div className="space-y-3">
-          <div className="text-sm text-slate-500">{results.total} results</div>
+          <div className="text-sm text-slate-500">{results.total} results • {results.result_scope}</div>
+          {results.warning && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">{results.warning}</div>}
           {(results.results || []).map((r: any, i: number) => (
-            <div key={i} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <div key={r.chunk_id ?? i} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium text-slate-200">{r.deal_title || `Deal #${r.deal_id}`}</span>
-                <span className="text-xs text-slate-500">Score: {(r.score * 100).toFixed(0)}%</span>
+                <Link to={`/deals/${r.deal_id}`} className="text-sm font-medium text-slate-200 hover:text-blue-400 hover:underline">{r.deal_title || `Deal #${r.deal_id}`}</Link>
+                <span className="text-xs text-slate-500">
+                  {results.score_kind === 'cosine_similarity'
+                    ? `Similarity: ${(r.score * 100).toFixed(0)}%`
+                    : results.score_kind === 'fulltext_rank'
+                      ? `Lexical relevance: ${r.score.toFixed(3)}`
+                      : `Hybrid rank ${i + 1}`}
+                </span>
               </div>
               <div className="text-xs text-slate-500 mb-2">
-                {r.principal_company} → {r.partner_company}
+                {[r.principal_company, r.partner_company].filter(Boolean).join(' → ') || 'Deal participants unavailable'} • Contract {r.contract_id} • {r.match_mode}
               </div>
               <p className="text-sm text-slate-400 leading-relaxed">{r.content}</p>
             </div>
@@ -71,13 +86,13 @@ export default function ContractsPage() {
         </div>
       )}
 
-      {!results && (
+      {!results && !error && (
         <div className="text-center py-16">
           <ScrollText className="w-12 h-12 text-slate-700 mx-auto mb-3" />
           <p className="text-slate-500">Search for contract terms, clauses, or specific language</p>
           <div className="flex flex-wrap gap-2 justify-center mt-4 max-w-lg mx-auto">
             {['royalty rates for ADC', 'milestone payments oncology', 'opt-in opt-out clause', 'territory rights'].map(q => (
-              <button key={q} onClick={() => { setQuery(q); }}
+              <button key={q} onClick={() => { setQuery(q); search(q); }}
                 className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-400 hover:text-slate-200"
               >{q}</button>
             ))}

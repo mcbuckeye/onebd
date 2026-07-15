@@ -1744,6 +1744,8 @@ def send_daily_digest():
                         WHERE dc.deal_id = d.id AND dc.role = 'Partner' LIMIT 1) as partner
                 FROM deals d
                 LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+                  AND f.total_projected_current_currency = 'USD'
+                  AND f.total_projected_current_unit = 'Million'
                 {where_clause}
                 ORDER BY f.total_projected_current_amount DESC NULLS LAST
                 LIMIT 15

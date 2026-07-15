@@ -79,7 +79,7 @@ export default function FilingsPage() {
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-100">SEC Filings</h1>
-        <p className="text-sm text-slate-500 mt-1">Search and read 330K+ SEC documents across 3.5M indexed chunks</p>
+        <p className="text-sm text-slate-500 mt-1">Search SEC filing content and open source documents with filing-level deduplication</p>
       </div>
 
       <div className="flex gap-2 mb-6 max-w-2xl">
@@ -109,7 +109,7 @@ export default function FilingsPage() {
       {results.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between text-sm text-slate-500">
-            <span>{searched ? `${results.length} matching excerpts` : 'Recently filed documents'}</span>
+            <span>{searched ? `${results.length} matching documents (best excerpt from each)` : 'Recently filed documents'}</span>
             {searched && (
               <button type="button" onClick={loadRecent} className="hover:text-slate-300">
                 Show recent filings

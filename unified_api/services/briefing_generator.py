@@ -8,7 +8,7 @@ def build_market_summary(data: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "title": "Market Summary",
         "content": {
-            "deals_30d": data.get("deals_30d", 0),
+            "matching_deals": data.get("matching_deals", data.get("deals_30d", 0)),
             "top_therapy": data.get("top_therapy"),
             "trend": data.get("trend"),
         },

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Search, BarChart3, Building2,
   Network, FileText, ScrollText, Star, MessageSquare,
   Menu, LogOut, ChevronLeft, Scale, Shield, HelpCircle,
-  Users, Brain, Settings, CalendarDays
+  Users, Brain, Settings, CalendarDays, MapPin, Newspaper
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
@@ -24,6 +24,8 @@ const NAV_ITEMS = [
   { to: '/collaboration', icon: Users, label: 'Teams' },
   { to: '/comps', icon: Scale, label: 'Comps' },
   { to: '/dd', icon: Shield, label: 'Due Diligence' },
+  { to: '/territory', icon: MapPin, label: 'Territory Scope' },
+  { to: '/briefings', icon: Newspaper, label: 'Briefings' },
   { to: '/agentic-rag', icon: Brain, label: 'Agentic RAG' },
   { to: '/chat', icon: MessageSquare, label: 'Ask' },
 ];
@@ -76,6 +78,7 @@ export default function MainLayout() {
           )}
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
             className="ml-auto p-1 rounded hover:bg-slate-800 hidden lg:block"
           >
             <ChevronLeft className={`w-4 h-4 text-slate-400 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`} />
@@ -90,6 +93,7 @@ export default function MainLayout() {
               to={to}
               end={to === '/'}
               onClick={() => setMobileOpen(false)}
+              title={sidebarCollapsed ? label : undefined}
               className={({ isActive }) => `
                 flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm
                 transition-colors
@@ -143,10 +147,10 @@ export default function MainLayout() {
           </NavLink>
           
           <div className="p-3">
-            {!sidebarCollapsed && user && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-500 truncate">{user.name || user.email}</span>
-                <button onClick={logout} className="p-1 rounded hover:bg-slate-800">
+            {user && (
+              <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
+                {!sidebarCollapsed && <span className="text-xs text-slate-500 truncate">{user.name || user.email}</span>}
+                <button onClick={logout} aria-label="Sign out" title="Sign out" className="p-1 rounded hover:bg-slate-800">
                   <LogOut className="w-4 h-4 text-slate-500" />
                 </button>
               </div>
@@ -159,7 +163,7 @@ export default function MainLayout() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <header className="flex items-center gap-3 h-14 px-4 border-b border-slate-800 bg-slate-900/50">
-          <button onClick={() => setMobileOpen(true)} className="lg:hidden p-1">
+          <button onClick={() => setMobileOpen(true)} aria-label="Open navigation" className="lg:hidden p-1">
             <Menu className="w-5 h-5 text-slate-400" />
           </button>
 
@@ -172,6 +176,7 @@ export default function MainLayout() {
                 type="text"
                 value={askQuery}
                 onChange={(e) => setAskQuery(e.target.value)}
+                aria-label="Ask OneBD"
                 placeholder="Ask anything..."
                 className="w-full pl-10 pr-20 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
               />
@@ -182,7 +187,7 @@ export default function MainLayout() {
           </form>
 
           {/* Help / Guide */}
-          <NavLink to="/guide" className="relative p-2 rounded-lg hover:bg-slate-800">
+          <NavLink to="/guide" aria-label="Open guide" title="Guide" className="relative p-2 rounded-lg hover:bg-slate-800">
             <HelpCircle className="w-5 h-5 text-slate-400" />
           </NavLink>
 

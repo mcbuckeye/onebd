@@ -68,9 +68,12 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
     });
   };
 
-  const formatCurrency = (amount?: number) => {
+  const formatCurrency = (amount?: number, currency?: string, unit?: string) => {
     if (amount == null) return 'Undisclosed';
-    return `$${amount.toLocaleString()}M`;
+    const symbols: Record<string, string> = { USD: '$', EUR: '€', GBP: '£', JPY: '¥' };
+    const prefix = symbols[currency || ''] || (currency ? `${currency} ` : '');
+    const suffix = unit === 'Million' ? 'M' : unit === 'Billion' ? 'B' : unit ? ` ${unit}` : '';
+    return `${prefix}${amount.toLocaleString()}${suffix}`;
   };
 
   return (
@@ -213,7 +216,11 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
                     <div className="bg-slate-800/50 rounded-lg p-3">
                       <div className="text-xs text-slate-500">Total Paid</div>
                       <div className="text-base lg:text-lg font-semibold text-white">
-                        {formatCurrency(deal.finance.total_paid_amount)}
+                        {formatCurrency(
+                          deal.finance.total_paid_amount,
+                          deal.finance.total_paid_currency,
+                          deal.finance.total_paid_unit,
+                        )}
                       </div>
                       {deal.finance.total_paid_disclosure_status && (
                         <div className="text-xs text-slate-400">
@@ -224,14 +231,22 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
                     <div className="bg-slate-800/50 rounded-lg p-3">
                       <div className="text-xs text-slate-500">Total Projected (Current)</div>
                       <div className="text-lg font-semibold text-green-400">
-                        {formatCurrency(deal.finance.total_projected_current_amount)}
+                        {formatCurrency(
+                          deal.finance.total_projected_current_amount,
+                          deal.finance.total_projected_current_currency,
+                          deal.finance.total_projected_current_unit,
+                        )}
                       </div>
                     </div>
-                    {deal.finance.total_projected_signing_amount && (
+                    {deal.finance.total_projected_signing_amount != null && (
                       <div className="bg-slate-800/50 rounded-lg p-3">
                         <div className="text-xs text-slate-500">Total at Signing</div>
                         <div className="text-lg font-semibold text-white">
-                          {formatCurrency(deal.finance.total_projected_signing_amount)}
+                          {formatCurrency(
+                            deal.finance.total_projected_signing_amount,
+                            deal.finance.total_projected_signing_currency,
+                            deal.finance.total_projected_signing_unit,
+                          )}
                         </div>
                       </div>
                     )}

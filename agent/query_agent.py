@@ -109,13 +109,21 @@ DATABASE_SCHEMA = """
 
 **deal_finance_summary** - High-level financials for each deal
 - deal_id (INTEGER, PK, FK)
-- total_paid_amount (FLOAT) - Amount already paid in USD millions (NULL if undisclosed)
+- total_paid_amount (FLOAT) - Amount already paid (NULL if undisclosed)
+- total_paid_currency (VARCHAR)
+- total_paid_unit (VARCHAR)
 - total_paid_disclosure_status (VARCHAR)
-- total_projected_current_amount (FLOAT) - Current projected total value in USD millions (NULL if undisclosed) - BEST metric for deal size
-- total_projected_signing_amount (FLOAT) - Projected at signing in USD millions
+- total_projected_current_amount (FLOAT) - Current projected total value (NULL if undisclosed)
+- total_projected_current_currency (VARCHAR)
+- total_projected_current_unit (VARCHAR)
+- total_projected_signing_amount (FLOAT) - Projected at signing
+- total_projected_signing_currency (VARCHAR)
+- total_projected_signing_unit (VARCHAR)
 
 NOTE: Only ~27% of deals have disclosed financial values. When finding "largest deals" or deal values:
-- Always filter WHERE total_projected_current_amount IS NOT NULL (or total_paid_amount)
+- For comparable USD-million current totals, filter amount IS NOT NULL,
+  total_projected_current_currency = 'USD', and
+  total_projected_current_unit = 'Million'
 - Use total_projected_current_amount as the primary size metric (has more data than total_paid_amount)
 - Order by the financial column DESC
 
@@ -183,6 +191,8 @@ SELECT d.id, d.title, d.date_start, dfs.total_projected_current_amount
 FROM deals d
 JOIN deal_finance_summary dfs ON d.id = dfs.deal_id
 WHERE dfs.total_projected_current_amount IS NOT NULL
+  AND dfs.total_projected_current_currency = 'USD'
+  AND dfs.total_projected_current_unit = 'Million'
 ORDER BY dfs.total_projected_current_amount DESC
 LIMIT 10;
 ```
@@ -198,12 +208,14 @@ SYSTEM_PROMPT = f"""You are an expert SQL analyst for a pharmaceutical deals dat
 2. The query should be read-only (SELECT only, no INSERT/UPDATE/DELETE)
 3. Always use proper JOINs when accessing related tables
 4. Limit results to 50 rows maximum unless specifically asked for more
-5. Format monetary values as USD millions
+5. Only format monetary values as USD millions when the query filters or returns
+   fields proving that currency and unit
 6. Return ONLY the SQL query, nothing else, wrapped in ```sql``` code blocks
 
 ## Important Notes
 
-- All financial amounts are in USD millions
+- Financial amounts have separate currency and unit columns; never assume either
+  from the numeric amount alone
 - ALWAYS use ILIKE with wildcards for name searches: WHERE c.name ILIKE '%Pfizer%' (not ILIKE 'Pfizer')
 - Company names include suffixes like "Ltd", "Inc", "GmbH", "Co" - always use %wildcards%
 - Date fields use ISO format

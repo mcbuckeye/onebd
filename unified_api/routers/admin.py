@@ -2,7 +2,7 @@
 Admin endpoints: user management
 Only accessible to users with role='admin'
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import List, Literal, Optional
@@ -67,6 +67,7 @@ class AuditLogEntry(BaseModel):
     ip_address: Optional[str]
     metadata: Optional[dict]
     created_at: str
+    user_email: Optional[str] = None
 
 
 class AuditLogResponse(BaseModel):
@@ -81,30 +82,6 @@ def require_admin(current_user: TokenData = Depends(get_current_user)) -> TokenD
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
-
-
-def _ensure_audit_log_table(session):
-    """Create audit_log table if it doesn't exist."""
-    session.execute(text("""
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            action VARCHAR(100) NOT NULL,
-            entity_type VARCHAR(50),
-            entity_id VARCHAR(255),
-            ip_address VARCHAR(45),
-            metadata JSONB,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-    """))
-    # Add index for efficient querying
-    session.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC)
-    """))
-    session.execute(text("""
-        CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)
-    """))
-    session.commit()
 
 
 @router.get("/api-credentials")
@@ -270,6 +247,13 @@ async def create_user(
         session.commit()
 
         logger.info("admin_created_user", admin_id=current_user.user_id, new_user_id=user_id)
+        log_audit(
+            "user_created",
+            user_id=current_user.user_id,
+            entity_type="user",
+            entity_id=str(user_id),
+            metadata={"email": email, "role": req.role},
+        )
 
         return UserResponse(
             id=user_id,
@@ -334,6 +318,15 @@ async def update_user(
         ).fetchone()
 
         logger.info("admin_updated_user", admin_id=current_user.user_id, user_id=user_id, updates=list(params.keys()))
+        log_audit(
+            "user_updated",
+            user_id=current_user.user_id,
+            entity_type="user",
+            entity_id=str(user_id),
+            metadata={
+                "changed_fields": sorted(key for key in params if key != "id"),
+            },
+        )
 
         return UserResponse(
             id=updated.id,
@@ -382,20 +375,24 @@ async def delete_user(
         session.commit()
 
         logger.info("admin_deleted_user", admin_id=current_user.user_id, user_id=user_id)
+        log_audit(
+            "user_disabled",
+            user_id=current_user.user_id,
+            entity_type="user",
+            entity_id=str(user_id),
+        )
 
         return MessageResponse(message=f"User {user_id} has been disabled")
 
 
 @router.get("/audit-log", response_model=AuditLogResponse)
 async def get_audit_log(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
     current_user: TokenData = Depends(require_admin)
 ):
     """Get paginated audit log (admin only)."""
     with get_cortellis_session() as session:
-        _ensure_audit_log_table(session)
-
         # Get total count
         total_result = session.execute(text("SELECT COUNT(*) FROM audit_log")).fetchone()
         total = total_result[0] if total_result else 0
@@ -405,9 +402,11 @@ async def get_audit_log(
             text("""
                 SELECT 
                     id, user_id, action, entity_type, entity_id, 
-                    ip_address, metadata, created_at
+                    audit_log.ip_address, audit_log.metadata,
+                    audit_log.created_at, users.email AS user_email
                 FROM audit_log
-                ORDER BY created_at DESC
+                LEFT JOIN users ON users.id = audit_log.user_id
+                ORDER BY audit_log.created_at DESC
                 LIMIT :limit OFFSET :offset
             """),
             {"limit": limit, "offset": offset}
@@ -422,7 +421,8 @@ async def get_audit_log(
                 entity_id=row.entity_id,
                 ip_address=row.ip_address,
                 metadata=row.metadata,
-                created_at=row.created_at.isoformat() if row.created_at else None
+                created_at=row.created_at.isoformat() if row.created_at else None,
+                user_email=row.user_email,
             )
             for row in rows
         ]

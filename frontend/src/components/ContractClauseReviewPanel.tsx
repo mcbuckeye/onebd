@@ -81,8 +81,8 @@ export default function ContractClauseReviewPanel() {
     setError('');
     try {
       const [validationResponse, queueResponse] = await Promise.all([
-        api.get('/enrichment/contract-financial-clauses/validation'),
-        api.get('/enrichment/contract-financial-clauses/review-sample?limit=100'),
+        api.get('/enrichment/contract-financial-clauses/validation?sample_per_type=5'),
+        api.get('/enrichment/contract-financial-clauses/review-sample?limit=20'),
       ]);
       setValidation(
         validationResponse.data.contract_financial_clause_validation,
@@ -151,7 +151,11 @@ export default function ContractClauseReviewPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {isLoading && !validation ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm text-slate-500">
+          Loading validation status and a 20-item review page…
+        </div>
+      ) : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatusCard
           label="Technical gate"
           value={validation?.technical_release_ready ? 'Passed' : 'Not ready'}
@@ -174,7 +178,7 @@ export default function ContractClauseReviewPanel() {
           value={validation?.governed_release_ready ? 'Ready' : 'Blocked'}
           good={validation?.governed_release_ready === true}
         />
-      </div>
+      </div>}
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

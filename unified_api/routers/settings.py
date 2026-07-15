@@ -9,7 +9,6 @@ from starlette.concurrency import run_in_threadpool
 from unified_api.services.database import get_cortellis_session
 from unified_api.services.auth import TokenData
 from unified_api.routers.auth import get_current_user
-from unified_api.services.digest_settings import ensure_digest_settings_schema
 from unified_api.services.email_digest import (
     build_digest_html,
     deliver_email,
@@ -58,7 +57,6 @@ async def send_test_email(user: TokenData = Depends(get_current_user)):
         raise HTTPException(status_code=503, detail=status["configuration_hint"])
 
     with get_cortellis_session() as session:
-        ensure_digest_settings_schema(session)
         recipient = session.execute(text("""
             SELECT COALESCE(settings.email, account.email)
             FROM users account
@@ -98,9 +96,6 @@ async def send_test_email(user: TokenData = Depends(get_current_user)):
 async def get_digest_settings(user: TokenData = Depends(get_current_user)):
     """Get the current user's email digest preferences."""
     with get_cortellis_session() as session:
-        ensure_digest_settings_schema(session)
-        session.commit()
-        
         result = session.execute(text("""
             SELECT enabled, frequency, therapy_areas, company_ids, email,
                    include_catalysts, catalyst_days
@@ -129,8 +124,6 @@ async def update_digest_settings(settings: DigestSettings, user: TokenData = Dep
     settings.email = _normalize_optional_email(settings.email)
     
     with get_cortellis_session() as session:
-        ensure_digest_settings_schema(session)
-        
         session.execute(text("""
             INSERT INTO user_digest_settings (
                 user_id, enabled, frequency, therapy_areas, company_ids, email,

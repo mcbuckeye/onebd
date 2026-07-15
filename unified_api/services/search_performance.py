@@ -9,11 +9,16 @@ from unified_api.services.database import get_cortellis_engine
 
 
 logger = structlog.get_logger(__name__)
-SEARCH_SCHEMA_VERSION = 3
+SEARCH_SCHEMA_VERSION = 4
 ADVISORY_LOCK_ID = 61320260716
 
 
 INDEX_STATEMENTS = (
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_contract_chunks_embedding "
+    "ON contract_chunks USING ivfflat (embedding vector_cosine_ops) "
+    "WITH (lists = 1000) WHERE embedding IS NOT NULL",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_contract_chunks_text_search "
+    "ON contract_chunks USING gin (to_tsvector('english', content))",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_deal_drugs_drug_deal "
     "ON deal_drugs (drug_id, deal_id)",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_deal_companies_company_role_deal "
@@ -126,6 +131,7 @@ def ensure_search_performance_schema() -> None:
                 conn.execute(text(statement))
             for table in (
                 "deals",
+                "contract_chunks",
                 "drugs",
                 "deal_drugs",
                 "deal_companies",

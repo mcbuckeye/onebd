@@ -52,7 +52,12 @@ function formatLabel(value: string | null | undefined): string {
 
 function formatDate(value: string | null): string {
   if (!value) return '—';
-  return new Date(`${value}T00:00:00`).toLocaleDateString(undefined, {
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+    ? `${value.trim()}T00:00:00`
+    : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -104,24 +109,26 @@ export default function DrugProfilePage() {
 
   const relatedCompanies = useMemo(() => {
     if (!profile) return [];
-    const companies = new Map<string, { id: number | null; name: string; role: string }>();
+    const companies = new Map<string, { id: number | null; name: string; roles: Set<string> }>();
+    const addCompany = (id: number | null, name: string, role: string) => {
+      const key = id != null ? `id:${id}` : `name:${name.trim().toLowerCase()}`;
+      const existing = companies.get(key);
+      if (existing) existing.roles.add(role);
+      else companies.set(key, { id, name, roles: new Set([role]) });
+    };
     for (const deal of profile.deals) {
       if (deal.principal_company) {
-        companies.set(`principal:${deal.principal_company_id ?? deal.principal_company}`, {
-          id: deal.principal_company_id,
-          name: deal.principal_company,
-          role: 'Principal',
-        });
+        addCompany(deal.principal_company_id, deal.principal_company, 'Principal');
       }
       if (deal.partner_company) {
-        companies.set(`partner:${deal.partner_company_id ?? deal.partner_company}`, {
-          id: deal.partner_company_id,
-          name: deal.partner_company,
-          role: 'Partner',
-        });
+        addCompany(deal.partner_company_id, deal.partner_company, 'Partner');
       }
     }
-    return Array.from(companies.values());
+    return Array.from(companies.values()).map((company) => ({
+      id: company.id,
+      name: company.name,
+      role: Array.from(company.roles).sort().join(', '),
+    }));
   }, [profile]);
 
   if (loading) {
@@ -188,7 +195,7 @@ export default function DrugProfilePage() {
           {relatedCompanies.length ? (
             <div className="space-y-2">
               {relatedCompanies.map((company) => (
-                <div key={`${company.role}:${company.id ?? company.name}`} className="flex items-center justify-between gap-3 text-sm">
+                <div key={`${company.id ?? company.name}`} className="flex items-center justify-between gap-3 text-sm">
                   {company.id ? (
                     <Link to={`/company/${company.id}`} className="text-slate-300 truncate hover:text-white">
                       {company.name}
@@ -202,18 +209,19 @@ export default function DrugProfilePage() {
         </section>
 
         <section className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <SectionTitle icon={<Globe className="w-4 h-4" />} title="Current Territory Rights" />
+          <SectionTitle icon={<Globe className="w-4 h-4" />} title="Territory Deal-Scope Evidence" />
+          <p className="mb-3 text-xs leading-5 text-amber-300/80">Deal scope and participant roles do not establish current ownership or availability. Confirm against governing agreements and amendments.</p>
           {profile.rights_holders.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="text-left text-slate-500 border-b border-slate-800">
-                  <th className="pb-2">Territory</th><th className="pb-2">Rights Holder</th><th className="pb-2">Deal</th>
+                  <th className="pb-2">Territory / Scope</th><th className="pb-2">Deal Participants</th><th className="pb-2">Source Deal</th>
                 </tr></thead>
                 <tbody>{profile.rights_holders.map((right) => (
                   <tr key={`${right.territory}:${right.deal_id}`} className="border-t border-slate-800/50">
-                    <td className="py-2 text-slate-300">{right.territory}</td>
-                    <td className="py-2 text-slate-400">{right.rights_holder || '—'}</td>
-                    <td className="py-2 text-slate-500 text-xs">{right.deal_title || (right.deal_id ? `#${right.deal_id}` : '—')}</td>
+                    <td className="py-2 text-slate-300">{right.territory}<div className="text-xs text-slate-500">{right.scope_type || 'Scope unspecified'} • {right.deal_status || 'Status unknown'}</div></td>
+                    <td className="py-2 text-slate-400 text-xs">{right.deal_participants?.join(', ') || '—'}</td>
+                    <td className="py-2 text-slate-500 text-xs">{right.deal_id ? <Link to={`/deals/${right.deal_id}`} className="hover:text-blue-400 hover:underline">{right.deal_title || `#${right.deal_id}`}</Link> : '—'}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -341,7 +349,7 @@ export default function DrugProfilePage() {
               </tr></thead>
               <tbody>{profile.deals.map((deal) => (
                 <tr key={deal.id} className="border-t border-slate-800/50">
-                  <td className="py-2 pr-4 text-slate-200">{deal.title || `Deal #${deal.id}`}</td>
+                  <td className="py-2 pr-4"><Link to={`/deals/${deal.id}`} className="text-slate-200 hover:text-blue-400">{deal.title || `Deal #${deal.id}`}</Link></td>
                   <td className="py-2 pr-4 text-slate-400">{deal.principal_company || '—'}</td>
                   <td className="py-2 pr-4 text-slate-400">{deal.partner_company || '—'}</td>
                   <td className="py-2 pr-4 text-slate-300">{formatValue(deal.total_value)}</td>
