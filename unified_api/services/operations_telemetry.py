@@ -19,6 +19,7 @@ import time
 from typing import Any
 from urllib.parse import parse_qs
 from uuid import uuid4
+from weakref import WeakSet
 
 from sqlalchemy import event, text
 import structlog
@@ -44,7 +45,7 @@ _SQL_TABLE = re.compile(
     r"\b(?:from|join|update|into|delete\s+from)\s+([A-Za-z_][A-Za-z0-9_.]*)",
     re.IGNORECASE,
 )
-_installed_engines: set[int] = set()
+_installed_engines: WeakSet[Any] = WeakSet()
 _install_lock = threading.Lock()
 _settings_cache: tuple[float, "TelemetrySettings"] | None = None
 _settings_lock = threading.Lock()
@@ -154,6 +155,19 @@ DDL = (
     WHERE singleton=TRUE
       AND sql_min_duration_ms=0
       AND updated_by IS NULL
+      AND EXISTS (SELECT 1 FROM applied)
+    """,
+    """
+    WITH applied AS (
+        INSERT INTO operations_telemetry_schema_versions (version)
+        VALUES (3)
+        ON CONFLICT (version) DO NOTHING
+        RETURNING version
+    )
+    UPDATE operations_telemetry_settings
+    SET sql_min_duration_ms=5, updated_at=NOW()
+    WHERE singleton=TRUE
+      AND sql_min_duration_ms=0
       AND EXISTS (SELECT 1 FROM applied)
     """,
     """
@@ -481,11 +495,10 @@ def _record_span(
 
 def install_sqlalchemy_telemetry(engine: Any, database_name: str) -> None:
     """Attach SQL duration/error listeners to an engine once per process."""
-    engine_id = id(engine)
     with _install_lock:
-        if engine_id in _installed_engines:
+        if engine in _installed_engines:
             return
-        _installed_engines.add(engine_id)
+        _installed_engines.add(engine)
 
     def before_cursor_execute(_conn, _cursor, statement, _params, context, _many):
         if _current_operation.get() is not None and not _telemetry_suppressed.get():
