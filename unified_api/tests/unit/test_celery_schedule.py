@@ -16,3 +16,9 @@ def test_compose_assigns_periodic_schedule_only_to_beat() -> None:
     assert compose.count("ONEBD_PROCESS_ROLE=api") == 1
     assert compose.count("ONEBD_PROCESS_ROLE=worker") == 2
     assert compose.count("ONEBD_RUNTIME_SCHEMA_MIGRATED=true") == 4
+
+    migration_service = compose.split("  onebd-schema-migrate:", 1)[1].split(
+        "  onebd-api:", 1
+    )[0]
+    assert "DB_POOL_SIZE=2" in migration_service
+    assert "DB_MAX_OVERFLOW=0" in migration_service
