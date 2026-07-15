@@ -200,6 +200,15 @@ def build_citations(mode: str, data: list[dict], query: Optional[str] = None) ->
             if len(citations) == 10:
                 break
             continue
+        # Ranking/grouping rows can expose an entity ``id`` alongside an
+        # aggregate count.  That ID is not a deal ID and must not be presented
+        # as one; the query fingerprint below is the honest provenance.
+        if (
+            "deal_count" in row
+            and not row.get("deal_id")
+            and not row.get("contract_id")
+        ):
+            continue
         deal_id = row.get("deal_id") or row.get("id")
         contract_id = row.get("contract_id")
         if not deal_id or deal_id in seen:
