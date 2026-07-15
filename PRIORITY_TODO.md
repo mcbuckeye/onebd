@@ -331,20 +331,25 @@ and fast retrieval before adding more external data volume.
       real-schema SQL checks, both REST grains, and both hosted MCP tools. Known
       records included all six DotBio assets; every temporary scoped key was
       revoked after the checks.
-- [ ] Deploy governed first-class REST/MCP search for SEC filing text, indexed
+- [x] Deploy governed first-class REST/MCP search for SEC filing text, indexed
       deal-contract text, Europe PMC literature, UniProt proteins, and advanced
       ClinicalTrials.gov records, all with strict filters, bounded pages,
       source attribution, statement timeouts, and shared concurrency controls.
-- [ ] Deploy a source-grouped federated search across deals, assets, companies,
+- [x] Deploy a source-grouped federated search across deals, assets, companies,
       trials, SEC filings, contracts, literature, targets, diseases, and proteins.
       Preserve unlike record grains and scores, require exact CIKs for
       company-restricted EDGAR searches, and keep owner dataset switches live.
-- [ ] Deploy evidence-bounded company and asset dossiers that expose the exact
+- [x] Deploy evidence-bounded company and asset dossiers that expose the exact
       relationship path for every linked source and explicitly avoid inferring
       ownership, commercial rights, causality, or complete product coverage.
-- [ ] Issue a separate `bdkey-all` colleague credential with `data:read`, the
+- [x] Issue a separate `bdkey-all` colleague credential with `data:read`, the
       same 2026-10-12 expiry as `bdkey`, and email the updated REST/OpenAPI/MCP
       guide after every new endpoint and tool passes production verification.
+      Production merge `f207afb` passed the protected gate, Dokploy rollout,
+      all 65 blocking production regressions, EDGAR latency checks, 12 live
+      cross-source REST/MCP calls, and valid-index inspection. The original
+      `bdkey` remains unchanged at `deals:read`; SMTP2GO accepted the separate
+      broad credential and attached guide on 2026-07-14.
 
 ## Implementation Status vs PRD
 
