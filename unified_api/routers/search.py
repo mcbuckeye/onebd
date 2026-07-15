@@ -5,6 +5,7 @@ from datetime import date
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, model_validator
+from sqlalchemy import text
 import structlog
 
 from unified_api.config import settings
