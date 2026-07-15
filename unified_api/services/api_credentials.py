@@ -38,6 +38,7 @@ DATASETS = frozenset({
     "clinicaltrials_gov",
     "public_biology",
     "source_status",
+    "federated_search",
 })
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)

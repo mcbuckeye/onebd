@@ -9,7 +9,7 @@ from unified_api.services.database import get_cortellis_engine
 
 
 logger = structlog.get_logger(__name__)
-SEARCH_SCHEMA_VERSION = 1
+SEARCH_SCHEMA_VERSION = 2
 ADVISORY_LOCK_ID = 61320260716
 
 
@@ -64,6 +64,19 @@ INDEX_STATEMENTS = (
     "ON technologies (LOWER(name))",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_companies_name_lower "
     "ON companies (LOWER(name))",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_public_literature_fts "
+    "ON public_literature_records USING gin "
+    "(to_tsvector('english', COALESCE(title, '') || ' ' || "
+    "COALESCE(abstract_text, '')))",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_public_uniprot_fts "
+    "ON public_target_uniprot_records USING gin "
+    "(to_tsvector('english', COALESCE(protein_name, '') || ' ' || "
+    "COALESCE(function_text, '')))",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_clinical_trials_fts "
+    "ON clinical_trials USING gin (to_tsvector('english', "
+    "COALESCE(brief_title, '') || ' ' || COALESCE(official_title, '') || "
+    "' ' || COALESCE(lead_sponsor_name, '') || ' ' || conditions::text || "
+    "' ' || interventions::text))",
 )
 
 
@@ -113,6 +126,9 @@ def ensure_search_performance_schema() -> None:
                 "deal_technologies",
                 "deal_territories",
                 "drug_aliases",
+                "clinical_trials",
+                "public_literature_records",
+                "public_target_uniprot_records",
             ):
                 conn.execute(text(f"ANALYZE {table}"))
             conn.execute(

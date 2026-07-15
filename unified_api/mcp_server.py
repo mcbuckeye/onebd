@@ -23,6 +23,14 @@ import httpx
 from pydantic import ValidationError
 
 from unified_api.services.advanced_search import AdvancedSearchRequest
+from unified_api.services.cross_source import (
+    ClinicalTrialSearchRequest,
+    ContractContentSearchRequest,
+    EdgarContentSearchRequest,
+    FederatedSearchRequest,
+    LiteratureSearchRequest,
+    ProteinSearchRequest,
+)
 
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -42,6 +50,55 @@ TOOLS = [
         "name": "get_data_catalog",
         "description": "Get live OneBD dataset counts, provenance, and license notes.",
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "search_all_sources",
+        "description": (
+            "Search selected OneBD datasets in one bounded call. Results remain "
+            "grouped by source and grain with provenance; scores must not be "
+            "compared across groups. Requires data:read."
+        ),
+        "inputSchema": FederatedSearchRequest.model_json_schema(),
+    },
+    {
+        "name": "search_edgar_content",
+        "description": (
+            "Full-text SEC EDGAR filing search with company, CIK, form, and "
+            "filing-date filters and canonical source URLs."
+        ),
+        "inputSchema": EdgarContentSearchRequest.model_json_schema(),
+    },
+    {
+        "name": "search_contract_content",
+        "description": (
+            "Search indexed Cortellis contract text with optional exact deal, "
+            "company, and asset filters."
+        ),
+        "inputSchema": ContractContentSearchRequest.model_json_schema(),
+    },
+    {
+        "name": "search_literature",
+        "description": (
+            "Search Europe PMC publications with exact target/drug linkage, "
+            "publication-year, and open-access filters."
+        ),
+        "inputSchema": LiteratureSearchRequest.model_json_schema(),
+    },
+    {
+        "name": "search_proteins",
+        "description": (
+            "Search exact Ensembl-to-UniProt records by text, target, linked "
+            "asset, review status, or organism."
+        ),
+        "inputSchema": ProteinSearchRequest.model_json_schema(),
+    },
+    {
+        "name": "search_clinical_trials_advanced",
+        "description": (
+            "Search ClinicalTrials.gov with text, sponsor, status, phase, "
+            "condition, result, date, and exact linked-entity filters."
+        ),
+        "inputSchema": ClinicalTrialSearchRequest.model_json_schema(),
     },
     {
         "name": "search_deals",
@@ -167,6 +224,33 @@ TOOLS = [
         },
     },
     {
+        "name": "get_company_dossier",
+        "description": (
+            "Get a source-grouped company dossier spanning deals, deal-linked "
+            "assets, trials, public biology, literature, and exact-CIK SEC filings."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"company_id": {"type": "integer", "minimum": 1}},
+            "required": ["company_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_asset_dossier",
+        "description": (
+            "Get a source-grouped asset dossier spanning deals, trials, public "
+            "profiles, targets, diseases, UniProt, literature, and explicitly "
+            "indirect related-company SEC filings."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"drug_id": {"type": "integer", "minimum": 1}},
+            "required": ["drug_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "search_drugs",
         "description": "Search deal assets, aliases, phases, and public identifiers.",
         "inputSchema": {
@@ -261,6 +345,8 @@ TOOL_ROUTES = {
         "companies/{company_id}/manufacturing-relationships",
         "company_id",
     ),
+    "get_company_dossier": ("companies/{company_id}/dossier", "company_id"),
+    "get_asset_dossier": ("assets/{drug_id}/dossier", "drug_id"),
     "search_drugs": ("drugs", None),
     "search_clinical_trials": ("clinical-trials", None),
     "list_targets": ("biology/targets", None),
@@ -272,6 +358,23 @@ TOOL_ROUTES = {
 POST_TOOL_ROUTES = {
     "search_deals_advanced": "deals/search",
     "search_assets_advanced": "assets/search",
+    "search_all_sources": "search",
+    "search_edgar_content": "edgar/search",
+    "search_contract_content": "contracts/search",
+    "search_literature": "literature/search",
+    "search_proteins": "biology/proteins/search",
+    "search_clinical_trials_advanced": "clinical-trials/search",
+}
+
+POST_TOOL_MODELS = {
+    "search_deals_advanced": AdvancedSearchRequest,
+    "search_assets_advanced": AdvancedSearchRequest,
+    "search_all_sources": FederatedSearchRequest,
+    "search_edgar_content": EdgarContentSearchRequest,
+    "search_contract_content": ContractContentSearchRequest,
+    "search_literature": LiteratureSearchRequest,
+    "search_proteins": ProteinSearchRequest,
+    "search_clinical_trials_advanced": ClinicalTrialSearchRequest,
 }
 
 
@@ -538,12 +641,12 @@ class OneBDMCPServer:
     ) -> str | None:
         if name in POST_TOOL_ROUTES:
             try:
-                AdvancedSearchRequest.model_validate(arguments)
+                POST_TOOL_MODELS[name].model_validate(arguments)
             except ValidationError as exc:
                 first = exc.errors(include_url=False)[0]
                 location = ".".join(str(item) for item in first.get("loc", ()))
                 prefix = f"{location}: " if location else ""
-                return f"Invalid advanced search arguments: {prefix}{first['msg']}"
+                return f"Invalid search arguments: {prefix}{first['msg']}"
             return None
         tool = next((item for item in TOOLS if item["name"] == name), None)
         if tool is None:
