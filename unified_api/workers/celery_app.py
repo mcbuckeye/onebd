@@ -3,6 +3,7 @@ Celery application configuration and task definitions.
 """
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_failure, task_postrun, task_prerun, worker_process_init
 import structlog
 
 from unified_api.config import settings
@@ -138,6 +139,11 @@ celery_app.conf.update(
             "task": "unified_api.workers.tasks.maintenance.refresh_materialized_views",
             "schedule": crontab(hour=8, minute=30),
         },
+        # Enforce the owner-selected telemetry retention policy every night.
+        "cleanup-operations-telemetry": {
+            "task": "unified_api.workers.tasks.maintenance.cleanup_telemetry",
+            "schedule": crontab(hour=3, minute=20),
+        },
         # Cheap, resumable normalization of the structured Cortellis finance JSON.
         "extract-cortellis-financial-terms": {
             "task": "unified_api.workers.tasks.enrichment.extract_financial_terms",
@@ -198,6 +204,102 @@ celery_app.conf.update(
     task_acks_late=True,  # Acknowledge tasks after completion
     task_reject_on_worker_lost=True,  # Reject tasks if worker dies
 )
+
+
+@worker_process_init.connect
+def initialize_worker_telemetry(**_kwargs):
+    """Install SQL listeners after each Celery worker process forks."""
+    try:
+        from unified_api.services.operations_telemetry import (
+            ensure_operations_schema,
+            install_default_sql_telemetry,
+        )
+
+        ensure_operations_schema()
+        install_default_sql_telemetry()
+    except Exception as exc:
+        logger.warning(
+            "worker_operations_telemetry_unavailable",
+            error_type=type(exc).__name__,
+        )
+
+
+@task_prerun.connect
+def begin_task_telemetry(
+    task_id=None,
+    task=None,
+    args=None,
+    kwargs=None,
+    **_extra,
+):
+    if not task_id or task is None:
+        return
+    try:
+        from unified_api.services.operations_telemetry import (
+            install_default_sql_telemetry,
+            start_job_operation,
+        )
+
+        install_default_sql_telemetry()
+        start_job_operation(
+            str(task_id),
+            str(getattr(task, "name", type(task).__name__)),
+            args=args or (),
+            kwargs=kwargs or {},
+        )
+    except Exception as exc:
+        logger.warning(
+            "task_operations_telemetry_start_failed",
+            task_name=getattr(task, "name", None),
+            error_type=type(exc).__name__,
+        )
+
+
+@task_failure.connect
+def fail_task_telemetry(task_id=None, exception=None, **_extra):
+    if task_id and exception is not None:
+        from unified_api.services.operations_telemetry import mark_job_failure
+
+        mark_job_failure(str(task_id), exception)
+
+
+@task_postrun.connect
+def end_task_telemetry(
+    task_id=None,
+    task=None,
+    retval=None,
+    state=None,
+    **_extra,
+):
+    if not task_id:
+        return
+    try:
+        from unified_api.services.operations_telemetry import finish_job_operation
+
+        effective_state = str(state or "UNKNOWN")
+        if effective_state.upper() == "SUCCESS" and isinstance(retval, dict):
+            result_state = str(retval.get("status") or "").upper()
+            if result_state in {"FAILED", "FAILURE", "ERROR", "PARTIAL"}:
+                effective_state = result_state
+        finish_job_operation(
+            str(task_id),
+            status=effective_state,
+            task=task,
+            result=retval,
+        )
+    except Exception as exc:
+        logger.error(
+            "task_operations_telemetry_finish_failed",
+            task_name=getattr(task, "name", None),
+            error_type=type(exc).__name__,
+        )
+
+
+@celery_app.task(name="unified_api.workers.tasks.maintenance.cleanup_telemetry")
+def cleanup_operations_telemetry():
+    from unified_api.services.operations_telemetry import cleanup_telemetry
+
+    return cleanup_telemetry()
 
 # Auto-discover tasks from task modules
 celery_app.autodiscover_tasks([

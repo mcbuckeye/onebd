@@ -351,6 +351,31 @@ and fast retrieval before adding more external data volume.
       `bdkey` remains unchanged at `deals:read`; SMTP2GO accepted the separate
       broad credential and attached guide on 2026-07-14.
 
+### Operations Observability and SQL Telemetry Sprint
+
+- [x] Add durable, correlated request telemetry for UI/API, colleague API-key,
+      and hosted MCP activity with route, principal, status, latency, byte, and
+      deployment attribution.
+- [x] Add parameter-free SQLAlchemy duration/error spans for both Cortellis and
+      EDGAR, with stable query fingerprints, query-shape normalization, table
+      extraction, row counts, configurable thresholds, and bounded per-operation
+      capture.
+- [x] Correlate MCP tool calls with their governed REST child calls and SQL spans.
+- [x] Add Celery task history with worker/queue, runtime, status, retry, bounded
+      argument/result summaries, and correlated SQL.
+- [x] Add administrator APIs and an Admin Operations console for request/MCP,
+      SQL, jobs, active database work, connections, table/index scans, dead
+      tuples, `pg_stat_statements`, recommendations, and schema growth history.
+- [x] Add owner-controlled capture, threshold and retention settings plus manual
+      purge, audit events, nightly cleanup and idempotent advisory-locked schema
+      installation/snapshots.
+- [x] Ensure secrets, authorization headers, cookies and SQL parameter values are
+      not retained; recursively redact and bound optional JSON request metadata.
+- [x] Validate the schema, correlation, redaction and reporting SQL against
+      PostgreSQL and add focused API/MCP/credential regression tests.
+- [ ] Deploy through the protected GitHub/Dokploy path and verify live admin,
+      request/MCP, job, Cortellis SQL, EDGAR SQL, database and retention behavior.
+
 ## Implementation Status vs PRD
 
 ### ✅ Phase 0: System Integration Foundation (COMPLETE)

@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from unified_api.config import settings
+from unified_api.services.operations_telemetry import OperationsTelemetryMiddleware
 from unified_api.routers import (
     admin,
     agentic_rag,
@@ -36,6 +37,7 @@ from unified_api.routers import (
     graph,
     health,
     mcp_http,
+    operations,
     public_biology,
     recommendations,
     search,
@@ -80,6 +82,7 @@ class ErrorHandlingMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except Exception as e:
+            request.state.telemetry_error_type = type(e).__name__
             logger.error("Unhandled exception", path=request.url.path, error=str(e))
             return JSONResponse(
                 status_code=500,
@@ -100,7 +103,9 @@ class OwnerAccessPolicyMiddleware(BaseHTTPMiddleware):
             )
 
             try:
-                authorize_existing_api_request(request)
+                principal = authorize_existing_api_request(request)
+                if principal is not None:
+                    request.state.data_principal = principal
             except Exception as exc:
                 from fastapi import HTTPException
 
@@ -207,6 +212,21 @@ async def lifespan(app: FastAPI):
         ensure_search_performance_schema()
     except Exception as exc:
         logger.warning("Search performance schema initialization failed", error=str(exc))
+    try:
+        from unified_api.services.operations_telemetry import (
+            capture_schema_snapshots_if_due,
+            ensure_operations_schema,
+            install_default_sql_telemetry,
+        )
+
+        ensure_operations_schema()
+        install_default_sql_telemetry()
+        capture_schema_snapshots_if_due()
+    except Exception as exc:
+        logger.warning(
+            "Operations telemetry initialization failed",
+            error_type=type(exc).__name__,
+        )
 
     yield
 
@@ -252,17 +272,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add production middleware (order matters — first added = outermost)
+# Add production middleware (Starlette makes the last user middleware outermost).
 app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(ErrorHandlingMiddleware)
 app.add_middleware(AuditLoggingMiddleware)
 app.add_middleware(OwnerAccessPolicyMiddleware)
+app.add_middleware(OperationsTelemetryMiddleware)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(mcp_http.router)
 app.include_router(auth.router, prefix="/api", tags=["Auth"])
 app.include_router(admin.router, prefix="/api", tags=["Admin"])
+app.include_router(operations.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(agentic_rag.router, prefix="/api", tags=["Agentic RAG"])
