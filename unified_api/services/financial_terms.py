@@ -42,6 +42,10 @@ KNOWN_SOURCE_PAYMENT_TYPES = {
 
 def ensure_financial_term_schema(session) -> None:
     """Create provenance-preserving extraction tables and analytics indexes."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS deal_financial_terms (
             id BIGSERIAL PRIMARY KEY,

@@ -3,9 +3,22 @@
 from unittest.mock import Mock
 
 from src.cortellis_catalog import (
+    advance_catalog_proof,
     assess_catalog_cardinality,
     reconcile_catalog_exclusions,
 )
+
+
+def test_incremental_sync_extends_exhaustive_catalog_baseline():
+    session = Mock()
+
+    advance_catalog_proof(session, newly_retrieved=37)
+
+    params = session.execute.call_args.args[1]
+    assert params == {"newly_retrieved": 37}
+    assert "incremental_retrievable_additions + :newly_retrieved" in str(
+        session.execute.call_args.args[0]
+    )
 
 
 def test_reconcile_catalog_exclusions_reactivates_and_upserts_retired_ids():

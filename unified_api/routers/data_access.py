@@ -244,7 +244,8 @@ async def data_catalog(
               (SELECT COUNT(*) FROM company_identifiers) AS company_identifiers,
               (SELECT COUNT(*) FROM cortellis_catalog_exclusions)
                 AS preserved_local_only_deals,
-              (SELECT retrievable_total FROM cortellis_catalog_proof WHERE id=1)
+              (SELECT retrievable_total + incremental_retrievable_additions
+               FROM cortellis_catalog_proof WHERE id=1)
                 AS retrievable_remote_deals,
               (SELECT numeric_id_min FROM cortellis_catalog_proof WHERE id=1)
                 AS numeric_id_min,

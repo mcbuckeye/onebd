@@ -59,7 +59,7 @@ class TelemetrySettings:
     enabled: bool = True
     capture_request_payloads: bool = True
     retain_normalized_sql: bool = True
-    sql_min_duration_ms: float = 0.0
+    sql_min_duration_ms: float = 5.0
     slow_request_ms: float = 1000.0
     slow_sql_ms: float = 250.0
     max_sql_spans_per_operation: int = 200
@@ -90,6 +90,8 @@ class OperationContext:
     started_perf: float
     settings: TelemetrySettings
     spans: list[SQLSpan] = field(default_factory=list)
+    sql_count: int = 0
+    sql_duration_ms: float = 0.0
     dropped_sql_spans: int = 0
     error_type: str | None = None
     error_message: str | None = None
@@ -105,12 +107,18 @@ _telemetry_suppressed: ContextVar[bool] = ContextVar(
 
 DDL = (
     """
+    CREATE TABLE IF NOT EXISTS operations_telemetry_schema_versions (
+        version INTEGER PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS operations_telemetry_settings (
         singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
         enabled BOOLEAN NOT NULL DEFAULT TRUE,
         capture_request_payloads BOOLEAN NOT NULL DEFAULT TRUE,
         retain_normalized_sql BOOLEAN NOT NULL DEFAULT TRUE,
-        sql_min_duration_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
+        sql_min_duration_ms DOUBLE PRECISION NOT NULL DEFAULT 5,
         slow_request_ms DOUBLE PRECISION NOT NULL DEFAULT 1000,
         slow_sql_ms DOUBLE PRECISION NOT NULL DEFAULT 250,
         max_sql_spans_per_operation INTEGER NOT NULL DEFAULT 200,
@@ -129,6 +137,24 @@ DDL = (
     """
     INSERT INTO operations_telemetry_settings (singleton)
     VALUES (TRUE) ON CONFLICT (singleton) DO NOTHING
+    """,
+    """
+    ALTER TABLE operations_telemetry_settings
+    ALTER COLUMN sql_min_duration_ms SET DEFAULT 5
+    """,
+    """
+    WITH applied AS (
+        INSERT INTO operations_telemetry_schema_versions (version)
+        VALUES (2)
+        ON CONFLICT (version) DO NOTHING
+        RETURNING version
+    )
+    UPDATE operations_telemetry_settings
+    SET sql_min_duration_ms=5, updated_at=NOW()
+    WHERE singleton=TRUE
+      AND sql_min_duration_ms=0
+      AND updated_by IS NULL
+      AND EXISTS (SELECT 1 FROM applied)
     """,
     """
     CREATE TABLE IF NOT EXISTS operations_request_log (
@@ -243,18 +269,33 @@ def _deployment_sha() -> str | None:
 
 
 def ensure_operations_schema() -> None:
-    """Install the durable telemetry schema idempotently."""
+    """Verify the deployment migration installed the telemetry schema."""
     global _schema_ready
     if _schema_ready:
         return
     with _schema_lock:
         if _schema_ready:
             return
-        _install_operations_schema()
+        token = _telemetry_suppressed.set(True)
+        try:
+            with get_cortellis_engine().connect() as connection:
+                installed = connection.execute(text(
+                    "SELECT to_regclass('public.operations_telemetry_settings') "
+                    "IS NOT NULL"
+                )).scalar()
+            if not installed:
+                raise RuntimeError(
+                    "Operations telemetry schema is missing; run the runtime schema "
+                    "migration before starting application processes"
+                )
+        finally:
+            _telemetry_suppressed.reset(token)
         _schema_ready = True
 
 
-def _install_operations_schema() -> None:
+def migrate_operations_schema() -> None:
+    """Install or upgrade the telemetry schema during deployment."""
+    global _schema_ready
     engine = get_cortellis_engine()
     token = _telemetry_suppressed.set(True)
     try:
@@ -265,6 +306,7 @@ def _install_operations_schema() -> None:
             )
             for statement in DDL:
                 connection.execute(text(statement))
+        _schema_ready = True
     finally:
         _telemetry_suppressed.reset(token)
 
@@ -405,6 +447,8 @@ def _record_span(
     if operation is None or _telemetry_suppressed.get() or not operation.settings.enabled:
         return
     duration_ms = (time.perf_counter() - started) * 1000
+    operation.sql_count += 1
+    operation.sql_duration_ms += duration_ms
     if success and duration_ms < operation.settings.sql_min_duration_ms:
         return
     if len(operation.spans) >= operation.settings.max_sql_spans_per_operation:
@@ -494,6 +538,16 @@ def current_operation() -> OperationContext | None:
     return _current_operation.get()
 
 
+def mark_current_operation_error(error: BaseException) -> None:
+    """Mark a caught semantic failure on the active request or job operation."""
+    operation = current_operation()
+    if operation is None:
+        return
+    original = getattr(error, "orig", error)
+    operation.error_type = type(original).__name__
+    operation.error_message = str(original)[:1000]
+
+
 def _sql_rows(operation: OperationContext) -> list[dict[str, Any]]:
     return [
         {
@@ -536,7 +590,6 @@ def persist_request(operation: OperationContext, record: dict[str, Any]) -> None
     if not operation.settings.enabled:
         return
     duration_ms = (time.perf_counter() - operation.started_perf) * 1000
-    sql_duration = sum(span.duration_ms for span in operation.spans)
     slow_sql = sum(
         span.duration_ms >= operation.settings.slow_sql_ms for span in operation.spans
     )
@@ -569,8 +622,8 @@ def persist_request(operation: OperationContext, record: dict[str, Any]) -> None
                 "duration_ms": round(duration_ms, 3),
                 "operation_names": json.dumps(record.get("operation_names") or []),
                 "request_metadata": json.dumps(record.get("request_metadata")),
-                "sql_count": len(operation.spans),
-                "sql_duration_ms": round(sql_duration, 3),
+                "sql_count": operation.sql_count,
+                "sql_duration_ms": round(operation.sql_duration_ms, 3),
                 "slow_sql_count": slow_sql,
                 "dropped_sql_spans": operation.dropped_sql_spans,
                 "deployment_sha": _deployment_sha(),
@@ -728,7 +781,11 @@ class OperationsTelemetryMiddleware:
                     "request_metadata": _request_metadata(
                         scope, b"".join(body_parts), operation.settings
                     ),
-                    "error_type": state.get("telemetry_error_type") or error_type,
+                    "error_type": (
+                        state.get("telemetry_error_type")
+                        or error_type
+                        or operation.error_type
+                    ),
                 })
             finally:
                 _current_operation.reset(token)
@@ -774,7 +831,6 @@ def finish_job_operation(
         _current_operation.reset(token)
         return
     duration_ms = (time.perf_counter() - operation.started_perf) * 1000
-    sql_duration = sum(span.duration_ms for span in operation.spans)
     slow_sql = sum(
         span.duration_ms >= operation.settings.slow_sql_ms for span in operation.spans
     )
@@ -823,8 +879,8 @@ def finish_job_operation(
                 "retries": retries,
                 "arguments": json.dumps(getattr(operation, "arguments", None)),
                 "result_summary": json.dumps(result_summary),
-                "sql_count": len(operation.spans),
-                "sql_duration_ms": round(sql_duration, 3),
+                "sql_count": operation.sql_count,
+                "sql_duration_ms": round(operation.sql_duration_ms, 3),
                 "slow_sql_count": slow_sql,
                 "dropped_sql_spans": operation.dropped_sql_spans,
                 "error_type": operation.error_type,

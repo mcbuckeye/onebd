@@ -1,7 +1,6 @@
 """Chat conversation persistence."""
 import structlog
 import json
-from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
@@ -12,6 +11,12 @@ from unified_api.routers.auth import get_current_user
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
+
+SAVE_MESSAGE_SQL = text("""
+    INSERT INTO chat_messages (conversation_id, role, content, intent, metadata)
+    VALUES (:cid, :role, :content, :intent, CAST(:metadata AS JSONB))
+    RETURNING id
+""")
 
 
 class MessageOut(BaseModel):
@@ -57,8 +62,6 @@ async def list_conversations(
 ):
     """List recent conversations for the current user."""
     with get_cortellis_session() as session:
-        _ensure_tables(session)
-        
         results = session.execute(text("""
             SELECT c.id, c.title, c.created_at::text, c.updated_at::text,
                    (SELECT COUNT(*) FROM chat_messages m WHERE m.conversation_id = c.id) as message_count
@@ -78,8 +81,6 @@ async def list_conversations(
 async def get_conversation(conversation_id: int, user: TokenData = Depends(get_current_user)):
     """Get a conversation with all messages."""
     with get_cortellis_session() as session:
-        _ensure_tables(session)
-        
         conv = session.execute(text("""
             SELECT id, title, created_at::text, updated_at::text
             FROM chat_conversations WHERE id = :id AND user_id = :uid
@@ -105,8 +106,6 @@ async def get_conversation(conversation_id: int, user: TokenData = Depends(get_c
 async def save_message(req: SaveMessageRequest, user: TokenData = Depends(get_current_user)):
     """Save a message to a conversation. Creates new conversation if conversation_id is None."""
     with get_cortellis_session() as session:
-        _ensure_tables(session)
-        
         if req.conversation_id is None:
             # Create new conversation - title from first message
             title = req.content[:100] if req.role == 'user' else 'New conversation'
@@ -130,11 +129,7 @@ async def save_message(req: SaveMessageRequest, user: TokenData = Depends(get_cu
             """), {"id": conv_id})
         
         # Save message
-        result = session.execute(text("""
-            INSERT INTO chat_messages (conversation_id, role, content, intent, metadata)
-            VALUES (:cid, :role, :content, :intent, :metadata::jsonb)
-            RETURNING id
-        """), {
+        result = session.execute(SAVE_MESSAGE_SQL, {
             "cid": conv_id,
             "role": req.role,
             "content": req.content,
@@ -151,7 +146,6 @@ async def save_message(req: SaveMessageRequest, user: TokenData = Depends(get_cu
 async def delete_conversation(conversation_id: int, user: TokenData = Depends(get_current_user)):
     """Delete a conversation."""
     with get_cortellis_session() as session:
-        _ensure_tables(session)
         session.execute(text("DELETE FROM chat_messages WHERE conversation_id = :id"), {"id": conversation_id})
         result = session.execute(text("DELETE FROM chat_conversations WHERE id = :id AND user_id = :uid"),
                                   {"id": conversation_id, "uid": user.user_id})
@@ -161,8 +155,8 @@ async def delete_conversation(conversation_id: int, user: TokenData = Depends(ge
         return {"status": "deleted"}
 
 
-def _ensure_tables(session):
-    """Create tables if they don't exist."""
+def ensure_conversation_schema(session) -> None:
+    """Create conversation tables during the deployment migration phase."""
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS chat_conversations (
             id SERIAL PRIMARY KEY,

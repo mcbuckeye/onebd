@@ -26,6 +26,11 @@ def ensure_contract_scan_schema() -> None:
     global _contract_scan_schema_ready
     if _contract_scan_schema_ready:
         return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _contract_scan_schema_ready = True
+        return
     with get_cortellis_session() as session:
         session.execute(text("""
             CREATE TABLE IF NOT EXISTS cortellis_contract_scan_state (

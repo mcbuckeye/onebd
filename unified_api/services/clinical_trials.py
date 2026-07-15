@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
@@ -113,6 +114,33 @@ class ClinicalTrialsClient:
         )
 
 
+def _updated_studies_page_with_token_recovery(
+    client: ClinicalTrialsClient,
+    *,
+    start_date: date,
+    end_date: date,
+    page_size: int,
+    page_token: str | None,
+) -> tuple[ClinicalTrialsPage, bool]:
+    """Restart a page chain once when the source rejects a stale token."""
+    try:
+        return client.updated_studies(
+            start_date=start_date,
+            end_date=end_date,
+            page_size=page_size,
+            page_token=page_token,
+        ), False
+    except HTTPError as exc:
+        if exc.code != 400 or not page_token:
+            raise
+        return client.updated_studies(
+            start_date=start_date,
+            end_date=end_date,
+            page_size=page_size,
+            page_token=None,
+        ), True
+
+
 def _dataset_timestamp(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -208,6 +236,11 @@ def ensure_clinical_trials_schema() -> None:
     """Create normalized/current, history, link, and checkpoint tables."""
     global _clinical_trials_schema_ready
     if _clinical_trials_schema_ready:
+        return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _clinical_trials_schema_ready = True
         return
     EntityResolutionService().ensure_identity_schema()
     with get_cortellis_session() as session:
@@ -692,10 +725,19 @@ def _initial_window(
     *,
     lane: str,
     dataset_date: date,
+    dataset_timestamp: datetime,
 ) -> dict[str, Any]:
     existing = session.execute(text("""
         SELECT * FROM clinical_trials_sync_state WHERE lane = :lane
     """), {"lane": lane}).mappings().first()
+    existing_timestamp = existing.get("dataset_timestamp") if existing else None
+    if existing_timestamp is not None and existing_timestamp.tzinfo is None:
+        existing_timestamp = existing_timestamp.replace(tzinfo=timezone.utc)
+    stale_page_token = bool(
+        existing
+        and existing.get("next_page_token")
+        and existing_timestamp != dataset_timestamp
+    )
     if lane == "recent":
         desired_start = dataset_date - timedelta(
             days=max(1, settings.clinicaltrials_recent_overlap_days)
@@ -704,10 +746,9 @@ def _initial_window(
             existing
             and existing["status"] in {"running", "partial"}
             and existing["next_page_token"]
+            and not stale_page_token
         ):
-            # Finish the durable page chain even if the source publishes a newer
-            # dataset before the next scheduled run. The following run will open
-            # a fresh overlapping window and catch the newly published records.
+            # Tokens are valid only for the dataset snapshot that issued them.
             return dict(existing)
         return {
             "lane": lane,
@@ -717,6 +758,10 @@ def _initial_window(
         }
 
     if existing and existing["window_end"]:
+        if stale_page_token:
+            state = dict(existing)
+            state["next_page_token"] = None
+            return state
         if existing["status"] == "completed" and existing["window_end"] < dataset_date:
             start = existing["window_end"] + timedelta(days=1)
             return {
@@ -785,7 +830,12 @@ def sync_clinical_trials(
         }
 
         with get_cortellis_session() as session:
-            state = _initial_window(session, lane=lane, dataset_date=dataset_date)
+            state = _initial_window(
+                session,
+                lane=lane,
+                dataset_date=dataset_date,
+                dataset_timestamp=dataset_timestamp,
+            )
             if (
                 lane == "backfill"
                 and state.get("status") == "completed"
@@ -833,13 +883,27 @@ def sync_clinical_trials(
         window_start = state["window_start"]
         window_end = state["window_end"]
         completed_to_dataset = False
+        token_resets = 0
         while totals["pages"] < max_pages:
-            page = client.updated_studies(
+            page, token_was_reset = _updated_studies_page_with_token_recovery(
+                client,
                 start_date=window_start,
                 end_date=window_end,
                 page_size=page_size,
                 page_token=page_token,
             )
+            if token_was_reset:
+                # Restart the idempotent window now instead of leaving the lane
+                # failed until the next weekday.
+                token_resets += 1
+                page_token = None
+                with get_cortellis_session() as session:
+                    session.execute(text("""
+                        UPDATE clinical_trials_sync_state
+                        SET next_page_token = NULL,
+                            updated_at = NOW()
+                        WHERE lane = :lane
+                    """), {"lane": lane})
             with get_cortellis_session() as session:
                 for study in page.studies:
                     outcome = _upsert_study(session, study)
@@ -921,6 +985,7 @@ def sync_clinical_trials(
             "window_end": window_end.isoformat(),
             "has_more_pages": not completed_to_dataset,
             "coverage_complete": completed_to_dataset,
+            "page_token_resets": token_resets,
         }
     except Exception as exc:
         try:

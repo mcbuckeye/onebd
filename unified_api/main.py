@@ -174,51 +174,14 @@ async def lifespan(app: FastAPI):
         debug=settings.debug,
     )
     try:
-        from unified_api.services.entity_resolution import get_entity_resolution_service
-        get_entity_resolution_service().ensure_identity_schema()
-    except Exception as exc:
-        logger.warning("Identity schema initialization failed", error=str(exc))
-    try:
-        from unified_api.services.cortellis_deal_api_sync import (
-            ensure_deal_api_scan_schema,
-        )
-
-        ensure_deal_api_scan_schema()
-    except Exception as exc:
-        logger.warning("Cortellis archive schema initialization failed", error=str(exc))
-    try:
-        from unified_api.services.account_schema import ensure_account_schema
-
-        ensure_account_schema()
-    except Exception as exc:
-        logger.warning("Account schema initialization failed", error=str(exc))
-    try:
-        from unified_api.services.collaboration import ensure_collaboration_schema
-
-        ensure_collaboration_schema()
-    except Exception as exc:
-        logger.warning("Collaboration schema initialization failed", error=str(exc))
-    try:
-        from unified_api.services.api_credentials import ensure_api_access_schema
-
-        ensure_api_access_schema()
-    except Exception as exc:
-        logger.warning("Governed data API schema initialization failed", error=str(exc))
-    try:
-        from unified_api.services.search_performance import (
-            ensure_search_performance_schema,
-        )
-
-        ensure_search_performance_schema()
-    except Exception as exc:
-        logger.warning("Search performance schema initialization failed", error=str(exc))
-    try:
         from unified_api.services.operations_telemetry import (
             capture_schema_snapshots_if_due,
             ensure_operations_schema,
             install_default_sql_telemetry,
         )
 
+        # Deployment migrations own all DDL. Application workers only verify
+        # that telemetry exists and install non-mutating SQL event listeners.
         ensure_operations_schema()
         install_default_sql_telemetry()
         capture_schema_snapshots_if_due()

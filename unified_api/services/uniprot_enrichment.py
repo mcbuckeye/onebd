@@ -112,6 +112,11 @@ def ensure_public_target_schema() -> None:
     global _public_target_schema_ready
     if _public_target_schema_ready:
         return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _public_target_schema_ready = True
+        return
     ensure_public_drug_schema()
     with get_cortellis_session() as session:
         session.execute(text("""

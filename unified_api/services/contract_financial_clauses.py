@@ -2020,11 +2020,29 @@ def ensure_contract_financial_clause_schema(session) -> None:
             contract_id INTEGER PRIMARY KEY REFERENCES contract_content(id) ON DELETE CASCADE,
             deal_id INTEGER NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
             source_hash VARCHAR(64) NOT NULL,
+            source_indexed_at TIMESTAMP,
             parser_version INTEGER NOT NULL,
             status TEXT NOT NULL,
             clauses_extracted INTEGER NOT NULL DEFAULT 0,
             error_message TEXT,
             extracted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    session.execute(text("""
+        ALTER TABLE contract_financial_clause_extractions
+        ADD COLUMN IF NOT EXISTS source_indexed_at TIMESTAMP
+    """))
+    session.execute(text("""
+        UPDATE contract_financial_clause_extractions extraction
+        SET source_indexed_at = content.indexed_at
+        FROM contract_content content
+        WHERE extraction.contract_id = content.id
+          AND extraction.source_indexed_at IS NULL
+    """))
+    session.execute(text("""
+        CREATE INDEX IF NOT EXISTS ix_contract_clause_extractions_queue
+        ON contract_financial_clause_extractions (
+            parser_version, status, contract_id
         )
     """))
 
@@ -2050,21 +2068,20 @@ def extract_contract_financial_clause_batch(
             "sample": [],
         }
 
-    ensure_contract_financial_clause_schema(session)
     contracts = session.execute(text("""
         SELECT c.id AS contract_id, c.deal_id, c.content,
-               md5(c.content) AS source_hash
+               c.indexed_at AS source_indexed_at
         FROM contract_content c
         LEFT JOIN contract_financial_clause_extractions e
           ON e.contract_id = c.id
         WHERE c.content IS NOT NULL
           AND c.deal_id IS NOT NULL
-          AND LENGTH(c.content) >= 100
+          AND c.word_count >= 20
           AND (
             :force
             OR e.contract_id IS NULL
             OR e.parser_version <> :parser_version
-            OR e.source_hash <> md5(c.content)
+            OR e.source_indexed_at IS DISTINCT FROM c.indexed_at
             OR e.status = 'failed'
           )
         ORDER BY c.id
@@ -2082,7 +2099,10 @@ def extract_contract_financial_clause_batch(
     for contract in contracts:
         contract_id = int(contract["contract_id"])
         deal_id = int(contract["deal_id"])
-        source_hash = contract["source_hash"]
+        source_hash = hashlib.md5(
+            contract["content"].encode("utf-8")
+        ).hexdigest()
+        source_indexed_at = contract["source_indexed_at"]
         try:
             with session.begin_nested():
                 clauses = extract_contract_financial_clauses(
@@ -2164,15 +2184,18 @@ def extract_contract_financial_clause_batch(
                         })
                     session.execute(text("""
                         INSERT INTO contract_financial_clause_extractions (
-                            contract_id, deal_id, source_hash, parser_version,
-                            status, clauses_extracted, error_message, extracted_at
+                            contract_id, deal_id, source_hash, source_indexed_at,
+                            parser_version, status, clauses_extracted,
+                            error_message, extracted_at
                         ) VALUES (
-                            :contract_id, :deal_id, :source_hash, :parser_version,
-                            'completed', :clauses_extracted, NULL, NOW()
+                            :contract_id, :deal_id, :source_hash,
+                            :source_indexed_at, :parser_version, 'completed',
+                            :clauses_extracted, NULL, NOW()
                         )
                         ON CONFLICT (contract_id) DO UPDATE SET
                             deal_id = EXCLUDED.deal_id,
                             source_hash = EXCLUDED.source_hash,
+                            source_indexed_at = EXCLUDED.source_indexed_at,
                             parser_version = EXCLUDED.parser_version,
                             status = EXCLUDED.status,
                             clauses_extracted = EXCLUDED.clauses_extracted,
@@ -2182,6 +2205,7 @@ def extract_contract_financial_clause_batch(
                         "contract_id": contract_id,
                         "deal_id": deal_id,
                         "source_hash": source_hash,
+                        "source_indexed_at": source_indexed_at,
                         "parser_version": CONTRACT_CLAUSE_PARSER_VERSION,
                         "clauses_extracted": len(clauses),
                     })
@@ -2199,15 +2223,18 @@ def extract_contract_financial_clause_batch(
                 with session.begin_nested():
                     session.execute(text("""
                         INSERT INTO contract_financial_clause_extractions (
-                            contract_id, deal_id, source_hash, parser_version,
-                            status, clauses_extracted, error_message, extracted_at
+                            contract_id, deal_id, source_hash, source_indexed_at,
+                            parser_version, status, clauses_extracted,
+                            error_message, extracted_at
                         ) VALUES (
-                            :contract_id, :deal_id, :source_hash, :parser_version,
+                            :contract_id, :deal_id, :source_hash,
+                            :source_indexed_at, :parser_version,
                             'failed', 0, :error, NOW()
                         )
                         ON CONFLICT (contract_id) DO UPDATE SET
                             deal_id = EXCLUDED.deal_id,
                             source_hash = EXCLUDED.source_hash,
+                            source_indexed_at = EXCLUDED.source_indexed_at,
                             parser_version = EXCLUDED.parser_version,
                             status = 'failed', clauses_extracted = 0,
                             error_message = EXCLUDED.error_message,
@@ -2216,6 +2243,7 @@ def extract_contract_financial_clause_batch(
                         "contract_id": contract_id,
                         "deal_id": deal_id,
                         "source_hash": source_hash,
+                        "source_indexed_at": source_indexed_at,
                         "parser_version": CONTRACT_CLAUSE_PARSER_VERSION,
                         "error": str(exc)[:1000],
                     })
@@ -2231,12 +2259,11 @@ def extract_contract_financial_clause_batch(
 
 
 def contract_financial_clause_status(session) -> dict:
-    ensure_contract_financial_clause_schema(session)
     row = session.execute(text("""
         SELECT
             (SELECT COUNT(*) FROM contract_content
              WHERE content IS NOT NULL AND deal_id IS NOT NULL
-               AND LENGTH(content) >= 100)
+               AND word_count >= 20)
                 AS eligible_contracts,
             (SELECT COUNT(*) FROM contract_financial_clause_extractions
              WHERE status = 'completed' AND parser_version = :parser_version)
@@ -2270,7 +2297,6 @@ def contract_financial_clause_status(session) -> dict:
 
 def contract_financial_clause_review_sample(session, *, limit: int = 100) -> list[dict]:
     """Return a stable, clause-type-balanced sample awaiting human review."""
-    ensure_contract_financial_clause_schema(session)
     limit = max(1, min(500, limit))
     per_type = math.ceil(limit / len(_ANCHORS))
     rows = session.execute(text("""
@@ -2314,7 +2340,6 @@ def review_contract_financial_clause(
     reviewer = reviewer.strip()
     if not reviewer:
         raise ValueError("reviewer is required")
-    ensure_contract_financial_clause_schema(session)
     assertion = session.execute(text("""
         SELECT id, clause_type, source_hash,
                rate_min_pct, rate_max_pct,

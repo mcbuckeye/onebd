@@ -23,13 +23,23 @@ services:
       - -c
       - pg_stat_statements.track=all
       - -c
+      - track_io_timing=on
+      - -c
+      - shared_buffers=6GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
       - max_worker_processes=16
       - -c
       - max_parallel_workers=12
       - -c
       - max_parallel_workers_per_gather=4
       - -c
-      - effective_cache_size=16GB
+      - effective_cache_size=24GB
+      - -c
+      - random_page_cost=1.1
     volumes:
       - onebd_cortellis_data:/var/lib/postgresql/data
       - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
@@ -50,6 +60,30 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_HOST_AUTH_METHOD: trust
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - track_io_timing=on
+      - -c
+      - shared_buffers=8GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - max_worker_processes=16
+      - -c
+      - max_parallel_workers=12
+      - -c
+      - max_parallel_workers_per_gather=4
+      - -c
+      - effective_cache_size=24GB
+      - -c
+      - random_page_cost=1.1
     volumes:
       - onebd_edgar_data:/var/lib/postgresql/data
     shm_size: '2gb'
@@ -97,6 +131,28 @@ services:
       - dokploy-network
     restart: unless-stopped
 
+  # Apply operational DDL exactly once before request and job processes start.
+  onebd-schema-migrate:
+    build:
+      context: .
+      dockerfile: unified_api/Dockerfile
+    depends_on:
+      onebd-db-cortellis:
+        condition: service_healthy
+      onebd-db-edgar:
+        condition: service_healthy
+    environment:
+      - CORTELLIS_DB_URL=postgresql://${CORTELLIS_USER:-cortellis}:${CORTELLIS_PASSWORD:-changeme}@onebd-db-cortellis:5432/${CORTELLIS_DB:-cortellis}
+      - EDGAR_SOURCE_DB_URL=postgresql://postgres:postgres@onebd-db-edgar:5432/deals
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-onebd-schema-migration-only}
+      - DB_POOL_SIZE=1
+      - DB_MAX_OVERFLOW=0
+      - DB_POOL_TIMEOUT_SECONDS=30
+    command: ["python", "-m", "unified_api.scripts.migrate_runtime_schema"]
+    networks:
+      - dokploy-network
+    restart: "no"
+
   # ============================================
   # API SERVICES
   # ============================================
@@ -107,6 +163,8 @@ services:
       context: .
       dockerfile: unified_api/Dockerfile
     depends_on:
+      onebd-schema-migrate:
+        condition: service_completed_successfully
       onebd-db-cortellis:
         condition: service_healthy
       onebd-db-edgar:
@@ -164,6 +222,11 @@ services:
       - ONEBD_SEARCH_RATE_PER_MINUTE=${ONEBD_SEARCH_RATE_PER_MINUTE:-30}
       - ONEBD_SEARCH_GLOBAL_CONCURRENCY=${ONEBD_SEARCH_GLOBAL_CONCURRENCY:-4}
       - ONEBD_SEARCH_LOCK_SECONDS=${ONEBD_SEARCH_LOCK_SECONDS:-40}
+      - ONEBD_PROCESS_ROLE=api
+      - ONEBD_RUNTIME_SCHEMA_MIGRATED=true
+      - DB_POOL_SIZE=3
+      - DB_MAX_OVERFLOW=2
+      - DB_POOL_TIMEOUT_SECONDS=30
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage
@@ -187,6 +250,8 @@ services:
       context: .
       dockerfile: unified_api/Dockerfile
     depends_on:
+      onebd-schema-migrate:
+        condition: service_completed_successfully
       onebd-db-cortellis:
         condition: service_healthy
       onebd-db-edgar:
@@ -226,6 +291,11 @@ services:
       - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
       - CORTELLIS_SYNC_OVERLAP_DAYS=${CORTELLIS_SYNC_OVERLAP_DAYS:-2}
       - CORTELLIS_CATALOG_SCAN_WORKERS=${CORTELLIS_CATALOG_SCAN_WORKERS:-8}
+      - ONEBD_PROCESS_ROLE=worker
+      - ONEBD_RUNTIME_SCHEMA_MIGRATED=true
+      - DB_POOL_SIZE=2
+      - DB_MAX_OVERFLOW=1
+      - DB_POOL_TIMEOUT_SECONDS=30
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage
@@ -240,6 +310,8 @@ services:
       context: .
       dockerfile: unified_api/Dockerfile
     depends_on:
+      onebd-schema-migrate:
+        condition: service_completed_successfully
       onebd-db-cortellis:
         condition: service_healthy
       onebd-db-edgar:
@@ -286,6 +358,11 @@ services:
       - CORTELLIS_CONTRACT_SCAN_WORKERS=${CORTELLIS_CONTRACT_SCAN_WORKERS:-8}
       - CORTELLIS_DEAL_API_SCAN_BATCH_SIZE=${CORTELLIS_DEAL_API_SCAN_BATCH_SIZE:-5000}
       - CORTELLIS_DEAL_API_SCAN_WORKERS=${CORTELLIS_DEAL_API_SCAN_WORKERS:-8}
+      - ONEBD_PROCESS_ROLE=worker
+      - ONEBD_RUNTIME_SCHEMA_MIGRATED=true
+      - DB_POOL_SIZE=2
+      - DB_MAX_OVERFLOW=2
+      - DB_POOL_TIMEOUT_SECONDS=30
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage
@@ -302,6 +379,8 @@ services:
       context: .
       dockerfile: unified_api/Dockerfile
     depends_on:
+      onebd-schema-migrate:
+        condition: service_completed_successfully
       onebd-db-cortellis:
         condition: service_healthy
       onebd-db-edgar:
@@ -324,6 +403,11 @@ services:
       - CORTELLIS_API_USERNAME=${CORTELLIS_API_USERNAME}
       - CORTELLIS_API_PASSWORD=${CORTELLIS_API_PASSWORD}
       - CORTELLIS_BASE_URL=${CORTELLIS_BASE_URL:-https://api.cortellis.com/api-ws/ws/rs}
+      - ONEBD_PROCESS_ROLE=beat
+      - ONEBD_RUNTIME_SCHEMA_MIGRATED=true
+      - DB_POOL_SIZE=1
+      - DB_MAX_OVERFLOW=0
+      - DB_POOL_TIMEOUT_SECONDS=30
     volumes:
       - ./data:/app/data
       - onebd_storage:/app/storage

@@ -9,7 +9,7 @@ from unified_api.services.database import get_cortellis_engine
 
 
 logger = structlog.get_logger(__name__)
-SEARCH_SCHEMA_VERSION = 2
+SEARCH_SCHEMA_VERSION = 3
 ADVISORY_LOCK_ID = 61320260716
 
 
@@ -64,6 +64,14 @@ INDEX_STATEMENTS = (
     "ON technologies (LOWER(name))",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_companies_name_lower "
     "ON companies (LOWER(name))",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_companies_name_trgm "
+    "ON companies USING gin (name gin_trgm_ops)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_companies_name_upper_trgm "
+    "ON companies USING gin (UPPER(name) gin_trgm_ops)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_company_aliases_upper_trgm "
+    "ON company_aliases USING gin (UPPER(alias_value) gin_trgm_ops)",
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_drugs_normalized_display_name "
+    "ON drugs ((LOWER(REGEXP_REPLACE(TRIM(name_display), '\\s+', ' ', 'g'))))",
     "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_public_literature_fts "
     "ON public_literature_records USING gin "
     "(to_tsvector('english', COALESCE(title, '') || ' ' || "

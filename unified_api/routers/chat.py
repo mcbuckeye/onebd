@@ -107,6 +107,11 @@ async def chat(request: ChatRequest):
             raise HTTPException(status_code=400, detail=f"Unknown mode: {mode}")
 
     except Exception as e:
+        from unified_api.services.operations_telemetry import (
+            mark_current_operation_error,
+        )
+
+        mark_current_operation_error(e)
         logger.error("Chat processing failed", error=str(e), mode=mode)
         return ChatResponse(
             response=f"Sorry, I encountered an error processing your request: {str(e)}",
@@ -114,7 +119,12 @@ async def chat(request: ChatRequest):
         )
 
 
-async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
+async def _handle_sql_query(
+    message: str,
+    llm_service,
+    *,
+    format_answer: bool = True,
+) -> ChatResponse:
     """Handle SQL-based queries."""
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
@@ -213,6 +223,8 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
         # Format response
         response_text = (
             await llm_service.format_response(message, data)
+            if data and format_answer
+            else ""
             if data
             else "No supporting database records were found for this question."
         )
@@ -228,6 +240,11 @@ async def _handle_sql_query(message: str, llm_service) -> ChatResponse:
         )
 
     except Exception as e:
+        from unified_api.services.operations_telemetry import (
+            mark_current_operation_error,
+        )
+
+        mark_current_operation_error(e)
         logger.error("SQL execution failed", error=str(e), sql=sql_query[:200])
         return ChatResponse(
             response=f"I generated a query but it failed to execute. Error: {str(e)[:200]}",
@@ -283,6 +300,17 @@ def _is_due_diligence_query(message: str) -> bool:
         or re.search(r"\bdd\s+(?:package|report|on|for)\b", normalized)
         or re.search(r"\bfull\s+dd\b", normalized)
     )
+
+
+def _is_governed_sql_query(message: str) -> bool:
+    """Recognize deterministic SQL shapes without spending an LLM call."""
+    if _structured_metric_limitation(message):
+        return True
+    if _is_deal_pattern_query(message) or _is_company_deal_activity_compare_query(
+        message
+    ):
+        return True
+    return _build_governed_sql(message, []) is not None
 
 
 async def _handle_due_diligence_query(
@@ -736,7 +764,15 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
             "FROM counts ORDER BY category"
         )
 
-    if "most actively acquiring oncology assets" in normalized:
+    asks_for_ranked_oncology_acquirers = (
+        any(term in normalized for term in ("oncology", "cancer", "tumor"))
+        and bool(re.search(
+            r"\bacquir(?:ers?|e[sd]?|ing|ed|isitions?)\b",
+            normalized,
+        ))
+        and any(term in normalized for term in ("most", "top", "active", "largest"))
+    )
+    if asks_for_ranked_oncology_acquirers:
         return (
             "SELECT c.id, c.name, COUNT(DISTINCT d.id) AS deal_count "
             "FROM deals d "
@@ -1044,6 +1080,9 @@ async def chat_v2(request: ChatRequest):
         mode = "due_diligence"
         data = raw_response.data or []
         sql_query = None
+    elif _is_governed_sql_query(request.message):
+        llm_service = get_llm_service()
+        intent = "deal_search"
     else:
         llm_service = get_llm_service()
         intent = await llm_service.classify_intent(request.message)
@@ -1066,7 +1105,11 @@ async def chat_v2(request: ChatRequest):
         data = raw_response.data or []
         sql_query = None
     else:
-        raw_response = await _handle_sql_query(request.message, llm_service)
+        raw_response = await _handle_sql_query(
+            request.message,
+            llm_service,
+            format_answer=False,
+        )
         mode = "sql"
         data = raw_response.data or []
         sql_query = raw_response.sql_query

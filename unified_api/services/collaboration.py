@@ -84,7 +84,8 @@ def _apply_collaboration_schema(session) -> None:
     """))
 
 
-def ensure_collaboration_schema(session=None) -> None:
+def migrate_collaboration_schema(session=None) -> None:
+    """Create or upgrade collaboration tables during deployment."""
     if session is not None:
         _apply_collaboration_schema(session)
         session.commit()
@@ -92,6 +93,10 @@ def ensure_collaboration_schema(session=None) -> None:
     with get_cortellis_session() as managed_session:
         _apply_collaboration_schema(managed_session)
         managed_session.commit()
+
+
+# Compatibility for management callers; live request paths do not call this.
+ensure_collaboration_schema = migrate_collaboration_schema
 
 
 def membership_role(session, team_id: int, user_id: int) -> str:

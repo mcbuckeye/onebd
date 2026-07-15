@@ -1,8 +1,14 @@
 """Durable schema management for user accounts and collaboration features."""
 
+import threading
+
 from sqlalchemy import text
 
 from unified_api.services.database import get_cortellis_session
+
+
+_schema_ready = False
+_schema_lock = threading.Lock()
 
 
 def _apply_account_schema(session) -> None:
@@ -45,13 +51,40 @@ def _apply_account_schema(session) -> None:
     """))
 
 
-def ensure_account_schema(session=None) -> None:
-    """Create or upgrade account tables, optionally within a caller session."""
+def migrate_account_schema(session=None) -> None:
+    """Create or upgrade account tables during deployment."""
+    global _schema_ready
     if session is not None:
         _apply_account_schema(session)
         session.commit()
+        _schema_ready = True
         return
 
     with get_cortellis_session() as managed_session:
         _apply_account_schema(managed_session)
         managed_session.commit()
+    _schema_ready = True
+
+
+def ensure_account_schema(session=None) -> None:
+    """Verify the account migration once per application process."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        if session is not None:
+            installed = session.execute(
+                text("SELECT to_regclass('public.users') IS NOT NULL")
+            ).scalar()
+        else:
+            with get_cortellis_session() as managed_session:
+                installed = managed_session.execute(
+                    text("SELECT to_regclass('public.users') IS NOT NULL")
+                ).scalar()
+        if not installed:
+            raise RuntimeError(
+                "Account schema is missing; run the runtime schema migration"
+            )
+        _schema_ready = True

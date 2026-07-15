@@ -41,11 +41,9 @@ def get_cortellis_engine():
         _cortellis_engine = create_engine(
             settings.cortellis_db_url,
             poolclass=QueuePool,
-            # Four API workers can therefore open at most 40 Cortellis
-            # connections, leaving headroom for ETL and Celery processes.
-            pool_size=5,
-            max_overflow=5,
-            pool_timeout=10,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout_seconds,
             pool_recycle=1800,  # Recycle connections every 30 min
             pool_pre_ping=True,  # Verify connections before use
             echo=settings.debug,
@@ -98,9 +96,9 @@ def get_edgar_source_engine():
         _edgar_source_engine = create_engine(
             settings.edgar_source_db_url,
             poolclass=QueuePool,
-            pool_size=5,
-            max_overflow=5,
-            pool_timeout=10,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout_seconds,
             pool_recycle=1800,  # Recycle connections every 30 min
             pool_pre_ping=True,  # Verify connections before use
             echo=settings.debug,
@@ -197,6 +195,7 @@ def check_edgar_connection() -> bool:
 def close_all_connections():
     """Close all database connections"""
     global _cortellis_engine, _edgar_source_engine
+    global _cortellis_session_factory, _edgar_source_session_factory
 
     if _cortellis_engine:
         _cortellis_engine.dispose()
@@ -207,3 +206,5 @@ def close_all_connections():
         _edgar_source_engine.dispose()
         _edgar_source_engine = None
         logger.info("Edgar source database connections closed")
+    _cortellis_session_factory = None
+    _edgar_source_session_factory = None

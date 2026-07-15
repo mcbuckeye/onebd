@@ -114,7 +114,7 @@ SOURCE_POLICIES = {
 
 
 def ensure_source_monitoring_tables(session) -> None:
-    """Create the small operational schema without coupling it to app migrations."""
+    """Create the operational schema during the deployment migration phase."""
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS source_job_state (
             source_key VARCHAR(50) PRIMARY KEY,
@@ -307,7 +307,6 @@ def record_source_job_started(source_key: str) -> None:
     policy = SOURCE_POLICIES[source_key]
     try:
         with get_cortellis_session() as session:
-            ensure_source_monitoring_tables(session)
             session.execute(text("""
                 INSERT INTO source_job_state (
                     source_key, label, status, last_started_at, updated_at
@@ -331,7 +330,6 @@ def record_source_job_finished(source_key: str, result: Mapping[str, Any]) -> No
     error = result.get("error") or result.get("reason")
     try:
         with get_cortellis_session() as session:
-            ensure_source_monitoring_tables(session)
             existing = session.execute(text("""
                 SELECT retry_count, consecutive_failures, last_started_at
                 FROM source_job_state
@@ -577,7 +575,6 @@ def monitor_source_jobs() -> dict[str, Any]:
     pending: list[dict[str, Any]] = []
     states: list[dict[str, Any]] = []
     with get_cortellis_session() as session:
-        ensure_source_monitoring_tables(session)
         _bootstrap_legacy_source_states(session)
         rows = session.execute(text("""
             SELECT * FROM source_job_state ORDER BY source_key
@@ -640,7 +637,6 @@ def monitor_source_jobs() -> dict[str, Any]:
 
 
 def read_source_job_states(session) -> list[dict[str, Any]]:
-    ensure_source_monitoring_tables(session)
     return [source_job_payload(row) for row in session.execute(text("""
         SELECT source_key, label, status, last_started_at, last_completed_at,
                last_success_at, consecutive_failures, retry_count,

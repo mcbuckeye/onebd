@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     edgar_freshness_critical_hours: int = 96
     edgar_fulltext_candidate_limit: int = 500
 
+    # Per-process SQLAlchemy pools. Compose sets role-specific bounds so API
+    # and Celery process counts cannot exhaust PostgreSQL's connection limit.
+    db_pool_size: int = 3
+    db_max_overflow: int = 2
+    db_pool_timeout_seconds: int = 30
+
     # Neo4j Graph Database
     neo4j_uri: str = "bolt://onebd-neo4j:7687"
     neo4j_user: str = "neo4j"

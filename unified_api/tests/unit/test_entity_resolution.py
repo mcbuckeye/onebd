@@ -89,7 +89,7 @@ def test_simple_drug_display_name_is_not_given_a_speculative_alias():
     ]
 
 
-def test_identity_schema_ddl_is_serialized_and_cached_per_process(monkeypatch):
+def test_identity_schema_migration_is_serialized_and_cached(monkeypatch):
     statements = []
     sessions_opened = 0
 
@@ -107,8 +107,8 @@ def test_identity_schema_ddl_is_serialized_and_cached_per_process(monkeypatch):
     monkeypatch.setattr(entity_resolution, "get_cortellis_session", fake_session)
     service = EntityResolutionService()
 
-    service.ensure_identity_schema()
-    service.ensure_identity_schema()
+    service.migrate_identity_schema()
+    service.migrate_identity_schema()
 
     assert sessions_opened == 1
     assert "pg_advisory_xact_lock" in statements[0][0]

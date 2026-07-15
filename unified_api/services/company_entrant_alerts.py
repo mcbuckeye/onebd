@@ -15,6 +15,10 @@ from unified_api.services.company_strategy import (
 
 def ensure_company_entrant_alert_schema(session) -> None:
     """Create and forward-migrate competitor entrant alert storage."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS tracked_competitors (
             id SERIAL PRIMARY KEY,

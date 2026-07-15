@@ -30,7 +30,9 @@ def operations_summary(hours: int) -> dict[str, Any]:
     with get_cortellis_engine().connect() as connection:
         request = dict(connection.execute(text("""
             SELECT COUNT(*)::bigint AS requests,
-                   COUNT(*) FILTER (WHERE status_code >= 400)::bigint AS errors,
+                   COUNT(*) FILTER (
+                     WHERE status_code >= 400 OR error_type IS NOT NULL
+                   )::bigint AS errors,
                    COUNT(*) FILTER (WHERE duration_ms >= :slow_request_ms)::bigint
                      AS slow_requests,
                    AVG(duration_ms) AS average_ms,
@@ -61,7 +63,9 @@ def operations_summary(hours: int) -> dict[str, Any]:
         """), {"since": since}).mappings().one())
         by_channel = _rows(connection.execute(text("""
             SELECT channel, COUNT(*)::bigint AS requests,
-                   COUNT(*) FILTER (WHERE status_code >= 400)::bigint AS errors,
+                   COUNT(*) FILTER (
+                     WHERE status_code >= 400 OR error_type IS NOT NULL
+                   )::bigint AS errors,
                    AVG(duration_ms) AS average_ms,
                    percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)
                      AS p95_ms
@@ -76,7 +80,9 @@ def operations_summary(hours: int) -> dict[str, Any]:
                      AS p95_ms,
                    MAX(duration_ms) AS maximum_ms,
                    SUM(sql_duration_ms) AS sql_time_ms,
-                   COUNT(*) FILTER (WHERE status_code >= 400)::bigint AS errors
+                   COUNT(*) FILTER (
+                     WHERE status_code >= 400 OR error_type IS NOT NULL
+                   )::bigint AS errors
             FROM operations_request_log WHERE started_at >= :since
             GROUP BY COALESCE(route_template, path), method
             ORDER BY p95_ms DESC NULLS LAST LIMIT 12
@@ -84,7 +90,9 @@ def operations_summary(hours: int) -> dict[str, Any]:
         hourly = _rows(connection.execute(text("""
             SELECT date_trunc('hour', started_at) AS bucket,
                    COUNT(*)::bigint AS requests,
-                   COUNT(*) FILTER (WHERE status_code >= 400)::bigint AS errors,
+                   COUNT(*) FILTER (
+                     WHERE status_code >= 400 OR error_type IS NOT NULL
+                   )::bigint AS errors,
                    AVG(duration_ms) AS average_ms,
                    percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)
                      AS p95_ms
@@ -95,7 +103,8 @@ def operations_summary(hours: int) -> dict[str, Any]:
             SELECT request_id, started_at, method, path, channel, status_code,
                    duration_ms, principal_type, principal_name, error_type
             FROM operations_request_log
-            WHERE started_at >= :since AND status_code >= 400
+            WHERE started_at >= :since
+              AND (status_code >= 400 OR error_type IS NOT NULL)
             ORDER BY started_at DESC LIMIT 10
         """), {"since": since}))
     request["error_rate"] = (
@@ -145,9 +154,9 @@ def list_operation_requests(
         )
         params["principal"] = f"%{principal}%"
     if status == "errors":
-        filters.append("status_code >= 400")
+        filters.append("(status_code >= 400 OR error_type IS NOT NULL)")
     elif status == "success":
-        filters.append("status_code < 400")
+        filters.append("status_code < 400 AND error_type IS NULL")
     if min_duration_ms is not None:
         filters.append("duration_ms >= :min_duration_ms")
         params["min_duration_ms"] = min_duration_ms

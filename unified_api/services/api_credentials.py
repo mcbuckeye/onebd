@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import secrets
+import threading
 from typing import Any
 
 from fastapi import HTTPException, Request, Security, status
@@ -43,6 +44,7 @@ DATASETS = frozenset({
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 _schema_ready = False
+_schema_lock = threading.Lock()
 
 
 class DataPrincipal(BaseModel):
@@ -54,8 +56,8 @@ class DataPrincipal(BaseModel):
     scopes: list[str]
 
 
-def ensure_api_access_schema() -> None:
-    """Create the small credential and policy schema idempotently."""
+def migrate_api_access_schema() -> None:
+    """Create or upgrade the credential and policy schema during deployment."""
     global _schema_ready
     if _schema_ready:
         return
@@ -110,6 +112,26 @@ def ensure_api_access_schema() -> None:
                 NOT NULL DEFAULT FALSE
         """))
     _schema_ready = True
+
+
+def ensure_api_access_schema() -> None:
+    """Verify the access-control migration once per application process."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        with get_cortellis_session() as session:
+            installed = session.execute(text(
+                "SELECT to_regclass('public.api_credentials') IS NOT NULL "
+                "AND to_regclass('public.data_access_policy') IS NOT NULL"
+            )).scalar()
+        if not installed:
+            raise RuntimeError(
+                "API access schema is missing; run the runtime schema migration"
+            )
+        _schema_ready = True
 
 
 def _normalize_scopes(scopes: list[str]) -> list[str]:

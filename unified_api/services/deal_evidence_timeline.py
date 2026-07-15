@@ -51,6 +51,10 @@ def extract_nct_citations(
 
 def ensure_deal_trial_link_schema(session) -> None:
     """Create the versioned exact-citation link and scan-state tables."""
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        return
     session.execute(text("""
         CREATE TABLE IF NOT EXISTS deal_clinical_trial_links (
             id BIGSERIAL PRIMARY KEY,

@@ -39,7 +39,7 @@ class TelemetrySettingsRequest(StrictModel):
     enabled: bool = True
     capture_request_payloads: bool = True
     retain_normalized_sql: bool = True
-    sql_min_duration_ms: float = Field(default=0, ge=0, le=60000)
+    sql_min_duration_ms: float = Field(default=5, ge=0, le=60000)
     slow_request_ms: float = Field(default=1000, ge=1, le=600000)
     slow_sql_ms: float = Field(default=250, ge=1, le=600000)
     max_sql_spans_per_operation: int = Field(default=200, ge=1, le=5000)

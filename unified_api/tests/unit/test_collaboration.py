@@ -37,7 +37,7 @@ def test_account_schema_upgrades_existing_users_table():
         def commit(self):
             return None
 
-    account_schema.ensure_account_schema(Session())
+    account_schema.migrate_account_schema(Session())
 
     ddl = "\n".join(statements)
     assert "ADD COLUMN IF NOT EXISTS disabled" in ddl

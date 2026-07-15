@@ -148,6 +148,11 @@ def ensure_pubchem_schema() -> None:
     global _pubchem_schema_ready
     if _pubchem_schema_ready:
         return
+    from unified_api.services.runtime_schema import runtime_schema_is_pre_migrated
+
+    if runtime_schema_is_pre_migrated():
+        _pubchem_schema_ready = True
+        return
     EntityResolutionService().ensure_identity_schema()
     with get_cortellis_session() as session:
         # A public compound can legitimately map to more than one Cortellis
