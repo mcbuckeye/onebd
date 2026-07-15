@@ -122,6 +122,7 @@ class EntityResolutionService:
         r'\s+AG$',
         r'\s+A\.G\.?$',
         r'\s+GmbH$',
+        r'\s+KGaA$',
         r'\s+N\.V\.?$',
         r'\s+NV$',
         r'\s+BV$',
@@ -152,6 +153,9 @@ class EntityResolutionService:
 
         # Remove punctuation except ampersand
         normalized = re.sub(r'[^\w\s&]', '', normalized)
+
+        # Removing a trailing "Co" can leave a meaningless ampersand behind.
+        normalized = re.sub(r'\s*&\s*$', '', normalized)
 
         # Collapse whitespace
         normalized = re.sub(r'\s+', ' ', normalized).strip()

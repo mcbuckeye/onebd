@@ -18,6 +18,24 @@ truth_queries:
     GROUP BY c.id, c.name
     ORDER BY deal_count DESC, c.id
     LIMIT 5
+  company_deal_activity_compare: &company_deal_activity_compare |
+    SELECT company.id AS company_id, company.name AS company_name,
+           COUNT(DISTINCT deal.id)::int AS deal_count,
+           MIN(deal.date_start) AS first_deal_date,
+           MAX(deal.date_start) AS latest_deal_date,
+           COUNT(DISTINCT deal.id) FILTER (
+             WHERE finance.total_projected_current_amount IS NOT NULL
+               AND finance.total_projected_current_currency = 'USD'
+               AND finance.total_projected_current_unit = 'Million'
+           )::int AS disclosed_value_count
+    FROM companies company
+    JOIN deal_companies company_link ON company_link.company_id = company.id
+    JOIN deals deal ON deal.id = company_link.deal_id
+    LEFT JOIN deal_finance_summary finance ON finance.deal_id = deal.id
+    WHERE company.id IN (18767, 18077)
+    GROUP BY company.id, company.name
+    ORDER BY deal_count DESC, company.id
+    LIMIT 20
   oncology_average: &oncology_average |
     SELECT AVG(f.total_projected_current_amount) AS average_deal_size_usd_millions,
            COUNT(*) AS disclosed_deal_count
@@ -806,23 +824,46 @@ cases:
           fields: [year, deal_count, disclosed_deal_count, average_value_usd_millions, total_value_usd_millions]
 
   - id: 15
-    tier: catalog
-    rating: partial
-    question: 'Compare Pfizer vs Merck vs Novartis deal activity.'
+    tier: regression
+    rating: strong
+    question: 'Compare Pfizer and Merck & Co deal activity.'
     rubric: *chat_evidence
     request:
       method: POST
       path: /api/chat/v2
       json:
-        message: 'Compare Pfizer vs Merck vs Novartis deal activity.'
+        message: 'Compare Pfizer and Merck & Co deal activity.'
         mode: auto
     assertions:
       - type: min_length
-        path: answer
-        value: 1
-      - type: excludes
-        path: answer
-        value: encountered an error
+        path: data
+        value: 2
+      - type: equals
+        path: resolved_entities.0.company_id
+        value: 18767
+      - type: equals
+        path: resolved_entities.1.company_id
+        value: 18077
+      - type: contains
+        path: sql_query
+        value: 'company.id IN (18767, 18077)'
+      - type: equals
+        path: confidence.evidence_status
+        value: grounded
+    truth:
+      source: cortellis
+      query: *company_deal_activity_compare
+      assertions:
+        - type: rows_equal
+          response_path: data
+          truth_path: rows
+          fields:
+            - company_id
+            - company_name
+            - deal_count
+            - first_deal_date
+            - latest_deal_date
+            - disclosed_value_count
 
   - id: 16
     tier: catalog

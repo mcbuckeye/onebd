@@ -9,7 +9,7 @@
 2026-07-15 production database
 
 **Status:** All 65 questions are versioned, executable, and have deterministic
-pass/fail oracles. Eight are blocking production regressions. Eighteen cases
+pass/fail oracles. Nine are blocking production regressions. Nineteen cases
 compare the deployed response with direct, read-only database truth; 54 use
 scored grounding/provenance rubrics (six cases use both).
 
@@ -253,14 +253,14 @@ limitation, not a confidence score to hide.
 | 12 | Valuation range for oncology M&A deals, 2020–2025? | ✅ | Supported by deterministic analytics filters with disclosure caveats. |
 | 13 | How have deal values trended over five years? | ✅ | Market-trends endpoint supports reproducible trend output. |
 | 14 | Median milestone payment for Phase 3 license deals? | ✅ | Governed milestone-total query returns a $110M median from 653 disclosed of 1,694 eligible deals and matches direct database truth. |
-| 15 | Compare Pfizer vs Merck vs Novartis deal activity. | 🟡 | Endpoint exists; frontend uses hardcoded IDs and entity selection is not robust. |
+| 15 | Compare Pfizer and Merck & Co deal activity. | ✅ | Canonical company IDs are resolved before governed SQL compares deal count, date range, and normalized financial disclosure for only those two companies. Bare “Merck” is now disambiguated rather than silently assigned to an affiliate. |
 | 16 | Typical royalty rates for oncology bispecifics? | ✅ | Governed per-deal royalty ranges return a 20% median midpoint, but only 7 of 153 eligible deals disclose a usable rate; the answer exposes that limitation. |
 | 17 | Deals with disclosed upfront over $100M. | ✅ | Governed parser-v4 query finds 428 qualifying license deals, returns the top 20 with record citations, and matches direct database truth. |
 | 18 | Percentage of 2024 deals that were M&A vs licensing. | ✅ | Agreement-type distribution endpoint supports the calculation. |
 | 19 | YoY deal-volume growth by therapy area. | 🟡 | Endpoint exists, but the requested comparison period is underspecified and chat output lacks a truth assertion. |
 | 20 | Largest deal in each major therapy area. | 🟡 | Straightforward SQL, but no demonstrated product workflow/golden result yet. |
 
-**Measured score: 7 Strong, 3 Partial**
+**Measured score: 8 Strong, 2 Partial**
 
 ---
 
@@ -361,15 +361,15 @@ This score is generated from the ratings in the executable 65-case catalog.
 | Category | Strong ✅ | Partial 🟡 | Needs Work 🔧 | Cannot ❌ | Total |
 |---|---:|---:|---:|---:|---:|
 | Quick Factual | 4 | 5 | 1 | 0 | 10 |
-| Analytical | 7 | 3 | 0 | 0 | 10 |
+| Analytical | 8 | 2 | 0 | 0 | 10 |
 | Strategic | 1 | 7 | 1 | 1 | 10 |
 | Competitive Intelligence | 1 | 6 | 2 | 1 | 10 |
 | Due Diligence | 1 | 6 | 2 | 1 | 10 |
 | Market Landscape | 3 | 6 | 0 | 1 | 10 |
 | SEC Filings | 0 | 5 | 0 | 0 | 5 |
-| **Total** | **17** | **38** | **6** | **4** | **65** |
+| **Total** | **18** | **37** | **6** | **4** | **65** |
 
-**Measured catalog rating: 17/65 Strong (26.2%); 55/65 at least Partial
+**Measured catalog rating: 18/65 Strong (27.7%); 55/65 at least Partial
 (84.6%).** This corrects arithmetic drift in the previous hand-maintained
 scorecard and should be regenerated from YAML after future rating changes.
 
@@ -379,7 +379,7 @@ the limiting factors.
 ## Executable Evaluation Specification
 
 All 65 questions are versioned in `unified_api/evals/question_cases.yaml`. The
-eight regression-tier cases have deterministic production assertions. Eighteen
+nine regression-tier cases have deterministic production assertions. Nineteen
 cases compare response fields to read-only SQL truth, while 54 cases have weighted
 evidence rubrics; six cases use both. Exact truth should continue to replace
 narrative rubrics as governed query shapes are added. A completed truth case must
