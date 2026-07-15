@@ -36,10 +36,15 @@ class _RecordingSession:
         self.total = total
         self.calls = []
 
-    def execute(self, statement, params):
+    def execute(self, statement, params=None):
         sql = str(statement)
+        if sql.startswith("SET LOCAL"):
+            return _MappingsResult()
         self.calls.append((sql, dict(params)))
-        if "SELECT COUNT(*) FROM result" in sql:
+        if (
+            "SELECT COUNT(*) FROM filtered" in sql
+            or "SELECT COUNT(DISTINCT asset_id) FROM matched" in sql
+        ):
             return _MappingsResult(scalar_value=self.total)
         return _MappingsResult(rows=self.rows)
 
@@ -57,6 +62,81 @@ def test_request_rejects_ambiguous_company_and_invalid_ranges():
         AdvancedSearchRequest.model_validate(
             {"values": {"royalty_rate_pct": {"gte": 101}}}
         )
+
+
+def test_default_search_is_lightweight_and_cortellis_only():
+    request = AdvancedSearchRequest()
+    session = _RecordingSession([])
+
+    result = search_assets(session, request, allow_public_biology=True)
+
+    sql = session.calls[0][0]
+    assert request.evidence.sources == ["cortellis_deals"]
+    assert request.evidence.allowed_attribution == ["deal"]
+    assert result["expanded"] == []
+    assert "page AS" in sql
+    assert "public_drug_target_links" not in sql
+    assert "alias_agg" not in sql
+    assert "company_agg" not in sql
+
+
+def test_asset_expansion_is_page_first_and_total_skips_hydration():
+    request = AdvancedSearchRequest.model_validate(
+        {
+            "limit": 5,
+            "include_total": True,
+            "expand": [
+                "aliases",
+                "companies",
+                "diseases",
+                "evidence",
+                "modalities",
+                "targets",
+                "values",
+            ],
+            "evidence": {
+                "allowed_attribution": ["asset", "deal"],
+                "sources": ["cortellis_deals", "public_biology"],
+            },
+        }
+    )
+    session = _RecordingSession([], total=33912)
+
+    result = search_assets(session, request)
+
+    page_sql, count_sql = (call[0] for call in session.calls)
+    assert result["total"] == 33912
+    assert "page AS" in page_sql
+    assert "page_deals AS" in page_sql
+    assert "JOIN page ON page.id=matched.asset_id" in page_sql
+    assert "alias_agg AS" in page_sql
+    assert "SELECT COUNT(DISTINCT asset_id) FROM matched" in count_sql
+    assert "alias_agg" not in count_sql
+    assert "page_deals" not in count_sql
+
+
+def test_date_filters_preserve_timestamp_indexes_and_alias_source_boundary():
+    request = AdvancedSearchRequest.model_validate(
+        {
+            "assets": {"names": {"any": ["DB-003"]}},
+            "dates": [
+                {
+                    "field": "date_start",
+                    "gte": "2020-01-01",
+                    "lte": "2025-12-31",
+                }
+            ],
+        }
+    )
+    session = _RecordingSession([])
+
+    search_assets(session, request)
+
+    sql = session.calls[0][0]
+    assert "deal.date_start >= CAST(" in sql
+    assert "deal.date_start < CAST(" in sql
+    assert "deal.date_start::date" not in sql
+    assert "asset_alias.source='cortellis'" in sql
     with pytest.raises(ValidationError, match="supported for targets"):
         AdvancedSearchRequest.model_validate(
             {
@@ -99,6 +179,18 @@ def test_deal_search_binds_all_user_values_and_normalizes_money_units():
                 "upfront_usd_millions": {"gte": 10},
             },
             "include_total": True,
+            "expand": [
+                "assets",
+                "companies",
+                "diseases",
+                "modalities",
+                "sources",
+                "targets",
+            ],
+            "evidence": {
+                "allowed_attribution": ["asset", "deal"],
+                "sources": ["cortellis_deals", "public_biology"],
+            },
         }
     )
 
@@ -115,6 +207,7 @@ def test_deal_search_binds_all_user_values_and_normalizes_money_units():
         "deals",
         "values",
         "dates",
+        "evidence",
     ]
     assert "CASE UPPER(COALESCE(finance.total_projected_current_unit" in sql
     assert "deal_financial_terms term" in sql

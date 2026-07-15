@@ -199,6 +199,14 @@ async def lifespan(app: FastAPI):
         ensure_api_access_schema()
     except Exception as exc:
         logger.warning("Governed data API schema initialization failed", error=str(exc))
+    try:
+        from unified_api.services.search_performance import (
+            ensure_search_performance_schema,
+        )
+
+        ensure_search_performance_schema()
+    except Exception as exc:
+        logger.warning("Search performance schema initialization failed", error=str(exc))
 
     yield
 

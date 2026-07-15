@@ -28,6 +28,7 @@ def test_initialize_and_tool_listing_are_valid_json_rpc():
     assert initialized["result"]["protocolVersion"] == "2025-06-18"
     names = {tool["name"] for tool in tools["result"]["tools"]}
     assert {
+        "get_entity_counts",
         "get_data_catalog",
         "search_deals",
         "search_deals_advanced",
@@ -38,6 +39,33 @@ def test_initialize_and_tool_listing_are_valid_json_rpc():
         "get_company_asset_rights",
         "get_company_manufacturing_relationships",
     } <= names
+
+
+def test_entity_counts_tool_uses_dedicated_endpoint():
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        return httpx.Response(
+            200,
+            json={"deals": 172643, "companies": 67177, "assets": 33912},
+        )
+
+    server = OneBDMCPServer(
+        base_url="https://onebd.example/api/v1",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    response = server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {"name": "get_entity_counts", "arguments": {}},
+        }
+    )
+
+    assert observed["url"] == "https://onebd.example/api/v1/counts"
+    assert response["result"]["structuredContent"]["assets"] == 33912
 
 
 def test_advanced_search_tools_publish_nested_schema_and_post_json():
