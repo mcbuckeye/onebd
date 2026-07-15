@@ -373,8 +373,14 @@ and fast retrieval before adding more external data volume.
       not retained; recursively redact and bound optional JSON request metadata.
 - [x] Validate the schema, correlation, redaction and reporting SQL against
       PostgreSQL and add focused API/MCP/credential regression tests.
-- [ ] Deploy through the protected GitHub/Dokploy path and verify live admin,
+- [x] Deploy through the protected GitHub/Dokploy path and verify live admin,
       request/MCP, job, Cortellis SQL, EDGAR SQL, database and retention behavior.
+      Production merge `04feece` passed both protected quality runs and
+      post-Dokploy verification run `29439685164`. Authenticated verification
+      proved admin-only access, live settings/audit controls, 25 initial worker
+      jobs, both schema snapshots, and a 19-span request trace crossing the
+      Cortellis and EDGAR databases; every Operations UI view rendered populated
+      production data without errors.
 
 ## Implementation Status vs PRD
 
