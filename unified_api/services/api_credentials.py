@@ -341,6 +341,9 @@ def _resolve_data_access(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"API credential lacks scope: {scope}",
         )
+    request_state = getattr(request, "state", None)
+    if request_state is not None:
+        request_state.data_principal = principal
     return principal
 
 

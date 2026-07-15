@@ -95,8 +95,19 @@ async def mcp(request: Request) -> Response:
     """Process MCP JSON-RPC requests over stateless Streamable HTTP."""
     _validate_origin(request)
     api_key = _api_key(request)
-    await run_in_threadpool(authorize_mcp_request, request, api_key)
+    principal = await run_in_threadpool(authorize_mcp_request, request, api_key)
+    request.state.data_principal = principal
+    request.state.telemetry_channel = "mcp"
     messages = await _messages(request)
+    request.state.telemetry_operation_names = [
+        (
+            message.get("params", {}).get("name", "tools/call")
+            if message.get("method") == "tools/call"
+            and isinstance(message.get("params"), dict)
+            else message.get("method", "invalid")
+        )
+        for message in messages
+    ]
 
     # ASGITransport keeps tool calls inside the service while still traversing
     # the governed /api/v1 routes and all of their policy dependencies.

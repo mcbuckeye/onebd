@@ -3,7 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
 import ContractClauseReviewPanel from '../components/ContractClauseReviewPanel';
 import AdminApiAccessPanel from '../components/AdminApiAccessPanel';
-import { Users, Plus, Edit2, Trash2, Shield, FileText, ClipboardCheck, KeyRound } from 'lucide-react';
+import AdminOperationsPanel from '../components/AdminOperationsPanel';
+import { Activity, Users, Plus, Edit2, Trash2, Shield, FileText, ClipboardCheck, KeyRound } from 'lucide-react';
 
 interface User {
   id: number;
@@ -32,7 +33,7 @@ interface UserFormData {
 
 export default function AdminPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'access' | 'audit' | 'clauses'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'access' | 'operations' | 'audit' | 'clauses'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -209,6 +210,17 @@ export default function AdminPage() {
           API Access
         </button>
         <button
+          onClick={() => setActiveTab('operations')}
+          className={`px-4 py-2 text-sm font-medium transition-colors ${
+            activeTab === 'operations'
+              ? 'text-blue-400 border-b-2 border-blue-400'
+              : 'text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          <Activity className="w-4 h-4 inline mr-2" />
+          Operations
+        </button>
+        <button
           onClick={() => setActiveTab('audit')}
           className={`px-4 py-2 text-sm font-medium transition-colors ${
             activeTab === 'audit'
@@ -298,6 +310,8 @@ export default function AdminPage() {
       )}
 
       {activeTab === 'access' && <AdminApiAccessPanel />}
+
+      {activeTab === 'operations' && <AdminOperationsPanel />}
 
       {/* Audit Log Table */}
       {activeTab === 'audit' && (

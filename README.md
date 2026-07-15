@@ -221,6 +221,13 @@ This starts 9 services and 10 containers (the processing worker has two replicas
 | `/api/notifications/{id}` | DELETE | Dismiss notification |
 | `/api/alerts/trigger` | POST | Manually trigger alert check |
 
+### Admin Operations
+
+Administrators can inspect correlated API, MCP, SQL, worker-job, database, and
+schema telemetry under **Admin → Operations**. Capture thresholds and retention
+are owner-controlled, and credentials/SQL bind values are not retained. See
+[Admin Operations and Performance Telemetry](docs/admin-operations.md).
+
 ### Entity Resolution & Data Quality
 
 | Endpoint | Method | Description |
@@ -256,6 +263,7 @@ Optimized graph queries with composite indexes on:
 | Time (UTC) | Task | Description |
 |------------|------|-------------|
 | 02:00 | `fetch_new_filings` | Fetch new SEC EDGAR filings |
+| 03:20 | `cleanup_telemetry` | Delete expired operations telemetry |
 | 06:30 | `sync_cortellis_deals` | Sync deals from Cortellis API |
 | 07:00 | `sync_neo4j_graph` | Sync data to Neo4j graph |
 | 07:30 | `link_deals_to_filings` | Auto-match deals to 8-K filings |
