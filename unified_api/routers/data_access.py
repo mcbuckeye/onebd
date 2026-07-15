@@ -38,6 +38,25 @@ from unified_api.services.search_guard import (
     SearchRateLimited,
     advanced_search_guard,
 )
+from unified_api.services.cross_source import (
+    DATASET_POLICY_GROUP,
+    ClinicalTrialSearchRequest,
+    ContractContentSearchRequest,
+    EdgarContentSearchRequest,
+    FederatedSearchRequest,
+    LiteratureSearchRequest,
+    ProteinSearchRequest,
+    run_federated_search,
+    search_clinical_trials as run_clinical_trial_search,
+    search_contract_content as run_contract_content_search,
+    search_edgar_content as run_edgar_content_search,
+    search_literature as run_literature_search,
+    search_proteins as run_protein_search,
+)
+from unified_api.services.cross_source_dossiers import (
+    build_asset_dossier,
+    build_company_dossier,
+)
 
 
 router = APIRouter(prefix="/v1", tags=["Governed Data API"])
@@ -380,6 +399,205 @@ def entity_counts(
     """Return cached exact counts without running enriched search queries."""
     with get_cortellis_session() as session:
         return get_entity_counts(session)
+
+
+def _disabled_datasets() -> set[str]:
+    return set(get_data_access_policy().get("disabled_datasets") or [])
+
+
+def _assert_federated_datasets_enabled(request: FederatedSearchRequest) -> None:
+    disabled = _disabled_datasets()
+    blocked = sorted({
+        DATASET_POLICY_GROUP[dataset]
+        for dataset in request.datasets
+        if DATASET_POLICY_GROUP[dataset] in disabled
+    })
+    if blocked:
+        raise HTTPException(
+            status_code=403,
+            detail="Datasets disabled by owner policy: " + ", ".join(blocked),
+        )
+
+
+async def _run_guarded_source_query(worker, principal: DataPrincipal):
+    def guarded():
+        with advanced_search_guard(principal):
+            return worker()
+
+    try:
+        return await run_in_threadpool(guarded)
+    except SearchRateLimited as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": "60"},
+        ) from exc
+    except SearchBusy as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": "5"},
+        ) from exc
+    except DBAPIError as exc:
+        code = getattr(exc.orig, "pgcode", None) or getattr(
+            exc.orig, "sqlstate", None
+        )
+        if code == "57014":
+            raise HTTPException(
+                status_code=504,
+                detail="Cross-source query exceeded its execution budget",
+            ) from exc
+        raise HTTPException(
+            status_code=503,
+            detail="A source database is temporarily unavailable",
+        ) from exc
+
+
+@router.post("/edgar/search")
+async def governed_edgar_search(
+    request: EdgarContentSearchRequest,
+    principal: DataPrincipal = Depends(
+        require_data_access("sources:read", "sec_edgar")
+    ),
+):
+    """Full-text SEC filing search with company, form, CIK, and date filters."""
+
+    def worker():
+        with get_edgar_session() as session:
+            return run_edgar_content_search(session, request)
+
+    return await _run_guarded_source_query(worker, principal)
+
+
+@router.post("/contracts/search")
+async def governed_contract_search(
+    request: ContractContentSearchRequest,
+    principal: DataPrincipal = Depends(
+        require_data_access("deals:read", "cortellis_deals")
+    ),
+):
+    """Search indexed Cortellis contract text with exact entity filters."""
+
+    def worker():
+        with get_cortellis_session() as session:
+            return run_contract_content_search(session, request)
+
+    return await _run_guarded_source_query(worker, principal)
+
+
+@router.post("/literature/search")
+async def governed_literature_search(
+    request: LiteratureSearchRequest,
+    principal: DataPrincipal = Depends(
+        require_data_access("biology:read", "public_biology")
+    ),
+):
+    """Search Europe PMC records and exact target/drug evidence links."""
+
+    def worker():
+        with get_cortellis_session() as session:
+            return run_literature_search(session, request)
+
+    return await _run_guarded_source_query(worker, principal)
+
+
+@router.post("/biology/proteins/search")
+async def governed_protein_search(
+    request: ProteinSearchRequest,
+    principal: DataPrincipal = Depends(
+        require_data_access("biology:read", "public_biology")
+    ),
+):
+    """Search exact Ensembl-to-UniProt protein records."""
+
+    def worker():
+        with get_cortellis_session() as session:
+            return run_protein_search(session, request)
+
+    return await _run_guarded_source_query(worker, principal)
+
+
+@router.post("/clinical-trials/search")
+async def governed_clinical_trial_search(
+    request: ClinicalTrialSearchRequest,
+    principal: DataPrincipal = Depends(
+        require_data_access("trials:read", "clinicaltrials_gov")
+    ),
+):
+    """Search trials using text, phase, status, date, result, and entity filters."""
+
+    def worker():
+        with get_cortellis_session() as session:
+            return run_clinical_trial_search(session, request)
+
+    return await _run_guarded_source_query(worker, principal)
+
+
+@router.post("/search")
+async def governed_federated_search(
+    request: FederatedSearchRequest,
+    principal: DataPrincipal = Depends(
+        require_data_access("data:read", "federated_search")
+    ),
+):
+    """Search selected datasets and return source-grained attributed groups."""
+    _assert_federated_datasets_enabled(request)
+    return await _run_guarded_source_query(
+        lambda: run_federated_search(request),
+        principal,
+    )
+
+
+@router.get("/companies/{company_id}/dossier")
+async def governed_company_dossier(
+    company_id: int,
+    principal: DataPrincipal = Depends(
+        require_data_access("data:read", "federated_search")
+    ),
+):
+    """Return an evidence-bounded company dossier across enabled datasets."""
+    disabled = _disabled_datasets()
+    if "integrated_companies" in disabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Dataset disabled by owner policy: integrated_companies",
+        )
+    result = await _run_guarded_source_query(
+        lambda: build_company_dossier(
+            company_id,
+            disabled_datasets=disabled,
+        ),
+        principal,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return result
+
+
+@router.get("/assets/{drug_id}/dossier")
+async def governed_asset_dossier(
+    drug_id: int,
+    principal: DataPrincipal = Depends(
+        require_data_access("data:read", "federated_search")
+    ),
+):
+    """Return an evidence-bounded asset dossier across enabled datasets."""
+    disabled = _disabled_datasets()
+    if "integrated_drugs" in disabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Dataset disabled by owner policy: integrated_drugs",
+        )
+    result = await _run_guarded_source_query(
+        lambda: build_asset_dossier(
+            drug_id,
+            disabled_datasets=disabled,
+        ),
+        principal,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return result
 
 
 def _cancel_backend(pid: int) -> None:

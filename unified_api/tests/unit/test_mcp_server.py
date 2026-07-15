@@ -38,6 +38,14 @@ def test_initialize_and_tool_listing_are_valid_json_rpc():
         "get_company_oncology_assets",
         "get_company_asset_rights",
         "get_company_manufacturing_relationships",
+        "search_all_sources",
+        "search_edgar_content",
+        "search_contract_content",
+        "search_literature",
+        "search_proteins",
+        "search_clinical_trials_advanced",
+        "get_company_dossier",
+        "get_asset_dossier",
     } <= names
 
 
@@ -119,6 +127,49 @@ def test_advanced_search_tools_publish_nested_schema_and_post_json():
         "key": "onebd_secret",
     }
     assert response["result"]["structuredContent"]["items"][0]["id"] == 7
+
+
+def test_federated_search_tool_validates_and_posts_selected_datasets():
+    observed = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["method"] = request.method
+        observed["url"] = str(request.url)
+        observed["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"groups": [], "returned": 0})
+
+    server = OneBDMCPServer(
+        base_url="https://onebd.example/api/v1",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    response = server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "tools/call",
+            "params": {
+                "name": "search_all_sources",
+                "arguments": {
+                    "query": "bispecific antibody",
+                    "datasets": ["deals", "clinical_trials", "edgar"],
+                    "company_id": 1186341,
+                    "limit_per_dataset": 5,
+                },
+            },
+        }
+    )
+
+    assert observed == {
+        "method": "POST",
+        "url": "https://onebd.example/api/v1/search",
+        "body": {
+            "query": "bispecific antibody",
+            "datasets": ["deals", "clinical_trials", "edgar"],
+            "company_id": 1186341,
+            "limit_per_dataset": 5,
+        },
+    }
+    assert response["result"]["structuredContent"]["returned"] == 0
 
 
 def test_advanced_search_tool_rejects_invalid_nested_filters_before_post():

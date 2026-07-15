@@ -160,10 +160,11 @@ https://onebd.pchomelab.com/api/v1
 
 It provides live catalog, deals, deal and asset advanced search, deal detail,
 normalized financial terms, companies, drugs, clinical trials, biology
-targets/diseases, EDGAR filing metadata, and source-health endpoints. Every list
-uses a bounded cursor (`after_id`, `after_nct_id`, or an opaque advanced-search
-cursor) and a maximum of 100 records per request. It does not accept arbitrary
-SQL.
+targets/diseases/proteins, literature, EDGAR filing metadata and full text,
+indexed contract text, cross-source search, source-health endpoints, and
+evidence-bounded company/asset dossiers. Every list uses a bounded cursor,
+offset, or opaque advanced-search cursor and a maximum of 100 records per
+request. It does not accept arbitrary SQL.
 
 Interactive Swagger documentation and the machine-readable schema are public
 documentation surfaces at:
@@ -321,6 +322,90 @@ MCP arguments are the JSON body shown above; the adapter validates the nested
 document before issuing the governed HTTP request. Agents should always call
 `get_entity_counts` for totals instead of traversing cursor pages.
 
+### Cross-source search and dossiers
+
+A key with the umbrella `data:read` scope can search all enabled source groups
+and request company or asset dossiers. Source-specific keys can instead be
+limited to `deals:read`, `trials:read`, `biology:read`, or `sources:read`.
+
+| REST endpoint | MCP tool | Data and key scope |
+|---|---|---|
+| `POST /api/v1/search` | `search_all_sources` | Selected datasets, grouped by source; `data:read` |
+| `POST /api/v1/edgar/search` | `search_edgar_content` | SEC filing full text; `sources:read` |
+| `POST /api/v1/contracts/search` | `search_contract_content` | Indexed Cortellis deal-contract text; `deals:read` |
+| `POST /api/v1/literature/search` | `search_literature` | Europe PMC metadata/abstract excerpts; `biology:read` |
+| `POST /api/v1/biology/proteins/search` | `search_proteins` | UniProt records linked through exact Ensembl IDs; `biology:read` |
+| `POST /api/v1/clinical-trials/search` | `search_clinical_trials_advanced` | ClinicalTrials.gov structured records; `trials:read` |
+| `GET /api/v1/companies/{id}/dossier` | `get_company_dossier` | Evidence-bounded integrated company view; `data:read` |
+| `GET /api/v1/assets/{id}/dossier` | `get_asset_dossier` | Evidence-bounded integrated asset view; `data:read` |
+
+The federated endpoint accepts any non-empty subset of `deals`, `assets`,
+`companies`, `clinical_trials`, `edgar`, `contracts`, `literature`, `targets`,
+`diseases`, and `proteins`. It deliberately returns separate result groups and
+does not merge or compare relevance scores from unlike sources.
+
+```bash
+curl -X POST \
+  -H "X-API-Key: $ONEBD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @- \
+  https://onebd.pchomelab.com/api/v1/search <<'JSON'
+{
+  "query": "PD-L1 antibody",
+  "datasets": [
+    "deals", "assets", "clinical_trials", "edgar", "contracts",
+    "literature", "targets", "diseases", "proteins"
+  ],
+  "company_id": 1186341,
+  "date_from": "2020-01-01",
+  "date_to": "2026-12-31",
+  "limit_per_dataset": 10
+}
+JSON
+
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  https://onebd.pchomelab.com/api/v1/companies/1319537/dossier
+
+curl -H "X-API-Key: $ONEBD_API_KEY" \
+  https://onebd.pchomelab.com/api/v1/assets/120607/dossier
+```
+
+For narrower filtering, use the source-specific endpoints. Examples:
+
+```bash
+# SEC filing text by company, form, and filing date.
+curl -X POST -H "X-API-Key: $ONEBD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"license agreement","company":"Pfizer","forms":["10-K","8-K"],"date_from":"2022-01-01","limit":25}' \
+  https://onebd.pchomelab.com/api/v1/edgar/search
+
+# Trials linked to a curated company ID with structured filters.
+curl -X POST -H "X-API-Key: $ONEBD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"company_id":1319537,"conditions":["cancer"],"phases":["PHASE1"],"start_date_gte":"2020-01-01","has_results":false}' \
+  https://onebd.pchomelab.com/api/v1/clinical-trials/search
+
+# Literature can be constrained by target, asset, company, year, and access.
+curl -X POST -H "X-API-Key: $ONEBD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"checkpoint inhibitor","company_id":1186341,"publication_year_gte":2020,"open_access":true}' \
+  https://onebd.pchomelab.com/api/v1/literature/search
+```
+
+The federated date range applies where a compatible date exists: deal start,
+trial start, and SEC filing date. Contract and publication searches have their
+own filters. A company filter reaches literature, targets, diseases, and
+proteins through assets in company-linked deals; that is a relevance path, not
+proof of ownership. EDGAR is company-restricted only when OneBD has an exact
+normalized CIK; otherwise the EDGAR group is empty with an explicit limitation.
+Every result identifies its source and relationship basis.
+
+Searches are bounded, database-time-limited, and share the service's
+per-principal rate and concurrency controls. Use `/api/v1/counts` or
+`get_entity_counts` for whole-database totals; do not count by enumerating search
+pages. Offset pagination is available for the source-text searches and is
+limited to 10,000; use tighter entity/date filters for deeper retrieval.
+
 ### Company asset-intelligence calls
 
 Three evidence-bounded endpoints directly support the initial business-user
@@ -466,10 +551,13 @@ colleagues.
 
 Available MCP tools cover the catalog, simple and structured deal/asset search,
 normalized deal financial terms, companies, drugs, trials, targets, diseases,
-EDGAR documents, and source status. `get_entity_counts` returns exact cached
-deal/company/asset totals without enumeration. `search_deals_advanced` and
-`search_assets_advanced` expose the composable filters documented above. The
-dedicated `get_company_oncology_assets`, `get_company_asset_rights`, and
+proteins, literature, SEC filing text, indexed contract text, source status,
+federated search, and company/asset dossiers. `get_entity_counts` returns exact
+cached deal/company/asset totals without enumeration. `search_deals_advanced`
+and `search_assets_advanced` expose the composable filters documented above.
+`search_all_sources` returns source-separated groups, while
+`get_company_dossier` and `get_asset_dossier` provide bounded integrated views.
+The dedicated `get_company_oncology_assets`, `get_company_asset_rights`, and
 `get_company_manufacturing_relationships` tools expose the three company
 workflows above without requiring an agent to join and interpret many generic
 records. The same key scopes, revocation, dataset toggles, and owner access mode
