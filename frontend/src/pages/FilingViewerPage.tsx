@@ -12,6 +12,7 @@ import {
   ListTree,
 } from 'lucide-react';
 import api from '../lib/api';
+import { formatDate as formatCalendarDate } from '../lib/format';
 
 interface FilingChunk {
   id: number;
@@ -73,10 +74,7 @@ const PAGE_SIZE = 12;
 
 function formatDate(value: string | null) {
   if (!value) return 'Date unavailable';
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value.slice(0, 10)
-    : parsed.toLocaleDateString();
+  return formatCalendarDate(value);
 }
 
 function HighlightedText({ text, query }: { text: string; query: string }) {
