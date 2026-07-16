@@ -697,6 +697,36 @@ class SecFilingSummary(BaseModel):
     url: Optional[str] = None
 
 
+def _get_recent_sec_filings(session, company_id: int) -> List[SecFilingSummary]:
+    """Return recent SEC documents with their actual form types and filing dates."""
+    from sqlalchemy import text
+
+    result = session.execute(text("""
+        SELECT
+            d.id,
+            COALESCE(NULLIF(d.subtype, ''), NULLIF(d.doc_type, '')) AS doc_type,
+            d.title,
+            r.filing_date::date::text AS filing_date,
+            r.url
+        FROM documents d
+        JOIN raw_documents r ON d.raw_document_id = r.id
+        WHERE r.company_id = :company_id
+        ORDER BY r.filing_date DESC NULLS LAST, d.id DESC
+        LIMIT 10
+    """), {"company_id": company_id})
+
+    return [
+        SecFilingSummary(
+            id=row.id,
+            doc_type=row.doc_type,
+            title=row.title,
+            filing_date=row.filing_date,
+            url=row.url,
+        )
+        for row in result
+    ]
+
+
 class EdgarDealSummary(BaseModel):
     """Summary of Edgar-extracted deal."""
     id: int
@@ -1005,31 +1035,10 @@ async def get_company_profile(company_id: int = Path(..., gt=0)):
                         """), {"company_id": edgar_company_id})
                         sec_filings_count = count_result.scalar() or 0
 
-                        # Get recent filings
-                        filings_result = edgar_session.execute(text("""
-                            SELECT
-                                d.id,
-                                d.doc_type,
-                                d.title,
-                                r.filing_date,
-                                r.url
-                            FROM documents d
-                            JOIN raw_documents r ON d.raw_document_id = r.id
-                            WHERE r.company_id = :company_id
-                            ORDER BY r.filing_date DESC NULLS LAST
-                            LIMIT 10
-                        """), {"company_id": edgar_company_id})
-
-                        recent_sec_filings = [
-                            SecFilingSummary(
-                                id=row.id,
-                                doc_type=row.doc_type,
-                                title=row.title,
-                                filing_date=str(row.filing_date) if row.filing_date else None,
-                                url=row.url,
-                            )
-                            for row in filings_result
-                        ]
+                        recent_sec_filings = _get_recent_sec_filings(
+                            edgar_session,
+                            edgar_company_id,
+                        )
 
                         # Get Edgar-extracted deals for this company
                         deals_result = edgar_session.execute(text("""
