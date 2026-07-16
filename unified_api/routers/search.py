@@ -356,6 +356,50 @@ def _contract_excerpt(content: str, limit: int = 700) -> str:
     return cleaned[:limit] + "…" if len(cleaned) > limit else cleaned
 
 
+CONTRACT_FULLTEXT_SQL = """
+    WITH matched AS MATERIALIZED (
+    SELECT
+        cc.id as chunk_id,
+        cc.deal_id,
+        cc.contract_id,
+        cc.content,
+        ts_rank_cd(to_tsvector('english', cc.content),
+                   plainto_tsquery('english', :query)) as rank
+    FROM contract_chunks cc
+    WHERE to_tsvector('english', cc.content) @@
+          plainto_tsquery('english', :query)
+    LIMIT :candidate_limit
+    ), diverse AS (
+        SELECT matched.*,
+               ROW_NUMBER() OVER (
+                   PARTITION BY matched.deal_id
+                   ORDER BY matched.rank DESC, matched.chunk_id
+               ) AS deal_rank
+        FROM matched
+    )
+    SELECT
+        cc.chunk_id, cc.deal_id, cc.contract_id, cc.content, cc.rank,
+        d.title as deal_title,
+        (SELECT c.name FROM deal_companies dc
+         JOIN companies c ON c.id = dc.company_id
+         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal,
+        (SELECT c.id FROM deal_companies dc
+         JOIN companies c ON c.id = dc.company_id
+         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal_id,
+        (SELECT c.name FROM deal_companies dc
+         JOIN companies c ON c.id = dc.company_id
+         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner,
+        (SELECT c.id FROM deal_companies dc
+         JOIN companies c ON c.id = dc.company_id
+         WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
+    FROM diverse cc
+    JOIN deals d ON d.id = cc.deal_id
+    WHERE cc.deal_rank = 1
+    ORDER BY cc.rank DESC, cc.chunk_id
+    LIMIT :limit
+"""
+
+
 @router.get("/search/contracts")
 async def search_contracts(
     query: str = Query(..., min_length=3),
@@ -383,7 +427,12 @@ async def search_contracts(
 
     semantic_results: list[ContractSearchResult] = []
     fulltext_results: list[ContractSearchResult] = []
-    candidate_limit = min(max(limit * 20, 100), 2000)
+    semantic_candidate_limit = min(max(limit * 20, 100), 2000)
+    # Global rank computation over every hit made common contract words block
+    # an API worker for 20+ seconds. Pull a bounded set through the GIN index,
+    # then rank and diversify that set. Rare searches remain exact because all
+    # their matches fit below the cap; broad searches have an explicit scope.
+    fulltext_candidate_limit = min(max(limit * 100, 2000), 10_000)
     semantic_error: Optional[str] = None
     run_fulltext = mode in ["fulltext", "hybrid"]
 
@@ -443,7 +492,7 @@ async def search_contracts(
                     LIMIT :limit
                 """), {
                     "embedding": embedding_str,
-                    "candidate_limit": candidate_limit,
+                    "candidate_limit": semantic_candidate_limit,
                     "limit": limit,
                 })
 
@@ -471,51 +520,9 @@ async def search_contracts(
 
         if run_fulltext:
             # Fulltext search using PostgreSQL
-            fulltext_result = session.execute(text("""
-                WITH matched AS MATERIALIZED (
-                SELECT
-                    cc.id as chunk_id,
-                    cc.deal_id,
-                    cc.contract_id,
-                    cc.content,
-                    ts_rank_cd(to_tsvector('english', cc.content),
-                               plainto_tsquery('english', :query)) as rank
-                FROM contract_chunks cc
-                WHERE to_tsvector('english', cc.content) @@
-                      plainto_tsquery('english', :query)
-                ORDER BY rank DESC, cc.id
-                LIMIT :candidate_limit
-                ), diverse AS (
-                    SELECT matched.*,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY matched.deal_id
-                               ORDER BY matched.rank DESC, matched.chunk_id
-                           ) AS deal_rank
-                    FROM matched
-                )
-                SELECT
-                    cc.chunk_id, cc.deal_id, cc.contract_id, cc.content, cc.rank,
-                    d.title as deal_title,
-                    (SELECT c.name FROM deal_companies dc
-                     JOIN companies c ON c.id = dc.company_id
-                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal,
-                    (SELECT c.id FROM deal_companies dc
-                     JOIN companies c ON c.id = dc.company_id
-                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal_id,
-                    (SELECT c.name FROM deal_companies dc
-                     JOIN companies c ON c.id = dc.company_id
-                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner,
-                    (SELECT c.id FROM deal_companies dc
-                     JOIN companies c ON c.id = dc.company_id
-                     WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
-                FROM diverse cc
-                JOIN deals d ON d.id = cc.deal_id
-                WHERE cc.deal_rank = 1
-                ORDER BY cc.rank DESC, cc.chunk_id
-                LIMIT :limit
-            """), {
+            fulltext_result = session.execute(text(CONTRACT_FULLTEXT_SQL), {
                 "query": query,
-                "candidate_limit": candidate_limit,
+                "candidate_limit": fulltext_candidate_limit,
                 "limit": limit,
             })
 
@@ -581,7 +588,11 @@ async def search_contracts(
         "mode": effective_mode,
         "requested_mode": mode,
         "total": len(results),
-        "result_scope": "One highest-ranked excerpt per deal",
+        "result_scope": (
+            "One highest-ranked excerpt per deal within a bounded full-text "
+            "candidate set" if effective_mode in {"fulltext", "fulltext_fallback", "hybrid"}
+            else "One nearest semantic excerpt per deal"
+        ),
         "score_kind": (
             "cosine_similarity" if effective_mode == "semantic"
             else "fulltext_rank" if effective_mode in {"fulltext", "fulltext_fallback"}
