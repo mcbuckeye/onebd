@@ -112,7 +112,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install httpx==0.28.1
-      - name: Enforce deployed EDGAR search latency budgets
+      - name: Enforce deployed search latency and source-coverage budgets
         run: >-
           python -m unified_api.scripts.benchmark_edgar_search
           --base-url "$BASE_URL" --runs 3

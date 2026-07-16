@@ -73,3 +73,48 @@ async def test_cortellis_only_unified_search_reuses_contract_plan(monkeypatch):
     }
     assert response["total"] == 1
     assert response["results"][0]["content"] == "clean contract excerpt"
+
+
+@pytest.mark.asyncio
+async def test_both_sources_balance_incomparable_native_scores(monkeypatch):
+    async def fake_contract_search(**_kwargs):
+        return {
+            "results": [
+                {
+                    "chunk_id": index,
+                    "deal_id": index,
+                    "contract_id": index,
+                    "content": f"contract {index}",
+                    "score": 0.1 / index,
+                }
+                for index in range(1, 4)
+            ],
+        }
+
+    async def fake_edgar_search(**_kwargs):
+        return [
+            EdgarSearchResult(
+                chunk_id=100 + index,
+                document_id=100 + index,
+                text=f"filing {index}",
+                score=10.0 / index,
+                company_name="Example Inc",
+            )
+            for index in range(1, 4)
+        ]
+
+    monkeypatch.setattr(search, "search_contracts", fake_contract_search)
+    monkeypatch.setattr(edgar, "search_edgar_filings", fake_edgar_search)
+
+    response = await search.unified_search(
+        query="agreement",
+        sources="both",
+        mode="fulltext",
+        limit=4,
+    )
+
+    assert [item["source"] for item in response["results"]] == [
+        "cortellis", "edgar", "cortellis", "edgar",
+    ]
+    assert response["ranking_method"] == "source_balanced_round_robin"
+    assert "not cross-source comparable" in response["score_scope"]
