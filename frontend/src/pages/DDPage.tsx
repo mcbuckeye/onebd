@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, AlertTriangle, CheckCircle, Info, Building2, Pill, Users, DollarSign, Shield, FileDown, FileText, FileCheck2, MapPinned, Scale } from 'lucide-react';
 import api from '../lib/api';
 import { Link } from 'react-router-dom';
@@ -39,19 +39,28 @@ export default function DDPage() {
   const [ddPackage, setDdPackage] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['company_overview', 'risk_assessment']));
+  const selectedAutocompleteValue = useRef<string | null>(null);
 
   // Autocomplete
   useEffect(() => {
+    if (selectedAutocompleteValue.current === searchQuery) {
+      selectedAutocompleteValue.current = null;
+      setSuggestions([]);
+      return;
+    }
+    selectedAutocompleteValue.current = null;
     if (searchQuery.length < 2) { setSuggestions([]); return; }
+    let active = true;
     const timer = setTimeout(() => {
       api.get(`/search/autocomplete/companies?q=${encodeURIComponent(searchQuery)}&limit=8`)
-        .then(r => setSuggestions(r.data.suggestions || []))
+        .then(r => { if (active) setSuggestions(r.data.suggestions || []); })
         .catch(() => {});
     }, 300);
-    return () => clearTimeout(timer);
+    return () => { active = false; clearTimeout(timer); };
   }, [searchQuery]);
 
   const generateDD = async (companyId: number, companyName: string) => {
+    selectedAutocompleteValue.current = companyName;
     setSearchQuery(companyName);
     setSuggestions([]);
     setLoading(true);

@@ -49,6 +49,8 @@ export default function ChatPage() {
     if (q && messages.length === 0) {
       handleSend(q);
     }
+  // URL bootstrapping is intentionally handled once on initial mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

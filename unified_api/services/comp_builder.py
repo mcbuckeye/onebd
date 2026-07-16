@@ -5,6 +5,28 @@ from typing import List, Dict, Any
 import statistics
 
 
+def _canonical_match_value(field: str, value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", " ")
+    normalized = " ".join(normalized.split())
+    aliases = {
+        "indication": {
+            "nsclc": "non small cell lung cancer",
+            "non small cell lung cancer": "non small cell lung cancer",
+            "sclc": "small cell lung cancer",
+            "aml": "acute myeloid leukemia",
+            "acute myelogenous leukemia": "acute myeloid leukemia",
+            "dlbcl": "diffuse large b cell lymphoma",
+            "tnbc": "triple negative breast cancer",
+            "rcc": "renal cell carcinoma",
+        },
+        "modality": {
+            "adc": "antibody drug conjugate",
+            "antibody drug conjugate": "antibody drug conjugate",
+        },
+    }
+    return aliases.get(field, {}).get(normalized, normalized)
+
+
 def score_deal_similarity(criteria: Dict[str, str], deal: Dict[str, Any]) -> float:
     """
     Score how similar a deal is to the target criteria.
@@ -34,8 +56,8 @@ def score_deal_similarity(criteria: Dict[str, str], deal: Dict[str, Any]) -> flo
             continue
         total_weight += weight
 
-        crit_val = str(criteria[field]).lower()
-        deal_val = str(deal.get(field, "")).lower()
+        crit_val = _canonical_match_value(field, criteria[field])
+        deal_val = _canonical_match_value(field, deal.get(field, ""))
 
         if not deal_val:
             continue

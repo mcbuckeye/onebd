@@ -5,11 +5,9 @@ Routes to LangGraph agent with Neo4j, SQL, and pgvector tools.
 from typing import Optional, List
 import os
 import structlog
-import json
 from datetime import datetime
-from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
@@ -26,12 +24,7 @@ except ImportError:
         return lambda f: f
 
 # Agent imports
-from unified_api.services.agentic_rag import (
-    AgenticRagRequest,
-    AgenticRagResponse,
-    ReasoningStep,
-    ToolType
-)
+from unified_api.services.agentic_rag import ToolType
 from unified_api.services.agentic_rag.tools import Neo4jTool, SQLTool, PgVectorTool
 from unified_api.config import settings
 
@@ -181,6 +174,93 @@ def _get_evidence_tool():
     )
 
 
+async def _governed_agentic_response(
+    message: str,
+    *,
+    started_at: datetime,
+) -> AgenticRagChatResponse | None:
+    """Use the governed relational query library for supported metrics.
+
+    Agentic RAG previously asked the model to rediscover the Cortellis schema
+    for even the product's own examples.  That produced title-only oncology
+    matching and treated a JSON blob as financial data.  Shared governed SQL
+    keeps supported questions consistent with Ask and exposes the exact query
+    in the reasoning trace.
+    """
+    from unified_api.routers.chat import _build_governed_sql, _governed_synthesis
+
+    query = _build_governed_sql(message, [])
+    if query is None:
+        return None
+
+    tool = _get_sql_tool()
+    if tool is None:
+        return None
+    result = await tool.execute(query)
+    latency_ms = int((datetime.utcnow() - started_at).total_seconds() * 1000)
+    if not result.success:
+        return AgenticRagChatResponse(
+            success=False,
+            answer=(
+                "The governed Cortellis query could not be completed. "
+                "No factual answer was generated."
+            ),
+            partial=True,
+            reasoning_steps=[ReasoningStepResponse(
+                hop_number=1,
+                thought="Run a governed structured-data query",
+                tool_type="sql",
+                query=query,
+                result_summary="Governed SQL failed",
+                error=result.error,
+            )],
+            total_hops=1,
+            latency_ms=latency_ms,
+        )
+
+    rows = result.data or []
+    synthesis = _governed_synthesis(message, rows)
+    if synthesis is not None:
+        answer = synthesis["answer"]
+    elif rows:
+        answer = (
+            f"The governed query returned {len(rows)} structured records. "
+            "Open the reasoning step to review the exact query."
+        )
+    else:
+        answer = (
+            "No supporting structured Cortellis records matched this question. "
+            "This is a bounded database result, not proof that no such activity exists."
+        )
+
+    return AgenticRagChatResponse(
+        success=True,
+        answer=answer,
+        partial=False,
+        reasoning_steps=[ReasoningStepResponse(
+            hop_number=1,
+            thought=(
+                "Use the same governed relational definition as Ask so therapy "
+                "area, modality, and disclosed financial values are matched in "
+                "their structured tables."
+            ),
+            tool_type="sql",
+            query=query,
+            result_summary=f"Retrieved {len(rows)} governed records",
+            duration_ms=latency_ms,
+            attempts=[AttemptResponse(
+                attempt_number=1,
+                query=query,
+                success=True,
+                row_count=len(rows),
+                duration_ms=latency_ms,
+            )],
+        )],
+        total_hops=1,
+        latency_ms=latency_ms,
+    )
+
+
 @router.post("/chat", response_model=AgenticRagChatResponse)
 async def agentic_rag_chat(
     request: AgenticRagChatRequest,
@@ -196,6 +276,13 @@ async def agentic_rag_chat(
     4. Synthesize final answer with citations
     """
     start_time = datetime.utcnow()
+
+    governed = await _governed_agentic_response(
+        request.message,
+        started_at=start_time,
+    )
+    if governed is not None:
+        return governed
 
     # Check OpenAI available
     if not openai_client:

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import api, { CompanyProfile, CompanyStrategyIntelligence } from '../lib/api';
+import { decodeSourceEntities } from '../lib/format';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1'];
 
@@ -93,7 +94,7 @@ export default function CompanyProfilePage() {
           <Building2 className="w-6 h-6 text-blue-400" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">{company.name}</h1>
+          <h1 className="text-2xl font-bold text-slate-100">{decodeSourceEntities(company.name)}</h1>
           <div className="flex gap-3 mt-1 text-sm text-slate-500">
             {company.company_type && <span>{company.company_type}</span>}
             {company.ticker && <span>({company.ticker})</span>}
@@ -177,7 +178,7 @@ export default function CompanyProfilePage() {
                   to={`/company/${p.company_id}`}
                   className="text-slate-300 truncate hover:text-blue-400"
                 >
-                  {p.company_name}
+                  {decodeSourceEntities(p.company_name)}
                 </Link>
                 <span className="text-slate-500 text-xs">{p.deal_count} deals</span>
               </div>
@@ -381,7 +382,7 @@ export default function CompanyProfilePage() {
           <tbody>
             {recent_deals?.map((d: any) => (
               <tr key={d.id} className="border-t border-slate-800/50">
-                <td className="py-2"><Link to={`/deals/${d.id}`} className="text-slate-200 hover:text-blue-400">{d.title}</Link></td>
+                <td className="py-2"><Link to={`/deals/${d.id}`} className="text-slate-200 hover:text-blue-400">{decodeSourceEntities(d.title)}</Link></td>
                 <td className="py-2 text-slate-400 text-xs">{d.deal_type || d.agreement_type || '—'}</td>
                 <td className="py-2 text-slate-300">{formatValue(d.total_value)}</td>
                 <td className="py-2 text-slate-500 text-xs">{formatDate(d.date_start)}</td>

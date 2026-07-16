@@ -1,10 +1,16 @@
 """Deal-phase derivation and archived-response repair tests."""
 
+from unittest.mock import Mock
+
 from src.deal_phases import (
     derive_deal_phases,
     derive_deal_phases_from_xml,
+    derive_drug_phases,
+    derive_drug_phases_from_xml,
     select_highest_phase,
 )
+from src.models import Drug
+from src.sync import DealTransformer
 
 
 def test_select_highest_development_phase_across_assets():
@@ -73,3 +79,65 @@ def test_derive_deal_phases_from_archived_xml_with_namespace():
         "Phase 2 Clinical",
         "Phase 3 Clinical",
     )
+
+
+def test_per_drug_phase_derivation_preserves_no_development_reported():
+    parsed = {
+        "Drugs": {"Drug": [{
+            "@attributes": {"id": "120606"},
+            "DrugNameDisplay": "DB-002",
+            "PhaseHighestStart": {
+                "@attributes": {"id": "PC"},
+                "@text": "Preclinical",
+            },
+            "PhaseHighestNow": {
+                "@attributes": {"id": "NDR"},
+                "@text": "No Development Reported",
+            },
+        }]},
+    }
+
+    assert derive_drug_phases(parsed) == [{
+        "drug_id": 120606,
+        "name": "DB-002",
+        "phase_highest_start": "Preclinical",
+        "phase_highest_start_id": "PC",
+        "phase_highest_now": "No Development Reported",
+        "phase_highest_now_id": "NDR",
+    }]
+
+
+def test_per_drug_phase_derivation_from_archive_xml():
+    xml = """
+    <Deal id="264960"><Drugs><Drug id="120606">
+      <DrugNameDisplay>DB-002</DrugNameDisplay>
+      <PhaseHighestStart id="PC">Preclinical</PhaseHighestStart>
+      <PhaseHighestNow id="NDR">No Development Reported</PhaseHighestNow>
+    </Drug></Drugs></Deal>
+    """
+
+    assert derive_drug_phases_from_xml(xml)[0]["phase_highest_now"] == (
+        "No Development Reported"
+    )
+
+
+def test_existing_drug_is_refreshed_from_later_expanded_response():
+    transformer = DealTransformer.__new__(DealTransformer)
+    drug = Drug(
+        id=120606,
+        name_display="DB-002",
+        phase_highest_start="Preclinical",
+        phase_highest_now="Preclinical",
+    )
+    transformer.session = Mock()
+    transformer._drug_cache = {drug.id: drug}
+
+    refreshed = transformer.get_or_create_drug(
+        drug.id,
+        "DB-002",
+        phase_start="Preclinical",
+        phase_now="No Development Reported",
+    )
+
+    assert refreshed is drug
+    assert refreshed.phase_highest_now == "No Development Reported"

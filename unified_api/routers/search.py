@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import text
 import structlog
 
-from unified_api.config import settings
 from unified_api.routers.auth import get_current_user
 from unified_api.services.auth import TokenData
 
@@ -642,9 +641,6 @@ async def unified_search(
     - **edgar**: Only SEC filings
     - **both**: Combined results (default)
     """
-    from sqlalchemy import text
-    from unified_api.services.database import get_cortellis_session, get_edgar_session
-
     logger.info(
         "Unified search",
         query=query,
@@ -659,120 +655,56 @@ async def unified_search(
     # Search Cortellis contracts
     if sources in ["cortellis", "both"]:
         try:
-            with get_cortellis_session() as session:
-                if mode == "fulltext":
-                    cortellis_result = session.execute(text("""
-                        SELECT
-                            cc.id as chunk_id,
-                            cc.deal_id,
-                            cc.contract_id,
-                            cc.content,
-                            ts_rank(to_tsvector('english', cc.content), plainto_tsquery('english', :query)) as score,
-                            d.title as deal_title,
-                            (SELECT c.name FROM deal_companies dc
-                             JOIN companies c ON c.id = dc.company_id
-                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal,
-                            (SELECT c.id FROM deal_companies dc
-                             JOIN companies c ON c.id = dc.company_id
-                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Principal' LIMIT 1) as principal_id,
-                            (SELECT c.name FROM deal_companies dc
-                             JOIN companies c ON c.id = dc.company_id
-                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner,
-                            (SELECT c.id FROM deal_companies dc
-                             JOIN companies c ON c.id = dc.company_id
-                             WHERE dc.deal_id = cc.deal_id AND dc.role = 'Partner' LIMIT 1) as partner_id
-                        FROM contract_chunks cc
-                        JOIN deals d ON d.id = cc.deal_id
-                        WHERE to_tsvector('english', cc.content) @@ plainto_tsquery('english', :query)
-                        ORDER BY score DESC
-                        LIMIT :limit
-                    """), {"query": query, "limit": per_source_limit})
-
-                    for row in cortellis_result:
-                        results.append(UnifiedSearchResult(
-                            source="cortellis",
-                            chunk_id=row.chunk_id,
-                            deal_id=row.deal_id,
-                            contract_id=row.contract_id,
-                            content=row.content[:500] + "..." if len(row.content) > 500 else row.content,
-                            score=float(row.score),
-                            deal_title=row.deal_title,
-                            principal_company=row.principal,
-                            partner_company=row.partner,
-                            principal_company_id=row.principal_id,
-                            partner_company_id=row.partner_id,
-                        ))
+            contract_results = await search_contracts(
+                query=query,
+                mode=mode,
+                limit=per_source_limit,
+            )
+            for row in contract_results["results"]:
+                results.append(UnifiedSearchResult(
+                    source="cortellis",
+                    chunk_id=row["chunk_id"],
+                    deal_id=row["deal_id"],
+                    contract_id=row["contract_id"],
+                    content=row["content"],
+                    score=float(row["score"]),
+                    deal_title=row.get("deal_title"),
+                    principal_company=row.get("principal_company"),
+                    partner_company=row.get("partner_company"),
+                    principal_company_id=row.get("principal_company_id"),
+                    partner_company_id=row.get("partner_company_id"),
+                ))
         except Exception as e:
             logger.error("Cortellis search failed", error=str(e))
 
     # Search Edgar SEC filings (use source database directly for index access)
     if sources in ["edgar", "both"]:
         try:
-            from unified_api.services.database import get_edgar_source_session
+            # Keep the cross-source endpoint on the same bounded/adaptive plan
+            # as /edgar/search.  The previous duplicate SQL ranked every match
+            # for broad words such as "agreement" and could run for minutes.
+            from unified_api.routers.edgar import search_edgar_filings
 
-            with get_edgar_source_session() as session:
-                if mode == "fulltext":
-                    # Query source database tables directly (has the GIN index)
-                    edgar_result = session.execute(text("""
-                        WITH candidates AS MATERIALIZED (
-                            SELECT
-                                c.id AS chunk_id,
-                                c.document_id,
-                                c.text AS content,
-                                ts_rank_cd(
-                                    to_tsvector('english', c.text),
-                                    plainto_tsquery('english', :query)
-                                ) AS score,
-                                COALESCE(d.subtype, d.doc_type) AS doc_type,
-                                d.accession_no,
-                                r.filing_date,
-                                e.name AS company_name,
-                                e.ticker
-                            FROM chunks c
-                            JOIN documents d ON c.document_id = d.id
-                            JOIN raw_documents r ON d.raw_document_id = r.id
-                            JOIN companies e ON r.company_id = e.id
-                            WHERE to_tsvector('english', c.text) @@
-                                  plainto_tsquery('english', :query)
-                            ORDER BY score DESC, c.id
-                            LIMIT :candidate_limit
-                        ), diverse AS (
-                            SELECT candidates.*,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY document_id
-                                       ORDER BY score DESC, chunk_id
-                                   ) AS document_rank
-                            FROM candidates
-                        )
-                        SELECT
-                            chunk_id, document_id, content, score,
-                            doc_type, accession_no, filing_date, company_name, ticker
-                        FROM diverse
-                        WHERE document_rank = 1
-                        ORDER BY score DESC, chunk_id
-                        LIMIT :limit
-                    """), {
-                        "query": query,
-                        "limit": per_source_limit,
-                        "candidate_limit": max(
-                            per_source_limit,
-                            settings.edgar_fulltext_candidate_limit,
-                        ),
-                    })
-
-                    for row in edgar_result:
-                        results.append(UnifiedSearchResult(
-                            source="edgar",
-                            chunk_id=row.chunk_id,
-                            document_id=row.document_id,
-                            content=row.content[:500] + "..." if len(row.content) > 500 else row.content,
-                            score=float(row.score),
-                            doc_type=row.doc_type,
-                            accession_no=row.accession_no,
-                            filing_date=str(row.filing_date) if row.filing_date else None,
-                            company_name=row.company_name,
-                            company_ticker=row.ticker,
-                        ))
+            edgar_results = await search_edgar_filings(
+                query=query,
+                mode=mode,
+                doc_type=None,
+                company=None,
+                limit=per_source_limit,
+            )
+            for row in edgar_results:
+                results.append(UnifiedSearchResult(
+                    source="edgar",
+                    chunk_id=row.chunk_id,
+                    document_id=row.document_id,
+                    content=row.text,
+                    score=row.score,
+                    doc_type=row.doc_type,
+                    accession_no=row.accession_no,
+                    filing_date=row.filing_date,
+                    company_name=row.company_name,
+                    company_ticker=row.company_ticker,
+                ))
         except Exception as e:
             logger.error("Edgar search failed", error=str(e))
 

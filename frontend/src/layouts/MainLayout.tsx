@@ -94,6 +94,7 @@ export default function MainLayout() {
               end={to === '/'}
               onClick={() => setMobileOpen(false)}
               title={sidebarCollapsed ? label : undefined}
+              aria-label={sidebarCollapsed ? label : undefined}
               className={({ isActive }) => `
                 flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm
                 transition-colors
@@ -114,6 +115,8 @@ export default function MainLayout() {
               <NavLink
                 to="/admin"
                 onClick={() => setMobileOpen(false)}
+                title={sidebarCollapsed ? 'Admin' : undefined}
+                aria-label={sidebarCollapsed ? 'Admin' : undefined}
                 className={({ isActive }) => `
                   flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm
                   transition-colors
@@ -134,6 +137,8 @@ export default function MainLayout() {
           <NavLink
             to="/settings"
             onClick={() => setMobileOpen(false)}
+            title={sidebarCollapsed ? 'Settings' : undefined}
+            aria-label={sidebarCollapsed ? 'Settings' : undefined}
             className={({ isActive }) => `
               flex items-center gap-3 px-4 py-2.5 mx-2 mt-2 rounded-lg text-sm
               transition-colors
@@ -198,7 +203,7 @@ export default function MainLayout() {
           <ThemeToggle />
 
           {/* User avatar */}
-          <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-medium">
+          <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-medium" aria-label={`Signed in as ${user.name || user.email}`} title={user.name || user.email}>
             {user?.name?.[0] || user?.email?.[0] || '?'}
           </div>
         </header>

@@ -22,8 +22,14 @@ export default function NotificationDropdown() {
   const fetchNotifications = async () => {
     try {
       const res = await api.get('/notifications');
-      const data = Array.isArray(res.data) ? res.data : (res.data?.notifications || []);
-      setNotifications(data);
+      const data = Array.isArray(res.data)
+        ? res.data
+        : (res.data?.items || res.data?.notifications || []);
+      setNotifications(data.map((item: any) => ({
+        ...item,
+        message: item.message || item.content || 'Notification',
+        is_read: item.is_read ?? false,
+      })));
     } catch (e) {
       console.error('Failed to fetch notifications:', e);
     }
@@ -55,12 +61,14 @@ export default function NotificationDropdown() {
     }
   };
 
-  const unreadCount = notifications.length;
+  const unreadCount = notifications.filter(notification => !notification.is_read).length;
 
   return (
     <div className="relative" ref={dropdownRef}>
       <button 
         onClick={() => setOpen(!open)} 
+        aria-label={`Notifications (${unreadCount} unread)`}
+        aria-expanded={open}
         className="relative p-2 rounded-lg hover:bg-slate-800"
       >
         <Bell className="w-5 h-5 text-slate-400" />
@@ -96,7 +104,8 @@ export default function NotificationDropdown() {
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {n.deal_id && (
                         <button 
-                          onClick={() => { navigate(`/search?deal=${n.deal_id}`); setOpen(false); }}
+                          onClick={() => { navigate(`/deals/${n.deal_id}`); setOpen(false); }}
+                          aria-label={`Open deal ${n.deal_id}`}
                           className="p-1 text-slate-500 hover:text-blue-400 opacity-0 group-hover:opacity-100"
                         >
                           <ExternalLink className="w-3.5 h-3.5" />
@@ -104,6 +113,7 @@ export default function NotificationDropdown() {
                       )}
                       <button 
                         onClick={() => dismiss(n.id)}
+                        aria-label="Dismiss notification"
                         className="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100"
                       >
                         <X className="w-3.5 h-3.5" />

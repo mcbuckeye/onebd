@@ -4,6 +4,7 @@ import { Filter, ChevronDown, X, Search as SearchIcon, Download } from 'lucide-r
 import api, { SearchFilters, SearchResponse, FilterOptions } from '../lib/api';
 import EmptyState from '../components/EmptyState';
 import DealDetailSlidePanel from '../components/DealDetailSlidePanel';
+import { decodeSourceEntities, formatDate } from '../lib/format';
 
 function FilterSelect({ label, options, value, onChange, multi = false }: {
   label: string;
@@ -130,6 +131,8 @@ export default function SearchPage() {
 
   useEffect(() => {
     search(1);
+  // Load the unfiltered initial result set once; later searches are explicit.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const clearFilters = () => {
@@ -377,24 +380,24 @@ export default function SearchPage() {
                 >
                   <td className="px-4 py-3">
                     <span className="text-slate-200 hover:text-blue-400 font-medium">
-                      {deal.title}
+                      {decodeSourceEntities(deal.title)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-slate-400">
                     {deal.principal_company ? (
                       deal.principal_company_id ? (
-                        <Link to={`/company/${deal.principal_company_id}`} className="hover:text-blue-400">{deal.principal_company}</Link>
+                        <Link to={`/company/${deal.principal_company_id}`} className="hover:text-blue-400">{decodeSourceEntities(deal.principal_company)}</Link>
                       ) : (
-                        <span>{deal.principal_company}</span>
+                        <span>{decodeSourceEntities(deal.principal_company)}</span>
                       )
                     ) : '—'}
                   </td>
                   <td className="px-4 py-3 text-slate-400">
                     {deal.partner_company ? (
                       deal.partner_company_id ? (
-                        <Link to={`/company/${deal.partner_company_id}`} className="hover:text-blue-400">{deal.partner_company}</Link>
+                        <Link to={`/company/${deal.partner_company_id}`} className="hover:text-blue-400">{decodeSourceEntities(deal.partner_company)}</Link>
                       ) : (
-                        <span>{deal.partner_company}</span>
+                        <span>{decodeSourceEntities(deal.partner_company)}</span>
                       )
                     ) : '—'}
                   </td>
@@ -407,7 +410,7 @@ export default function SearchPage() {
                       'bg-slate-700 text-slate-400'
                     }`}>{deal.status || '—'}</span>
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs">{deal.date_start || '—'}</td>
+                  <td className="px-4 py-3 text-slate-500 text-xs">{formatDate(deal.date_start)}</td>
                 </tr>
               ))}
             </tbody>

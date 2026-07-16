@@ -6,6 +6,7 @@ import {
 import { TrendingUp, DollarSign, Globe, Building2, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { decodeSourceEntities, formatDate } from '../lib/format';
 
 type Tab = 'trends' | 'valuations' | 'geographic' | 'competitive';
 
@@ -23,6 +24,7 @@ function DataBadge({ n, disclosed }: { n: number; disclosed?: number }) {
 
 function formatValue(v: number | null): string {
   if (v === null || v === undefined) return '—';
+  if (v === 0) return '$0';
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}B`;
   if (v >= 1) return `$${v.toFixed(0)}M`;
   return `$${(v * 1000).toFixed(0)}K`;
@@ -244,7 +246,8 @@ export default function AnalyticsPage() {
               {/* YoY Growth */}
               {yoy && yoy.data && (
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                  <h2 className="text-sm font-medium text-slate-400 mb-4">Year-over-Year Growth</h2>
+                  <h2 className="text-sm font-medium text-slate-400 mb-1">Year-over-Year Growth</h2>
+                  <p className="mb-4 text-xs text-slate-600">The current year is compared with the same calendar period of the prior year.</p>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
@@ -260,7 +263,7 @@ export default function AnalyticsPage() {
                           const growthRate = row.deal_count_growth_pct ?? row.growth_rate ?? null;
                           return (
                           <tr key={row.year} className="border-t border-slate-800/50">
-                            <td className="py-2 text-slate-300">{row.year}</td>
+                            <td className="py-2 text-slate-300">{row.year}{row.is_ytd ? ' YTD' : ''}</td>
                             <td className="py-2 text-slate-300">{row.deal_count?.toLocaleString()}</td>
                             <td className={`py-2 ${growthRate > 0 ? 'text-green-400' : growthRate < 0 ? 'text-red-400' : 'text-slate-500'}`}>
                               {growthRate !== null ? `${growthRate > 0 ? '+' : ''}${growthRate.toFixed(1)}%` : '—'}
@@ -381,7 +384,8 @@ export default function AnalyticsPage() {
             <div className="space-y-6">
               {/* Top Acquirers */}
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-                <h2 className="text-sm font-medium text-slate-400 mb-4">Top Acquirers by Deal Count</h2>
+                <h2 className="text-sm font-medium text-slate-400 mb-1">Top Partner-Role Organizations by Deal Count</h2>
+                <p className="mb-4 text-xs text-slate-600">Cortellis “Partner” roles include licensees, collaborators, funders, and other counterparties; this is not limited to legal acquirers.</p>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={acquirerRows.slice(0, 15)} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -411,12 +415,12 @@ export default function AnalyticsPage() {
                       {topDealRows.slice(0, 15).map((d: any, i: number) => (
                         <tr key={i} className="border-t border-slate-800/50">
                           <td className="py-2 text-slate-200 max-w-xs truncate">
-                            <Link to={`/deals/${d.id}`} className="hover:text-blue-400 hover:underline">{d.title || `Deal ${d.id}`}</Link>
+                            <Link to={`/deals/${d.id}`} className="hover:text-blue-400 hover:underline">{decodeSourceEntities(d.title || `Deal ${d.id}`)}</Link>
                           </td>
                           <td className="py-2 text-slate-400">{d.principal || d.principal_company || '—'}</td>
                           <td className="py-2 text-slate-400">{d.partner || d.partner_company || '—'}</td>
                           <td className="py-2 text-slate-300 font-medium">{formatValue(d.total_value ?? d.value)}</td>
-                          <td className="py-2 text-slate-500 text-xs">{d.date_start || d.date || '—'}</td>
+                          <td className="py-2 text-slate-500 text-xs">{formatDate(d.date_start || d.date)}</td>
                         </tr>
                       ))}
                     </tbody>

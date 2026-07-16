@@ -96,8 +96,30 @@ def _modality_patterns(value: str) -> list[str]:
     return [f"%{item}%" for item in aliases.get(normalized, [value.strip()])]
 
 
+def _indication_patterns(value: str) -> list[str]:
+    """Expand common clinical abbreviations into source-taxonomy spellings."""
+    normalized = value.strip().lower().replace("_", " ")
+    aliases = {
+        "nsclc": ["nsclc", "non%small%cell%lung%cancer"],
+        "non small cell lung cancer": [
+            "nsclc",
+            "non%small%cell%lung%cancer",
+        ],
+        "sclc": ["sclc", "small%cell%lung%cancer"],
+        "aml": ["aml", "acute%myeloid%leukemia", "acute%myelogenous%leukemia"],
+        "dlbcl": ["dlbcl", "diffuse%large%b%cell%lymphoma"],
+        "tnbc": ["tnbc", "triple%negative%breast%cancer"],
+        "rcc": ["rcc", "renal%cell%carcinoma"],
+    }
+    return [f"%{item}%" for item in aliases.get(normalized, [value.strip()])]
+
+
 def _modality_match_sql(column: str) -> str:
     return f"{column} ILIKE ANY(CAST(:modality_patterns AS text[]))"
+
+
+def _indication_match_sql(column: str) -> str:
+    return f"{column} ILIKE ANY(CAST(:indication_patterns AS text[]))"
 
 
 def build_comp_filters(req: CompBuildRequest) -> tuple[list[str], dict]:
@@ -110,10 +132,10 @@ def build_comp_filters(req: CompBuildRequest) -> tuple[list[str], dict]:
             d.id IN (
                 SELECT di.deal_id FROM deal_indications di
                 JOIN indications i ON i.id = di.indication_id
-                WHERE i.name ILIKE :indication
+                WHERE i.name ILIKE ANY(CAST(:indication_patterns AS text[]))
             )
         """)
-        params["indication"] = f"%{req.indication}%"
+        params["indication_patterns"] = _indication_patterns(req.indication)
 
     if req.phase:
         conditions.append("d.phase_highest_start ILIKE :phase")
@@ -166,7 +188,9 @@ def build_comp_filters(req: CompBuildRequest) -> tuple[list[str], dict]:
 
 def build_comp_dimension_selects(req: CompBuildRequest) -> tuple[str, str]:
     """Return the requested matching dimension instead of an arbitrary linked value."""
-    indication_filter = " AND i.name ILIKE :indication" if req.indication else ""
+    indication_filter = (
+        " AND " + _indication_match_sql("i.name") if req.indication else ""
+    )
     modality_filter = (
         " AND " + _modality_match_sql("t.name") if req.modality else ""
     )

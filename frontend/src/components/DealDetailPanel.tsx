@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { DealDetail, SelectedEntity } from '../types';
 import EvidenceTimelineList from './EvidenceTimelineList';
+import { stripSourceMarkup } from '../lib/format';
 
 interface DealDetailPanelProps {
   dealId: number | null;
@@ -94,7 +95,7 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
             ) : deal ? (
               <>
                 <h2 className="text-lg font-semibold text-white leading-tight">
-                  {deal.title}
+                  {stripSourceMarkup(deal.title)}
                 </h2>
                 <div className="flex items-center gap-3 mt-2">
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${
@@ -164,7 +165,7 @@ export default function DealDetailPanel({ dealId, apiBase, onClose, onEntityClic
                   <div className="mt-4">
                     <div className="text-xs text-slate-500 mb-1">Summary</div>
                     <p className="text-sm text-slate-300 leading-relaxed">
-                      {deal.summary}
+                      {stripSourceMarkup(deal.summary)}
                     </p>
                   </div>
                 )}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Building2, FileText, Search } from 'lucide-react';
 import api from '../lib/api';
+import { formatDate } from '../lib/format';
 
 interface FilingResult {
   document_id: number;
@@ -58,15 +59,17 @@ export default function FilingsPage() {
     setLoading(true);
     setError('');
     try {
-      const response = await api.get('/search/unified', {
+      const response = await api.get('/edgar/search', {
         params: {
           query: normalized,
-          sources: 'edgar',
           mode: 'fulltext',
           limit: 40,
         },
       });
-      setResults(response.data.results || []);
+      setResults((response.data || []).map((item: any) => ({
+        ...item,
+        content: item.text,
+      })));
       setSearched(true);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Filing search failed');
@@ -132,7 +135,7 @@ export default function FilingsPage() {
                 </div>
                 <div className="ml-3 flex shrink-0 items-center gap-2">
                   <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs text-slate-300">{result.doc_type || 'Filing'}</span>
-                  <span className="hidden text-xs text-slate-500 sm:inline">{result.filing_date?.slice(0, 10)}</span>
+                  <span className="hidden text-xs text-slate-500 sm:inline">{formatDate(result.filing_date)}</span>
                   <ArrowRight className="h-4 w-4 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-blue-400" />
                 </div>
               </div>

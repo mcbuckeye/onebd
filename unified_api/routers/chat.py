@@ -554,14 +554,20 @@ def _build_governed_sql(message: str, resolved_entities: List[dict]) -> Optional
             "company.ticker, company.cik LIMIT 1"
         )
     asks_for_ranked_adc_deals = (
-        bool(re.search(r"\b(?:largest|biggest|top)\b", normalized))
-        and any(term in normalized for term in ("deal", "transaction"))
+        any(term in normalized for term in ("deal", "transaction"))
         and (
             bool(re.search(r"\badcs?\b", normalized))
             or "antibody drug conjugate" in normalized
             or "antibody-drug conjugate" in normalized
         )
         and any(term in normalized for term in ("oncology", "cancer", "tumor"))
+        and (
+            bool(re.search(r"\b(?:largest|biggest|top)\b", normalized))
+            or (
+                any(term in normalized for term in ("find", "list", "show"))
+                and any(term in normalized for term in ("disclosed", "value", "values"))
+            )
+        )
     )
     if asks_for_ranked_adc_deals:
         return (
@@ -1125,8 +1131,8 @@ def _governed_synthesis(message: str, data: List[dict]) -> Optional[dict]:
             rows.append(
                 f"| {_markdown_cell(row.get('title') or row.get('id'))} "
                 f"| {_markdown_cell(row.get('status'))} "
-                f"| {_markdown_cell(row.get('date_start'))} "
-                f"| {_markdown_cell(row.get('total_value_usd_millions'))} |"
+                f"| {_markdown_cell(str(row.get('date_start') or '—')[:10])} "
+                f"| {_markdown_cell(_format_millions(row.get('total_value_usd_millions')))} |"
             )
         rate = round(100 * disclosed / eligible, 1) if eligible else None
         coverage_rate = f" ({rate}%)" if rate is not None else ""

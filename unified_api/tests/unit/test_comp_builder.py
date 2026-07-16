@@ -38,6 +38,16 @@ class TestCompMatchScoring:
         score = score_deal_similarity({}, {"indication": "test"})
         assert score == 0.0
 
+    def test_common_abbreviation_matches_full_indication_name(self):
+        from unified_api.services.comp_builder import score_deal_similarity
+
+        score = score_deal_similarity(
+            {"indication": "NSCLC"},
+            {"indication": "Non-small-cell lung cancer"},
+        )
+
+        assert score == 1.0
+
 
 class TestCompSetStats:
     """Test statistical summary of comp set."""
@@ -106,7 +116,7 @@ class TestCompCandidateFilters:
         assert "drug_chembl_records" in where
         assert params["modality_patterns"] == ["%bispecific%"]
         assert "NOT ILIKE ALL" in where
-        assert "i.name ILIKE :indication" in indication_select
+        assert "indication_patterns" in indication_select
         assert "modality_patterns" in modality_select
 
     def test_adc_shorthand_expands_to_full_modality_names(self):
@@ -116,6 +126,14 @@ class TestCompCandidateFilters:
 
         assert "%adc%" in params["modality_patterns"]
         assert "%antibody-drug conjugate%" in params["modality_patterns"]
+
+    def test_nsclc_expands_to_source_taxonomy_spellings(self):
+        from unified_api.routers.comps import CompBuildRequest, build_comp_filters
+
+        _, params = build_comp_filters(CompBuildRequest(indication="NSCLC"))
+
+        assert "%nsclc%" in params["indication_patterns"]
+        assert "%non%small%cell%lung%cancer%" in params["indication_patterns"]
 
     def test_terminated_deals_can_be_included_explicitly(self):
         from unified_api.routers.comps import CompBuildRequest, build_comp_filters

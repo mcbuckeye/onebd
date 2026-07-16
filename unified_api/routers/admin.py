@@ -401,7 +401,8 @@ async def get_audit_log(
         rows = session.execute(
             text("""
                 SELECT 
-                    id, user_id, action, entity_type, entity_id, 
+                    audit_log.id, audit_log.user_id, audit_log.action,
+                    audit_log.entity_type, audit_log.entity_id,
                     audit_log.ip_address, audit_log.metadata,
                     audit_log.created_at, users.email AS user_email
                 FROM audit_log

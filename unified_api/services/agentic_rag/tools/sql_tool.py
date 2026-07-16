@@ -50,6 +50,56 @@ class SQLTool(BaseTool):
       cik: character varying (SEC CIK number)
       ticker: character varying (stock symbol)
 
+    Table: therapy_areas
+      id: integer (PRIMARY KEY)
+      name: character varying (for example, Cancer)
+      Join with deals.therapy_area_id = therapy_areas.id. Do not infer a
+      therapy area by requiring words to appear in the deal title.
+
+    Table: deal_finance_summary
+      deal_id: integer (PRIMARY KEY, foreign key to deals.id)
+      total_projected_current_amount: double precision
+      total_projected_current_currency: character varying
+      total_projected_current_unit: character varying
+      total_projected_current_disclosure_status: character varying
+      total_projected_signing_amount: double precision
+      total_paid_amount: double precision
+      Financial values are stored here, not in deals.category_raw. Compare
+      current projected totals only when currency='USD' and unit='Million',
+      and describe them as projected headline totals rather than realized cash.
+
+    Table: deal_technologies
+      deal_id: integer
+      technology_id: integer
+
+    Table: technologies
+      id: integer (PRIMARY KEY)
+      name: character varying (structured modality/technology label)
+      Join through deal_technologies for modality questions such as ADC.
+
+    Table: deal_indications
+      deal_id: integer
+      indication_id: integer
+
+    Table: indications
+      id: integer (PRIMARY KEY)
+      name: character varying
+
+    Table: deal_companies
+      deal_id: integer
+      company_id: integer
+      role: character varying ('Principal' or 'Partner')
+
+    Table: deal_drugs
+      deal_id: integer
+      drug_id: integer
+
+    Table: drugs
+      id: integer (PRIMARY KEY)
+      name_display: character varying
+      phase_highest_start: character varying
+      phase_highest_now: character varying
+
     Table: cortellis_deal_sources
       deal_id: integer (foreign key to deals.id)
       source_id: character varying (Cortellis citation identifier)
@@ -100,7 +150,8 @@ class SQLTool(BaseTool):
     - LIMIT for large result sets
 
     Example queries:
-    - Oncology deals: "SELECT id, title, status, phase_highest_start FROM deals WHERE title ILIKE '%oncology%' LIMIT 10"
+    - Oncology deals: "SELECT d.id, d.title, d.status FROM deals d JOIN therapy_areas ta ON ta.id=d.therapy_area_id WHERE ta.name='Cancer' LIMIT 10"
+    - Disclosed ADC oncology deals: "SELECT DISTINCT d.id, d.title, f.total_projected_current_amount FROM deals d JOIN therapy_areas ta ON ta.id=d.therapy_area_id JOIN deal_technologies dt ON dt.deal_id=d.id JOIN technologies t ON t.id=dt.technology_id JOIN deal_finance_summary f ON f.deal_id=d.id WHERE ta.name='Cancer' AND (t.name ILIKE '%antibody%drug%conjugate%' OR LOWER(t.name) ~ '(^|[^a-z])adc([^a-z]|$)') AND f.total_projected_current_amount IS NOT NULL AND f.total_projected_current_currency='USD' AND f.total_projected_current_unit='Million' ORDER BY f.total_projected_current_amount DESC LIMIT 20"
     - Phase 3 deals: "SELECT title, phase_highest_start FROM deals WHERE phase_highest_start = 'Phase 3' ORDER BY date_start DESC LIMIT 20"
     - Find Pfizer: "SELECT name, ticker, company_type FROM companies WHERE name ILIKE '%pfizer%'"
     - M&A deals: "SELECT title, deal_type FROM deals WHERE is_merger_acquisition = true LIMIT 10"

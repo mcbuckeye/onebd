@@ -17,7 +17,11 @@ from src.cortellis_catalog import (
 )
 from src.config import CortellisConfig
 from src.cortellis_archive import archive_expanded_deal_record
-from src.deal_phases import derive_deal_phases
+from src.deal_phases import (
+    derive_deal_phases,
+    derive_drug_phases,
+    derive_drug_phases_from_xml,
+)
 from unified_api.config import settings
 from unified_api.services.database import (
     get_cortellis_engine,
@@ -148,6 +152,11 @@ def _claim_candidates(batch_size: int) -> list[int]:
                         state.status = 'in_progress'
                         AND state.last_attempt_at < NOW() - INTERVAL '1 hour'
                     )
+                    OR (
+                        state.status = 'completed'
+                        AND deal.date_change_last IS NOT NULL
+                        AND deal.date_change_last > state.completed_at
+                    )
                   )
                 ORDER BY
                     CASE WHEN state.deal_id IS NULL THEN 0 ELSE 1 END,
@@ -234,6 +243,87 @@ def _archive_source_response(
     return response_sha256
 
 
+_UPSERT_DRUG_PHASES_SQL = text("""
+    INSERT INTO drugs (
+        id, name_display,
+        phase_highest_start_id, phase_highest_start,
+        phase_highest_now_id, phase_highest_now
+    ) VALUES (
+        :drug_id, :name,
+        :phase_highest_start_id, :phase_highest_start,
+        :phase_highest_now_id, :phase_highest_now
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        name_display = COALESCE(NULLIF(EXCLUDED.name_display, ''), drugs.name_display),
+        phase_highest_start_id = COALESCE(
+            EXCLUDED.phase_highest_start_id, drugs.phase_highest_start_id
+        ),
+        phase_highest_start = COALESCE(
+            EXCLUDED.phase_highest_start, drugs.phase_highest_start
+        ),
+        phase_highest_now_id = COALESCE(
+            EXCLUDED.phase_highest_now_id, drugs.phase_highest_now_id
+        ),
+        phase_highest_now = COALESCE(
+            EXCLUDED.phase_highest_now, drugs.phase_highest_now
+        )
+""")
+
+
+def _upsert_drug_phases(session, rows: list[dict[str, Any]]) -> int:
+    """Persist exact per-asset phase fields from expanded Cortellis records."""
+    deduplicated = {int(row["drug_id"]): row for row in rows}
+    if not deduplicated:
+        return 0
+    session.execute(_UPSERT_DRUG_PHASES_SQL, list(deduplicated.values()))
+    return len(deduplicated)
+
+
+def reconcile_archived_drug_phases_batch(
+    session,
+    *,
+    after_deal_id: int = 0,
+    batch_size: int = 5000,
+) -> dict[str, int | bool]:
+    """Repair asset phases from already archived lossless API responses."""
+    batch_size = max(1, min(20_000, int(batch_size)))
+    archives = session.execute(text("""
+        SELECT deal.id AS deal_id, archive.response_body
+        FROM deals deal
+        JOIN LATERAL (
+            SELECT history.response_body
+            FROM cortellis_expanded_response_history history
+            WHERE history.deal_id = deal.id
+            ORDER BY history.last_fetched_at DESC, history.id DESC
+            LIMIT 1
+        ) archive ON TRUE
+        WHERE deal.id > :after_deal_id
+        ORDER BY deal.id
+        LIMIT :batch_size
+    """), {
+        "after_deal_id": int(after_deal_id),
+        "batch_size": batch_size,
+    }).mappings().all()
+
+    drug_rows: dict[int, dict[str, Any]] = {}
+    parse_errors = 0
+    for archive in archives:
+        try:
+            for row in derive_drug_phases_from_xml(archive["response_body"]):
+                drug_rows[int(row["drug_id"])] = row
+        except Exception:
+            parse_errors += 1
+    updated = _upsert_drug_phases(session, list(drug_rows.values()))
+    next_deal_id = int(archives[-1]["deal_id"]) if archives else int(after_deal_id)
+    return {
+        "deals_processed": len(archives),
+        "drugs_updated": updated,
+        "parse_errors": parse_errors,
+        "next_deal_id": next_deal_id,
+        "complete": len(archives) < batch_size,
+    }
+
+
 def _record_success(
     deal_id: int,
     expanded_record: DealRecord,
@@ -255,6 +345,10 @@ def _record_success(
         if not expanded_sha256:
             raise ValueError(f"Expanded response for deal {deal_id} was empty")
         phase_start, phase_now = derive_deal_phases(expanded_record.parsed_data)
+        _upsert_drug_phases(
+            session,
+            derive_drug_phases(expanded_record.parsed_data),
+        )
         session.execute(text("""
             UPDATE deals
             SET phase_highest_start = :phase_start,
