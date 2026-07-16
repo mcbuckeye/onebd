@@ -719,15 +719,45 @@ async def unified_search(
         except Exception as e:
             logger.error("Edgar search failed", error=str(e))
 
-    # Sort combined results by score and limit
-    results.sort(key=lambda x: x.score, reverse=True)
-    results = results[:limit]
+    if sources == "both":
+        # Cortellis full-text rank and EDGAR rank use different query plans and
+        # scales. Comparing the raw numbers suppressed almost every Cortellis
+        # result even when both sources were explicitly requested. Preserve
+        # each source's native ordering and interleave them for honest coverage.
+        by_source = {
+            source: sorted(
+                (result for result in results if result.source == source),
+                key=lambda result: result.score,
+                reverse=True,
+            )
+            for source in ("cortellis", "edgar")
+        }
+        balanced: list[UnifiedSearchResult] = []
+        max_source_results = max((len(items) for items in by_source.values()), default=0)
+        for rank in range(max_source_results):
+            for source in ("cortellis", "edgar"):
+                if rank < len(by_source[source]):
+                    balanced.append(by_source[source][rank])
+                    if len(balanced) == limit:
+                        break
+            if len(balanced) == limit:
+                break
+        results = balanced
+        ranking_method = "source_balanced_round_robin"
+        score_scope = "Scores are native to each source and are not cross-source comparable."
+    else:
+        results.sort(key=lambda result: result.score, reverse=True)
+        results = results[:limit]
+        ranking_method = "source_native_score"
+        score_scope = "Scores are comparable within the selected source only."
 
     return {
         "query": query,
         "mode": mode,
         "sources": sources,
         "total": len(results),
+        "ranking_method": ranking_method,
+        "score_scope": score_scope,
         "results": [r.model_dump() for r in results],
     }
 
