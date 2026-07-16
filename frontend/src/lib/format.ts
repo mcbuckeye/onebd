@@ -47,3 +47,37 @@ export function stripSourceMarkup(value: string | null | undefined): string {
     .replace(/\n\s*\n+/g, '\n\n')
     .trim();
 }
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/** Convert API error payloads, including FastAPI validation arrays, to display-safe text. */
+export function formatApiError(error: unknown, fallback: string): string {
+  const errorRecord = asRecord(error);
+  const response = asRecord(errorRecord?.response);
+  const data = asRecord(response?.data);
+  const detail = data?.detail;
+
+  if (typeof detail === 'string' && detail.trim()) return detail;
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map(item => asRecord(item)?.msg)
+      .filter((message): message is string => typeof message === 'string' && Boolean(message.trim()));
+    if (messages.length > 0) return messages.join('; ');
+  }
+
+  const detailRecord = asRecord(detail);
+  if (typeof detailRecord?.msg === 'string' && detailRecord.msg.trim()) {
+    return detailRecord.msg;
+  }
+
+  if (typeof errorRecord?.message === 'string' && errorRecord.message.trim()) {
+    return errorRecord.message;
+  }
+
+  return fallback;
+}

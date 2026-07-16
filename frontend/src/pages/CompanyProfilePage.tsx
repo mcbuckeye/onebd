@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import api, { CompanyProfile, CompanyStrategyIntelligence } from '../lib/api';
-import { decodeSourceEntities } from '../lib/format';
+import { decodeSourceEntities, formatApiError } from '../lib/format';
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1'];
 
@@ -48,13 +48,14 @@ export default function CompanyProfilePage() {
     setStrategyError('');
     api.get(`/company/${companyId}/profile`)
       .then(res => setProfile(res.data))
-      .catch(err => setError(err.response?.data?.detail || 'Failed to load'))
+      .catch(err => setError(formatApiError(err, 'Failed to load company profile')))
       .finally(() => setLoading(false));
     api.get(`/company/${companyId}/strategy-intelligence?years=5&entrant_days=365`)
       .then(res => setStrategy(res.data))
-      .catch(err => setStrategyError(
-        err.response?.data?.detail || 'Strategy intelligence is unavailable',
-      ));
+      .catch(err => setStrategyError(formatApiError(
+        err,
+        'Strategy intelligence is unavailable',
+      )));
   }, [companyId]);
 
   if (loading) return <div className="p-6 animate-pulse"><div className="h-8 w-64 bg-slate-800 rounded" /></div>;

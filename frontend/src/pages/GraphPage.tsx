@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Network, Search } from 'lucide-react';
 import ForceGraph2D from 'react-force-graph-2d';
 import api from '../lib/api';
+import { formatApiError } from '../lib/format';
+import { graphNodePath } from '../lib/graphNavigation';
 
 interface GraphNode {
   id: string;
   name: string;
+  type?: 'company' | 'deal';
   val: number; // deal count → node size
   color: string;
   company_type?: string;
@@ -67,7 +70,8 @@ export default function GraphPage() {
       // Transform to graph format
       const nodes: GraphNode[] = (data.nodes || []).map((n: any) => ({
         id: String(n.id),
-        name: n.name || n.label,
+        name: String(n.name || n.label || 'Unnamed company'),
+        type: n.type,
         val: Math.max(3, Math.sqrt(n.deal_count || n.size || 1) * 3),
         color: String(n.id) === String(companyId) ? '#3b82f6' : '#6366f1',
         company_type: n.company_type,
@@ -85,7 +89,7 @@ export default function GraphPage() {
     } catch (e: any) {
       console.error(e);
       setGraphData(null);
-      setError(e.response?.data?.detail || 'The company network could not be loaded.');
+      setError(formatApiError(e, 'The company network could not be loaded.'));
     } finally {
       setLoading(false);
     }
@@ -101,7 +105,8 @@ export default function GraphPage() {
 
       const nodes: GraphNode[] = (data.nodes || []).map((n: any) => ({
         id: String(n.id),
-        name: n.name || n.label,
+        name: String(n.name || n.label || 'Unnamed company'),
+        type: n.type,
         val: Math.max(3, Math.sqrt(n.deal_count || n.size || 1) * 2),
         color: '#6366f1',
         company_type: n.company_type,
@@ -119,7 +124,7 @@ export default function GraphPage() {
     } catch (e: any) {
       console.error(e);
       setGraphData(null);
-      setError(e.response?.data?.detail || 'The industry network could not be loaded.');
+      setError(formatApiError(e, 'The industry network could not be loaded.'));
     } finally {
       setLoading(false);
     }
@@ -200,7 +205,10 @@ export default function GraphPage() {
                 nodeColor="color"
                 linkWidth={(link: any) => Math.sqrt(link.deal_count)}
                 linkColor={() => '#334155'}
-                onNodeClick={(node: any) => navigate(`/company/${node.id}`)}
+                onNodeClick={(node: GraphNode) => {
+                  const path = graphNodePath(node);
+                  if (path) navigate(path);
+                }}
                 nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                   const label = node.name;
                   const fontSize = 12 / globalScale;
