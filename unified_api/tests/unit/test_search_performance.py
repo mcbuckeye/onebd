@@ -1,6 +1,7 @@
 """Startup coordination for search-performance schema changes."""
 
 import unified_api.services.search_performance as search_performance
+from unified_api.routers.search import CONTRACT_FULLTEXT_SQL
 
 
 class _ScalarResult:
@@ -65,3 +66,11 @@ def test_contract_search_indexes_are_part_of_current_schema_version():
     assert "embedding vector_cosine_ops" in statements
     assert "contract_chunks USING gin" in statements
     assert "to_tsvector('english', content)" in statements
+
+
+def test_contract_fulltext_bounds_candidates_before_ranking():
+    matched_cte = CONTRACT_FULLTEXT_SQL.split("), diverse AS", 1)[0]
+
+    assert "LIMIT :candidate_limit" in matched_cte
+    assert "ORDER BY rank" not in matched_cte
+    assert "ORDER BY cc.rank DESC" in CONTRACT_FULLTEXT_SQL
