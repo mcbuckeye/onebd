@@ -108,6 +108,40 @@ def derive_deal_phases(parsed_data: dict[str, Any]) -> tuple[Optional[str], Opti
     return select_highest_phase(starts), select_highest_phase(currents)
 
 
+def derive_drug_phases(parsed_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return source-reported per-drug phases from one expanded deal record."""
+    drugs_container = parsed_data.get("Drugs")
+    if not isinstance(drugs_container, dict):
+        return []
+    drugs = drugs_container.get("Drug") or []
+    if isinstance(drugs, dict):
+        drugs = [drugs]
+    if not isinstance(drugs, list):
+        return []
+
+    result: list[dict[str, Any]] = []
+    for drug in drugs:
+        if not isinstance(drug, dict):
+            continue
+        attributes = drug.get("@attributes")
+        raw_id = attributes.get("id") if isinstance(attributes, dict) else None
+        try:
+            drug_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        start = drug.get("PhaseHighestStart")
+        current = drug.get("PhaseHighestNow")
+        result.append({
+            "drug_id": drug_id,
+            "name": _text(drug.get("DrugNameDisplay")),
+            "phase_highest_start": _text(start) or None,
+            "phase_highest_start_id": _phase_id(start) or None,
+            "phase_highest_now": _text(current) or None,
+            "phase_highest_now_id": _phase_id(current) or None,
+        })
+    return result
+
+
 def derive_deal_phases_from_xml(
     response_body: str,
 ) -> tuple[Optional[str], Optional[str]]:
@@ -126,3 +160,41 @@ def derive_deal_phases_from_xml(
         elif tag == "PhaseHighestNow":
             currents.append(phase)
     return select_highest_phase(starts), select_highest_phase(currents)
+
+
+def derive_drug_phases_from_xml(response_body: str) -> list[dict[str, Any]]:
+    """Read exact per-drug phase fields from an archived expanded response."""
+    root = ET.fromstring(response_body)
+    result: list[dict[str, Any]] = []
+    for drug in root.iter():
+        if drug.tag.rsplit("}", 1)[-1] != "Drug":
+            continue
+        try:
+            drug_id = int(drug.attrib.get("id", ""))
+        except ValueError:
+            continue
+        values: dict[str, tuple[str | None, str | None]] = {}
+        name = ""
+        for child in drug:
+            tag = child.tag.rsplit("}", 1)[-1]
+            text_value = (child.text or "").strip()
+            if tag == "DrugNameDisplay":
+                name = text_value
+            elif tag in {"PhaseHighestStart", "PhaseHighestNow"}:
+                values[tag] = (text_value or None, child.attrib.get("id"))
+        # Timeline DrugLink elements also use the Drug tag in some source
+        # variants; retain only expanded drug records with a display name or
+        # explicit phase field.
+        if not name and not values:
+            continue
+        start, start_id = values.get("PhaseHighestStart", (None, None))
+        current, current_id = values.get("PhaseHighestNow", (None, None))
+        result.append({
+            "drug_id": drug_id,
+            "name": name,
+            "phase_highest_start": start,
+            "phase_highest_start_id": start_id,
+            "phase_highest_now": current,
+            "phase_highest_now_id": current_id,
+        })
+    return result

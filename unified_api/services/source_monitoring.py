@@ -22,6 +22,7 @@ class SourcePolicy:
     label: str
     warn_hours: float
     critical_hours: float
+    expected_interval_hours: float | None = None
 
 
 SOURCE_POLICIES = {
@@ -34,16 +35,19 @@ SOURCE_POLICIES = {
         "Cortellis Catalog Reconciliation",
         24 * 8,
         24 * 14,
+        24 * 7,
     ),
     "cortellis_contracts": SourcePolicy(
         "Cortellis Contract Metadata Scan",
-        1,
-        3,
+        30,
+        48,
+        24,
     ),
     "cortellis_deal_api": SourcePolicy(
         "Cortellis Raw Response and Source Scan",
-        1,
-        3,
+        30,
+        48,
+        24,
     ),
     "edgar_recent": SourcePolicy(
         "EDGAR Recent Sync",
@@ -416,6 +420,15 @@ def classify_source_job(
     if last_success is not None and last_success.tzinfo is None:
         last_success = last_success.replace(tzinfo=timezone.utc)
 
+    cadence = ""
+    if policy.expected_interval_hours:
+        if policy.expected_interval_hours % 24 == 0:
+            days = policy.expected_interval_hours / 24
+            interval = f"{days:g}d"
+        else:
+            interval = f"{policy.expected_interval_hours:g}h"
+        cadence = f"; scheduled every {interval}"
+
     if status == "failed":
         return "critical", f"last run failed: {row.get('last_error') or 'unknown error'}"
     if status == "partial":
@@ -427,10 +440,10 @@ def classify_source_job(
 
     age_hours = (now - last_success).total_seconds() / 3600
     if age_hours >= policy.critical_hours:
-        return "critical", f"last successful run was {age_hours:.1f}h ago"
+        return "critical", f"last successful run was {age_hours:.1f}h ago{cadence}"
     if age_hours >= policy.warn_hours:
-        return "warning", f"last successful run was {age_hours:.1f}h ago"
-    return "ok", f"last successful run was {age_hours:.1f}h ago"
+        return "warning", f"last successful run was {age_hours:.1f}h ago{cadence}"
+    return "ok", f"last successful run was {age_hours:.1f}h ago{cadence}"
 
 
 def notification_transition(previous: str | None, current: str) -> str | None:

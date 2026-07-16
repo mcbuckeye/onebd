@@ -48,6 +48,9 @@ interface DataHealth {
     detail: string;
     duration_seconds?: number | null;
     counts?: Record<string, number | null>;
+    last_success_at?: string | null;
+    consecutive_failures?: number;
+    next_retry_at?: string | null;
   }>;
   sections?: Record<string, DataHealth['checks']>;
   sources: {
@@ -176,6 +179,9 @@ export default function DashboardPage() {
     ? ((pulse.deal_count_30d - pulse.deal_count_prev_30d) / pulse.deal_count_prev_30d * 100)
     : 0;
   const dealTrend = dealChange > 5 ? 'up' : dealChange < -5 ? 'down' : 'flat';
+  const attentionChecks = (dataHealth?.checks || []).filter(
+    check => check.status === 'warning' || check.status === 'critical',
+  );
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -374,6 +380,25 @@ export default function DashboardPage() {
             </div>
           </div>
           <p className="mb-4 text-sm text-slate-400">{dataHealth.status_reason}</p>
+
+          {attentionChecks.length > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-300">
+                Needs attention
+              </div>
+              <div className="space-y-2">
+                {attentionChecks.map(check => (
+                  <div key={`attention-${check.name}`} className="text-xs leading-5 text-slate-400">
+                    <span className={check.status === 'critical' ? 'font-medium text-red-300' : 'font-medium text-amber-300'}>
+                      {check.name}:
+                    </span>{' '}{check.detail}
+                    {check.consecutive_failures ? ` · ${check.consecutive_failures} consecutive failures` : ''}
+                    {check.next_retry_at ? ` · next retry ${new Date(check.next_retry_at).toLocaleString()}` : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Health Checks */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">

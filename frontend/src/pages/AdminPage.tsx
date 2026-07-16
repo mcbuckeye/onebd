@@ -39,6 +39,7 @@ export default function AdminPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditOffset, setAuditOffset] = useState(0);
+  const [auditError, setAuditError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -56,6 +57,8 @@ export default function AdminPage() {
     } else if (activeTab === 'audit') {
       loadAuditLogs();
     }
+  // Tab changes are the trigger; pagination has its own effect below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   const loadUsers = async () => {
@@ -72,12 +75,15 @@ export default function AdminPage() {
 
   const loadAuditLogs = async () => {
     setIsLoading(true);
+    setAuditError('');
     try {
       const resp = await api.get(`/admin/audit-log?limit=50&offset=${auditOffset}`);
       setAuditLogs(resp.data.logs);
       setAuditTotal(resp.data.total);
     } catch (err: any) {
       console.error('Failed to load audit logs:', err);
+      setAuditLogs([]);
+      setAuditError(err.response?.data?.detail || 'Audit logs could not be loaded.');
     } finally {
       setIsLoading(false);
     }
@@ -85,6 +91,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (activeTab === 'audit') loadAuditLogs();
+  // Audit pagination is the trigger; activeTab only gates the request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auditOffset]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -339,6 +347,15 @@ export default function AdminPage() {
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
                       Loading audit logs...
+                    </td>
+                  </tr>
+                ) : auditError ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-red-300">
+                      <div>{auditError}</div>
+                      <button type="button" onClick={loadAuditLogs} className="mt-3 rounded border border-red-400/30 px-3 py-1.5 text-xs hover:bg-red-500/10">
+                        Retry
+                      </button>
                     </td>
                   </tr>
                 ) : auditLogs.length === 0 ? (

@@ -30,12 +30,19 @@ export default function GraphPage() {
   const [companySearch, setCompanySearch] = useState('');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [error, setError] = useState('');
+  const selectedAutocompleteValue = useRef<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   // Company autocomplete
   useEffect(() => {
+    if (selectedAutocompleteValue.current === companySearch) {
+      selectedAutocompleteValue.current = null;
+      setSuggestions([]);
+      return;
+    }
+    selectedAutocompleteValue.current = null;
     if (companySearch.length < 2) { setSuggestions([]); return; }
     let active = true;
     const timer = setTimeout(() => {
@@ -156,6 +163,7 @@ export default function GraphPage() {
               <button
                 key={s.id}
                 onClick={() => {
+                  selectedAutocompleteValue.current = s.name;
                   setCompanySearch(s.name);
                   setSuggestions([]);
                   loadCompanyNetwork(s.id);

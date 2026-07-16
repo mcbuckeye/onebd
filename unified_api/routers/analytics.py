@@ -14,6 +14,7 @@ Dashboard endpoints:
 - Company comparison (head-to-head)
 - Year-over-year growth
 """
+from datetime import date
 from typing import Optional, List
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -534,10 +535,10 @@ async def get_top_acquirers(
     limit: int = Query(20, ge=1, le=100),
 ):
     """
-    Get most active acquirers/licensees.
+    Get organizations most frequently recorded in the Cortellis Partner role.
 
-    Returns companies with the most deals as partner (acquiring/licensing in),
-    with optional filtering.
+    Partner can mean licensee, collaborator, funder, or another counterparty;
+    it is not a legal-acquirer classification. Returns optional filters.
     """
     from sqlalchemy import text
     from unified_api.services.database import get_cortellis_session
@@ -612,6 +613,10 @@ async def get_top_acquirers(
     return {
         "acquirers": acquirers,
         "count": len(acquirers),
+        "metric_definition": (
+            "Organizations recorded in the Cortellis Partner role; includes "
+            "licensees, collaborators, funders, and other counterparties."
+        ),
     }
 
 
@@ -1389,6 +1394,7 @@ async def get_yoy_growth(
     conditions = [
         "d.date_start IS NOT NULL",
         f"d.date_start >= CURRENT_DATE - INTERVAL '{years} years'",
+        "d.date_start < CURRENT_DATE + INTERVAL '1 day'",
     ]
     params = {}
 
@@ -1419,6 +1425,25 @@ async def get_yoy_growth(
         result = session.execute(text(query), params)
         rows = list(result)
 
+        prior_ytd_conditions = [
+            "d.date_start >= DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '1 year'",
+            "d.date_start < CURRENT_DATE - INTERVAL '1 year' + INTERVAL '1 day'",
+        ]
+        if therapy_area:
+            prior_ytd_conditions.append("ta.name ILIKE :therapy_area")
+        prior_ytd = session.execute(text(f"""
+            SELECT COUNT(*) AS deal_count,
+                   SUM(f.total_projected_current_amount) AS total_value,
+                   AVG(f.total_projected_current_amount) AS avg_value,
+                   COUNT(f.total_projected_current_amount) AS disclosed_count
+            FROM deals d
+            LEFT JOIN therapy_areas ta ON ta.id = d.therapy_area_id
+            LEFT JOIN deal_finance_summary f ON f.deal_id = d.id
+              AND f.total_projected_current_currency = 'USD'
+              AND f.total_projected_current_unit = 'Million'
+            WHERE {" AND ".join(prior_ytd_conditions)}
+        """), params).mappings().one()
+
     # Calculate YoY changes
     data = []
     prev = None
@@ -1431,15 +1456,27 @@ async def get_yoy_growth(
             "disclosed_count": row.disclosed_count,
         }
 
-        if prev:
-            if prev["deal_count"] > 0:
+        is_current_ytd = row.year == date.today().year
+        comparison = dict(prior_ytd) if is_current_ytd else prev
+        if comparison:
+            if comparison["deal_count"] > 0:
                 entry["deal_count_growth_pct"] = round(
-                    (row.deal_count - prev["deal_count"]) / prev["deal_count"] * 100, 1
+                    (row.deal_count - comparison["deal_count"])
+                    / comparison["deal_count"] * 100,
+                    1,
                 )
-            if prev.get("total_value") and entry.get("total_value"):
+            if comparison.get("total_value") and entry.get("total_value"):
                 entry["value_growth_pct"] = round(
-                    (entry["total_value"] - prev["total_value"]) / prev["total_value"] * 100, 1
+                    (entry["total_value"] - float(comparison["total_value"]))
+                    / float(comparison["total_value"]) * 100,
+                    1,
                 )
+
+        if is_current_ytd:
+            entry["is_ytd"] = True
+            entry["comparison_basis"] = "same period of prior year"
+            entry["comparison_deal_count"] = int(prior_ytd["deal_count"] or 0)
+            entry["period_through"] = date.today().isoformat()
 
         data.append(entry)
         prev = entry

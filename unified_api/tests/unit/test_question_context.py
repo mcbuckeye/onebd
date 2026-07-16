@@ -373,6 +373,7 @@ def test_company_deal_activity_comparison_binds_every_canonical_id():
         "What are the largest ADC deals in oncology?",
         "Show the biggest antibody-drug conjugate deals in cancer",
         "Top ADC transactions for solid tumors",
+        "Find oncology deals involving ADCs with disclosed values",
     ],
 )
 def test_ranked_oncology_adc_deals_use_governed_schema_semantics(question):

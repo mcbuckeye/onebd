@@ -660,6 +660,14 @@ async def data_health_check():
             "category": "freshness",
             "status": severity,
             "detail": detail,
+            "source_key": "cortellis_catalog",
+            "last_started_at": catalog_state.get("last_started_at"),
+            "last_completed_at": catalog_state.get("last_completed_at"),
+            "last_success_at": catalog_state.get("last_success_at"),
+            "duration_seconds": catalog_state.get("duration_seconds"),
+            "counts": catalog_state.get("counts") or {},
+            "consecutive_failures": catalog_state.get("consecutive_failures", 0),
+            "next_retry_at": catalog_state.get("next_retry_at"),
         })
 
     contract_state = common_states.get("cortellis_contracts")
@@ -677,6 +685,14 @@ async def data_health_check():
             "category": "freshness",
             "status": severity,
             "detail": detail,
+            "source_key": "cortellis_contracts",
+            "last_started_at": contract_state.get("last_started_at"),
+            "last_completed_at": contract_state.get("last_completed_at"),
+            "last_success_at": contract_state.get("last_success_at"),
+            "duration_seconds": contract_state.get("duration_seconds"),
+            "counts": contract_state.get("counts") or {},
+            "consecutive_failures": contract_state.get("consecutive_failures", 0),
+            "next_retry_at": contract_state.get("next_retry_at"),
         })
 
     deal_api_state = common_states.get("cortellis_deal_api")
@@ -694,6 +710,14 @@ async def data_health_check():
             "category": "freshness",
             "status": severity,
             "detail": detail,
+            "source_key": "cortellis_deal_api",
+            "last_started_at": deal_api_state.get("last_started_at"),
+            "last_completed_at": deal_api_state.get("last_completed_at"),
+            "last_success_at": deal_api_state.get("last_success_at"),
+            "duration_seconds": deal_api_state.get("duration_seconds"),
+            "counts": deal_api_state.get("counts") or {},
+            "consecutive_failures": deal_api_state.get("consecutive_failures", 0),
+            "next_retry_at": deal_api_state.get("next_retry_at"),
         })
 
     for source_key, label in (

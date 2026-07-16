@@ -4,22 +4,11 @@ import { X, Building2, DollarSign, Calendar, FileText, MapPin, Tag, TrendingUp }
 import api from '../lib/api';
 import { DealDetail } from '../types';
 import EvidenceTimelineList from './EvidenceTimelineList';
+import { formatDate, stripSourceMarkup } from '../lib/format';
 
 interface DealDetailSlidePanelProps {
   dealId: number | null;
   onClose: () => void;
-}
-
-function stripXml(text: string): string {
-  if (!text) return '';
-  return text
-    .replace(/<para>\s*/g, '')
-    .replace(/<\/para>/g, '\n')
-    .replace(/<ulink[^>]*>/g, '')
-    .replace(/<\/ulink>/g, '')
-    .replace(/\[\s*\d+\s*\]/g, '') // remove [4343749] reference numbers
-    .replace(/\n{3,}/g, '\n\n')    // collapse multiple newlines
-    .trim();
 }
 
 function formatValue(
@@ -139,7 +128,7 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
               <div className="h-6 bg-slate-800 rounded w-3/4 animate-pulse" />
             ) : (
               <h2 className="text-lg font-semibold text-slate-100 leading-tight">
-                {deal?.title || 'Loading...'}
+                {deal ? stripSourceMarkup(deal.title) : 'Loading...'}
               </h2>
             )}
           </div>
@@ -168,8 +157,8 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                 {deal.date_start && (
                   <div className="flex items-center gap-1 text-xs text-slate-400">
                     <Calendar className="w-3.5 h-3.5" />
-                    {deal.date_start}
-                    {deal.date_end && ` – ${deal.date_end}`}
+                    {formatDate(deal.date_start)}
+                    {deal.date_end && ` – ${formatDate(deal.date_end)}`}
                   </div>
                 )}
               </div>
@@ -206,7 +195,7 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-slate-200 font-medium hover:text-blue-400">
-                            {company.name}
+                            {stripSourceMarkup(company.name)}
                           </span>
                           <span className="text-xs text-slate-500 uppercase">{company.role}</span>
                         </div>
@@ -414,7 +403,7 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                           )}
                         </div>
                         {event.summary && (
-                          <div className="text-xs text-slate-400 mt-1">{stripXml(event.summary || '')}</div>
+                          <div className="text-xs text-slate-400 mt-1">{stripSourceMarkup(event.summary)}</div>
                         )}
                         {event.stage && (
                           <span className="inline-block mt-2 px-2 py-0.5 bg-slate-700 text-slate-300 rounded text-xs">
@@ -500,7 +489,7 @@ export default function DealDetailSlidePanel({ dealId, onClose }: DealDetailSlid
                 <section>
                   <h3 className="text-sm font-medium text-slate-400 mb-3">Summary</h3>
                   <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg text-sm text-slate-300 leading-relaxed whitespace-pre-line">
-                    {stripXml(deal.summary)}
+                    {stripSourceMarkup(deal.summary)}
                   </div>
                 </section>
               )}

@@ -3,6 +3,7 @@ import { Newspaper, Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useToast } from '../contexts/ToastContext';
+import { decodeSourceEntities, formatDate } from '../lib/format';
 
 function formatValue(v: number | null): string {
   if (v === null || v === undefined) return '—';
@@ -93,12 +94,12 @@ export default function BriefingPage() {
                   {section.content.map((d: any, j: number) => (
                     <div key={j} className="flex items-center justify-between py-2 border-b border-slate-800 last:border-0">
                       <div>
-                        <Link to={`/deals/${d.id}`} className="text-sm text-slate-200 hover:text-blue-400 hover:underline">{d.title || `Deal ${d.id}`}</Link>
-                        <div className="text-xs text-slate-500">{d.principal} → {d.partner} • {d.type}</div>
+                        <Link to={`/deals/${d.id}`} className="text-sm text-slate-200 hover:text-blue-400 hover:underline">{decodeSourceEntities(d.title || `Deal ${d.id}`)}</Link>
+                        <div className="text-xs text-slate-500">{decodeSourceEntities(d.principal)} → {decodeSourceEntities(d.partner)} • {decodeSourceEntities(d.type)}</div>
                       </div>
                       <div className="text-right flex-shrink-0">
                         <div className="text-sm text-slate-300 font-medium">{formatValue(d.value)}</div>
-                        <div className="text-xs text-slate-500">{d.date}</div>
+                        <div className="text-xs text-slate-500">{formatDate(d.date)}</div>
                       </div>
                     </div>
                   ))}

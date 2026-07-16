@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Bell, Building2, Check, Plus, Search, UserPlus, X } from 'lucide-react';
 import api from '../lib/api';
 import { useToast } from '../contexts/ToastContext';
+import { decodeSourceEntities, formatDate } from '../lib/format';
 
 interface CompetitorDeal {
   id: number;
@@ -291,7 +292,7 @@ export default function CompetitorsPage() {
                   </div>
                   <div>
                     <Link to={`/company/${comp.company_id}`} className="text-lg font-semibold text-slate-200 hover:text-blue-400">
-                      {comp.company_name}
+                      {decodeSourceEntities(comp.company_name)}
                     </Link>
                     <div className="text-xs text-slate-500">{comp.company_type || 'Company'}</div>
                   </div>
@@ -333,10 +334,10 @@ export default function CompetitorsPage() {
                   <div className="space-y-1">
                     {comp.recent_deals.map(deal => (
                       <div key={deal.id} className="flex items-center justify-between text-sm py-1">
-                        <span className="text-slate-400 truncate max-w-md">{deal.title}</span>
+                        <span className="text-slate-400 truncate max-w-md">{decodeSourceEntities(deal.title)}</span>
                         <div className="flex items-center gap-3 flex-shrink-0">
                           <span className="text-slate-500 text-xs">{deal.agreement_type || deal.status}</span>
-                          <span className="text-slate-500 text-xs">{deal.date_start}</span>
+                          <span className="text-slate-500 text-xs">{formatDate(deal.date_start)}</span>
                         </div>
                       </div>
                     ))}

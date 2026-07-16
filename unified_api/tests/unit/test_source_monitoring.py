@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from unified_api.services.source_monitoring import (
     _source_counts,
+    SOURCE_POLICIES,
     SourcePolicy,
     classify_source_job,
     notification_transition,
@@ -39,6 +40,18 @@ def test_stale_source_moves_from_warning_to_critical():
     )
     assert warning == "warning"
     assert critical == "critical"
+
+
+def test_daily_cortellis_scans_are_not_stale_after_three_hours():
+    for source_key in ("cortellis_contracts", "cortellis_deal_api"):
+        policy = SOURCE_POLICIES[source_key]
+        severity, detail = classify_source_job(
+            {"status": "completed", "last_success_at": NOW - timedelta(hours=4)},
+            policy,
+            now=NOW,
+        )
+        assert severity == "ok"
+        assert "scheduled every 1d" in detail
 
 
 def test_failed_run_is_critical_even_after_recent_success():

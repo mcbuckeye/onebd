@@ -368,6 +368,8 @@ def _database_detail(engine: Any, name: str) -> dict[str, Any]:
     with engine.connect() as connection:
         overview = dict(connection.execute(text("""
             SELECT current_database() AS database,
+                   NOW() AS sampled_at,
+                   pg_postmaster_start_time() AS server_started_at,
                    pg_database_size(current_database()) AS database_bytes,
                    numbackends, xact_commit, xact_rollback, blks_read, blks_hit,
                    CASE WHEN blks_hit + blks_read > 0

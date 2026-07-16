@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, Globe, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
@@ -10,18 +10,27 @@ export default function TerritoryPage() {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [territoryData, setTerritoryData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const selectedAutocompleteValue = useRef<string | null>(null);
 
   useEffect(() => {
+    if (selectedAutocompleteValue.current === searchQuery) {
+      selectedAutocompleteValue.current = null;
+      setSuggestions([]);
+      return;
+    }
+    selectedAutocompleteValue.current = null;
     if (searchQuery.length < 2) { setSuggestions([]); return; }
+    let active = true;
     const timer = setTimeout(() => {
       api.get(`/search/autocomplete/drugs?q=${encodeURIComponent(searchQuery)}&limit=8`)
-        .then(r => setSuggestions(r.data.suggestions || []))
+        .then(r => { if (active) setSuggestions(r.data.suggestions || []); })
         .catch(() => {});
     }, 300);
-    return () => clearTimeout(timer);
+    return () => { active = false; clearTimeout(timer); };
   }, [searchQuery]);
 
   const loadTerritory = async (drugId: number, drugName: string) => {
+    selectedAutocompleteValue.current = drugName;
     setSearchQuery(drugName);
     setSuggestions([]);
     setLoading(true);

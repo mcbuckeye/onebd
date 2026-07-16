@@ -423,10 +423,10 @@ class DealTransformer:
     def get_or_create_drug(self, drug_id: int, name: str, phase_start: str = None, phase_now: str = None) -> Drug:
         """Get or create a drug record."""
         if drug_id in self._drug_cache:
-            return self._drug_cache[drug_id]
-
-        drug = self.session.get(Drug, drug_id)
-        if not drug:
+            drug = self._drug_cache[drug_id]
+        else:
+            drug = self.session.get(Drug, drug_id)
+        if drug is None:
             drug = Drug(
                 id=drug_id,
                 name_display=name,
@@ -435,6 +435,17 @@ class DealTransformer:
             )
             self.session.add(drug)
             self.session.flush()
+        else:
+            # Expanded deal responses carry the source's current per-asset
+            # development status.  Keeping only the first value encountered
+            # left existing assets permanently stale after Cortellis changed
+            # their status (for example, Preclinical → No Development Reported).
+            if name:
+                drug.name_display = name
+            if phase_start:
+                drug.phase_highest_start = phase_start
+            if phase_now:
+                drug.phase_highest_now = phase_now
 
         self._drug_cache[drug_id] = drug
         return drug
